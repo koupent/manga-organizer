@@ -46,7 +46,16 @@ echo
 
 # バージョン情報を取得
 echo "バージョン情報を取得中..."
-VERSION=$(python version.py 2>/dev/null | grep "Manga Organizer v" | sed 's/Manga Organizer v//' || echo "unknown")
+# src/__version__.pyから直接バージョンを取得
+if [ -f "src/__version__.py" ]; then
+    VERSION=$(python -c "import sys; sys.path.insert(0, 'src'); from __version__ import __version__; print(__version__)" 2>/dev/null || echo "3.6.1")
+elif [ -f "version.py" ]; then
+    # 旧version.pyからの取得（後方互換性）
+    VERSION=$(python version.py 2>/dev/null | grep "Manga Organizer v" | sed 's/Manga Organizer v//' || echo "3.6.1")
+else
+    # ファイルが見つからない場合はデフォルト値を使用
+    VERSION="3.6.1"
+fi
 echo "現在のバージョン: v$VERSION"
 
 # ビルド実行
@@ -55,6 +64,10 @@ EXE_NAME="MangaOrganizer-v${VERSION}"
 echo "コマンド: uv run pyinstaller --onefile --noconsole --windowed --name $EXE_NAME --paths src --add-data \"data;data\" src/main.py"
 echo
 
+# Windows用のフラグ:
+# --noconsole: コンソールウィンドウを表示しない
+# --windowed: GUIアプリケーションとして実行
+# 注: PyInstaller v6.0以降では --win-no-prefer-redirects と --win-private-assemblies は削除されました
 uv run pyinstaller --onefile --noconsole --windowed --name "$EXE_NAME" --paths src --add-data "data;data" src/main.py
 
 # ビルド結果の確認

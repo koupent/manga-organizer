@@ -6,6 +6,7 @@ from pathlib import Path
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+from __version__ import __version__, __release_date__
 from gui.main_window import MainWindow
 
 
@@ -22,7 +23,7 @@ def main():
     logger = logging.getLogger(__name__)
 
     try:
-        logger.info("Starting Manga Organizer")
+        logger.info(f"Starting Manga Organizer v{__version__} (Released: {__release_date__})")
         app = MainWindow()
         app.run()
     except Exception as e:

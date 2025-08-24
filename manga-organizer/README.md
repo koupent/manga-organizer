@@ -319,10 +319,13 @@ pip install pyinstaller
 
 ```bash
 # 推奨コマンド（srcディレクトリを明示的にパスに追加）
+# 注: PyInstaller v6.0以降では一部のWindowsオプションが削除されました
 uv run pyinstaller --onefile --noconsole --windowed --name MangaOrganizer --paths src --add-data "data;data" src/main.py
 
-# または、簡易版
-uv run pyinstaller --onefile --noconsole --windowed --name MangaOrganizer src/main.py
+# または、ビルドスクリプトを使用（推奨）
+./build.sh  # Linux/Mac/Git Bash
+# または
+powershell -ExecutionPolicy Bypass -File build-windows.ps1  # Windows PowerShell
 ```
 
 #### 3. ビルド後の確認
@@ -390,4 +393,4 @@ MIT License
 
 ## バージョン
 
-現在のバージョン: 3.5.0
+現在のバージョン: 3.6.1

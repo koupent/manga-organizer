@@ -6,6 +6,13 @@ import threading
 from typing import List
 import logging
 
+# Import version from the src directory
+try:
+    from __version__ import __version__ as VERSION
+except ImportError:
+    # Fallback if __version__.py is not found
+    VERSION = "3.6.1"
+
 from core.file_organizer import FileOrganizer
 from core.manga_database import MangaDatabase
 from gui.title_author_combo import TitleAuthorCombo
@@ -18,7 +25,7 @@ logger = logging.getLogger(__name__)
 class MainWindow:
     def __init__(self):
         self.root = TkinterDnD.Tk()
-        self.root.title("Manga Organizer")
+        self.root.title(f"Manga Organizer v{VERSION}")
         self.root.geometry("900x750")
 
         self.archive_files: List[Path] = []

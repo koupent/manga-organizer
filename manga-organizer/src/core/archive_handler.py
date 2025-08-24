@@ -4,6 +4,7 @@ import tempfile
 import shutil
 import subprocess
 import re
+import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 import py7zr
@@ -32,6 +33,16 @@ class ArchiveHandler:
         self.temp_dir = None
         self.progress_callback = None
         self.log_callback = log_callback  # For detailed logging to GUI
+        
+        # Setup subprocess creation flags for hiding console windows on Windows
+        self.subprocess_startupinfo = None
+        self.subprocess_creationflags = 0
+        if sys.platform == 'win32':
+            self.subprocess_startupinfo = subprocess.STARTUPINFO()
+            self.subprocess_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            self.subprocess_startupinfo.wShowWindow = subprocess.SW_HIDE
+            # Use CREATE_NO_WINDOW flag for additional suppression (0x08000000)
+            self.subprocess_creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
     def is_archive(self, file_path: Path) -> bool:
         return file_path.suffix.lower() in self.SUPPORTED_ARCHIVES
@@ -83,7 +94,9 @@ class ArchiveHandler:
                         list_result = subprocess.run(
                             [seven_zip_exe, "l", str(archive_path)],
                             capture_output=True,
-                            text=True
+                            text=True,
+                            startupinfo=self.subprocess_startupinfo,
+                            creationflags=self.subprocess_creationflags
                         )
                         
                         # Parse file count from output (rough estimate)
@@ -116,6 +129,8 @@ class ArchiveHandler:
                             capture_output=True,
                             text=True,
                             check=True,
+                            startupinfo=self.subprocess_startupinfo,
+                            creationflags=self.subprocess_creationflags
                         )
                         
                         if self.log_callback:

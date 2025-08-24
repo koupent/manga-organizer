@@ -1,5 +1,31 @@
 # Manga Organizer - Changelog
 
+## Version 3.6.1 - Console Window Suppression Fix
+
+### Bug Fixes
+
+#### Windows Console Window Issue
+- **Fixed Console Window Flashing**: Subprocess calls no longer show console windows
+  - Added STARTUPINFO configuration for Windows subprocess calls
+  - Implemented CREATE_NO_WINDOW flag (0x08000000) for complete suppression
+  - All 7z.exe calls now run silently in background
+  - No visual interruption during archive extraction
+
+### Build Improvements
+- **PyInstaller v6.0+ Compatibility**: Updated build scripts for latest PyInstaller
+  - Removed deprecated --win-no-prefer-redirects and --win-private-assemblies flags
+  - Updated Windows-specific .spec file for v6.0+ compatibility
+  - Created PowerShell build script for Windows users
+  - Maintained console suppression with proper flags
+
+### Version Management
+- **Centralized Version Control**: Improved version consistency across builds
+  - Created src/__version__.py as single source of truth
+  - Updated all modules to import version from __version__.py
+  - Build scripts automatically read version from source
+  - Window title shows version number
+  - Eliminates version mismatch issues
+
 ## Version 3.6.0 - Image Renaming Feature
 
 ### New Features
