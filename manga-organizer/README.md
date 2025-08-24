@@ -319,15 +319,15 @@ pip install pyinstaller
 
 ```bash
 # 推奨コマンド（srcディレクトリを明示的にパスに追加）
-uv run pyinstaller --onefile --noconsole --name MangaOrganizer --paths src --add-data "data;data" src/main.py
+uv run pyinstaller --onefile --noconsole --windowed --name MangaOrganizer --paths src --add-data "data;data" src/main.py
 
 # または、簡易版
-uv run pyinstaller --onefile --noconsole --name MangaOrganizer src/main.py
+uv run pyinstaller --onefile --noconsole --windowed --name MangaOrganizer src/main.py
 ```
 
 #### 3. ビルド後の確認
 
-- `dist/MangaOrganizer.exe`が生成されます
+- `dist/MangaOrganizer-v{バージョン}.exe`が生成されます（例：`MangaOrganizer-v3.5.0.exe`）
 - ファイルサイズは約 24MB 程度です
 - 起動テストを必ず行ってください
 
