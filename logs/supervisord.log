@@ -1,0 +1,16 @@
+2025-08-24 14:01:54,824 INFO Included extra file "/vnc-config/conf.d/fluxbox.conf" during parsing
+2025-08-24 14:01:54,824 INFO Included extra file "/vnc-config/conf.d/websockify.conf" during parsing
+2025-08-24 14:01:54,824 INFO Included extra file "/vnc-config/conf.d/x11vnc.conf" during parsing
+2025-08-24 14:01:54,825 INFO Included extra file "/vnc-config/conf.d/xvfb.conf" during parsing
+2025-08-24 14:01:54,825 INFO Set uid to user 1000 succeeded
+2025-08-24 14:01:54,828 INFO RPC interface 'supervisor' initialized
+2025-08-24 14:01:54,829 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-08-24 14:01:54,830 INFO supervisord started with pid 370
+2025-08-24 14:01:55,831 INFO spawned: 'xvfb' with pid 479
+2025-08-24 14:01:55,832 INFO spawned: 'x11vnc' with pid 480
+2025-08-24 14:01:55,833 INFO spawned: 'websockify' with pid 481
+2025-08-24 14:01:55,835 INFO spawned: 'fluxbox' with pid 482
+2025-08-24 14:01:57,440 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-24 14:01:57,440 INFO success: x11vnc entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-24 14:01:57,441 INFO success: websockify entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-24 14:01:57,441 INFO success: fluxbox entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)

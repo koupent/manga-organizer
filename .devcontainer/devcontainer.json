@@ -1,0 +1,113 @@
+{
+  "name": "Claude Code with Playwright MCP and noVNC",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "TZ": "${localEnv:TZ:Asia/Tokyo}"
+    }
+  },
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "noVNC",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postAttachCommand": "/vnc-config/start-vnc.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "ms-playwright.playwright",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "mhutchie.git-graph",
+        "lang2hong.githd",
+        "bierner.markdown-mermaid",
+        "shd101wyy.markdown-preview-enhanced",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.black-formatter"
+      ],
+      "settings": {
+        // フォーマッター設定
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true,
+        "editor.formatOnPaste": true,
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        },
+        "notebook.defaultFormatter": "ms-python.black-formatter",
+        "notebook.formatOnSave.enabled": true,
+        "notebook.formatOnCellExecution": true,
+
+        // エディター設定
+        "files.autoSave": "onFocusChange",
+        "editor.unicodeHighlight.invisibleCharacters": false,
+        "editor.unicodeHighlight.ambiguousCharacters": false,
+        "diffEditor.hideUnchangedRegions.enabled": true,
+        "typescript.updateImportsOnFileMove.enabled": "always",
+
+        // ターミナル設定
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "bash",
+            "icon": "terminal-bash"
+          },
+          "zsh": {
+            "path": "zsh"
+          }
+        },
+
+        // Python設定
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "python.terminal.activateEnvironment": false,
+        "python.analysis.autoImportCompletions": true,
+        "python.formatting.provider": "black",
+        "python.formatting.blackArgs": ["--line-length=88"],
+
+        // Git設定
+        "git.autofetch": true,
+
+        // リモート・セキュリティ設定
+        "remote.autoForwardPortsSource": "hybrid",
+
+        // Markdown設定
+        "markdown-preview-enhanced.previewTheme": "atom-dark.css",
+        "extensions.ignoreRecommendations": true
+      }
+    }
+  },
+  "remoteUser": "node",
+  "mounts": [
+    "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
+    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
+    "source=claude-code-gh-config-${devcontainerId},target=/home/node/.config/gh,type=volume"
+  ],
+  "containerEnv": {
+    "PLAYWRIGHT_MCP_HEADLESS": "false",
+    "PLAYWRIGHT_MCP_SANDBOX": "false",
+    "SUPERCLAUDE_ENABLED": "true",
+    "SUPERCLAUDE_AUTO_UPDATE": "true",
+    "CLAUDE_SUPERCLAUDE_INTEGRATION": "true",
+    "PYTHONPATH": "/home/node/.claude/SuperClaude_Framework:${PYTHONPATH}"
+  },
+  "remoteEnv": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+    "SUPERCLAUDE_CONFIG_DIR": "/home/node/.claude/SuperClaude_Framework",
+    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+    "PATH": "/home/node/.local/bin:${containerEnv:PATH}"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace"
+}
