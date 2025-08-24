@@ -26,9 +26,12 @@ flowchart TB
     VolumeLogic -->|番号抽出| Numbers[最後の数字]
     VolumeLogic -->|検出失敗| Index[連番使用]
 
-    Pattern --> CreateArchive
-    Numbers --> CreateArchive
-    Index --> CreateArchive[新規アーカイブ作成]
+    Pattern --> SortImages
+    Numbers --> SortImages
+    Index --> SortImages[画像の自然順ソート]
+
+    SortImages --> RenameImages[画像リネーム<br/>001.jpg, 002.jpg...]
+    RenameImages --> CreateArchive[新規アーカイブ作成]
 
     CreateArchive --> SaveDB[データベース保存]
     SaveDB --> Output[整理済みファイル出力]
@@ -38,6 +41,7 @@ flowchart TB
     style End fill:#c8e6c9
     style Process fill:#fff3e0
     style APISearch fill:#f3e5f5
+    style RenameImages fill:#e8f5e9
 ```
 
 ## アーキテクチャ
@@ -87,6 +91,13 @@ graph LR
 - ネストされたアーカイブの自動展開と処理
 - 巻番号の自動検出（第 X 巻、vol.X、vX 等のパターン対応）
 - 特別版（番外編、外伝、短編等）の認識
+
+### 画像リネーム機能（v3.6.0 新機能）
+
+- アーカイブ内の画像を連番（001.jpg, 002.jpg...）に自動リネーム
+- 自然順ソートアルゴリズムで正しいページ順を維持
+- 元の拡張子（.jpg, .png, .webp 等）を保持
+- 漫画リーダーとの互換性向上
 
 ### データベース機能
 
@@ -180,11 +191,23 @@ python main.py
 
 ## 出力形式
 
+### ディレクトリ構造
+
 ```
 [作者名] 作品名/
 ├── [作者名] 作品名 第001巻.zip
 ├── [作者名] 作品名 第002巻.zip
 └── [作者名] 作品名 第003巻.zip
+```
+
+### アーカイブ内の画像（v3.6.0 以降）
+
+```
+第001巻.zip の中身:
+├── 001.jpg  # 元: page1.jpg
+├── 002.jpg  # 元: page2.jpg
+├── 003.jpg  # 元: page10.jpg（自然順ソート済み）
+└── ...
 ```
 
 ## 設定ファイル
@@ -344,7 +367,8 @@ MangaOrganizer/
 ### 巻番号が正しく検出されない
 
 - ファイル名に巻番号を示すキーワード（巻、vol 等）を含めてください
-- 一時ディレクトリ名からは番号を抽出しません
+- 一時ディレクトリ名（manga*、\_extracted*、temp 等）からは番号を抽出しません
+- v3.5.0 以降：アーカイブファイル名を優先的に使用
 
 ### API から作者名が取得できない
 

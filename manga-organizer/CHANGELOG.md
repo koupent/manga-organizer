@@ -1,5 +1,28 @@
 # Manga Organizer - Changelog
 
+## Version 3.6.0 - Image Renaming Feature
+
+### New Features
+
+#### Sequential Image Renaming
+- **Automatic Image Renaming**: Images in archives are now renamed to sequential numbers
+  - Renames files to 001.jpg, 002.jpg, 003.jpg format
+  - Preserves original file extensions (.jpg, .png, .webp, etc.)
+  - Natural sorting ensures correct page order before renaming
+  - Prevents duplicate or confusing filenames in output
+
+### Technical Details
+- **Natural Sort Algorithm**: Implements intelligent sorting for mixed alphanumeric filenames
+  - Handles names like "page1", "page2", "page10" correctly
+  - Processes complex patterns like "000 (1).jpg" through "000 (150).jpg"
+  - Ensures consistent reading order across all manga volumes
+
+### Benefits
+- **Standardized Naming**: All archives have consistent, predictable filenames
+- **Reader Compatibility**: Works better with manga readers expecting sequential numbers
+- **Clean Organization**: Removes inconsistent naming patterns from various sources
+- **Preserved Extensions**: Maintains original image formats for compatibility
+
 ## Version 3.5.0 - Volume Detection Fix & Code Cleanup
 
 ### Bug Fixes

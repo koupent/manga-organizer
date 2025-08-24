@@ -3,6 +3,7 @@ import zipfile
 import tempfile
 import shutil
 import subprocess
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 import py7zr
@@ -10,6 +11,17 @@ from PIL import Image
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def natural_sort_key(text: str):
+    """Generate a key for natural sorting (1, 2, 10 instead of 1, 10, 2)"""
+    def convert(part):
+        return int(part) if part.isdigit() else part
+    
+    # Split text into numeric and non-numeric parts
+    parts = re.split(r'(\d+)', text.lower())
+    # Convert numeric parts to integers for proper sorting
+    return [convert(part) for part in parts if part]
 
 
 class ArchiveHandler:
@@ -252,9 +264,9 @@ class ArchiveHandler:
             return None, error
         return dirs[0] if dirs else None, None
 
-    def create_archive(self, source_dir: Path, output_path: Path) -> bool:
+    def create_archive(self, source_dir: Path, output_path: Path, rename_images: bool = True) -> bool:
         try:
-            # Count total images first
+            # Collect all image files
             image_files = []
             for root, dirs, files in os.walk(source_dir):
                 for file in files:
@@ -262,12 +274,24 @@ class ArchiveHandler:
                     if self.is_image(file_path):
                         image_files.append(file_path)
             
+            # Sort files in natural order (handles names like "page1", "page2", "page10" correctly)
+            image_files.sort(key=lambda p: natural_sort_key(str(p)))
+            
             if self.log_callback:
                 self.log_callback(f"    Compressing {len(image_files)} images to {output_path.name}...")
+                if rename_images:
+                    self.log_callback(f"    Renaming images to sequential numbers (001, 002, ...)")
             
             with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for idx, file_path in enumerate(image_files, 1):
-                    arcname = file_path.relative_to(source_dir)
+                    if rename_images:
+                        # Rename to sequential number, preserving extension
+                        ext = file_path.suffix.lower()
+                        arcname = f"{idx:03d}{ext}"  # 001.jpg, 002.png, etc.
+                    else:
+                        # Keep original structure
+                        arcname = str(file_path.relative_to(source_dir))
+                    
                     zf.write(file_path, arcname)
                     if self.log_callback and idx % 10 == 0:  # Log every 10 files
                         self.log_callback(f"      Compressed {idx}/{len(image_files)} images...")
