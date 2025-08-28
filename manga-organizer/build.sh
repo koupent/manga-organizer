@@ -61,14 +61,15 @@ echo "現在のバージョン: v$VERSION"
 # ビルド実行
 echo "ビルドを開始します..."
 EXE_NAME="MangaOrganizer-v${VERSION}"
-echo "コマンド: uv run pyinstaller --onefile --noconsole --windowed --name $EXE_NAME --paths src --add-data \"data;data\" src/main.py"
+echo "コマンド: uv run pyinstaller --onefile --noconsole --windowed --name $EXE_NAME --paths src src/main.py"
 echo
 
 # Windows用のフラグ:
 # --noconsole: コンソールウィンドウを表示しない
 # --windowed: GUIアプリケーションとして実行
 # 注: PyInstaller v6.0以降では --win-no-prefer-redirects と --win-private-assemblies は削除されました
-uv run pyinstaller --onefile --noconsole --windowed --name "$EXE_NAME" --paths src --add-data "data;data" src/main.py
+# --add-data フラグは削除: 漫画データは実行時に外部から読み込む
+uv run pyinstaller --onefile --noconsole --windowed --name "$EXE_NAME" --paths src src/main.py
 
 # ビルド結果の確認
 if [ $? -eq 0 ]; then
