@@ -1,5 +1,5 @@
 {
-  "name": "Claude Code with Playwright MCP and noVNC",
+  "name": "Manga Organizer DevContainer",
   "build": {
     "dockerfile": "Dockerfile",
     "context": "..",
