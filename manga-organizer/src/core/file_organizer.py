@@ -25,7 +25,9 @@ class ProcessResult:
 
 
 class FileOrganizer:
-    def __init__(self, output_directory: Path, keep_originals: bool = True, log_callback=None):
+    def __init__(
+        self, output_directory: Path, keep_originals: bool = True, log_callback=None
+    ):
         self.output_directory = output_directory
         self.keep_originals = keep_originals
         self.log_callback = log_callback
@@ -64,17 +66,19 @@ class FileOrganizer:
             image_dirs, error = self.archive_handler.process_archive(archive_path)
 
             if error or not image_dirs:
-                return [ProcessResult(
-                    original_path=archive_path,
-                    output_path=None,
-                    success=False,
-                    error_message=error or "No images found",
-                )]
+                return [
+                    ProcessResult(
+                        original_path=archive_path,
+                        output_path=None,
+                        success=False,
+                        error_message=error or "No images found",
+                    )
+                ]
 
             logger.info(f"Found {len(image_dirs)} volumes in {archive_path.name}")
             if self.log_callback:
                 self.log_callback(f"  Creating output directory for manga series...")
-            
+
             # Create subdirectory for this manga series
             manga_dir = self.output_directory / f"[{self.author}] {self.title}"
             manga_dir.mkdir(parents=True, exist_ok=True)
@@ -82,22 +86,26 @@ class FileOrganizer:
             # Process each image directory as a separate volume
             if self.log_callback and len(image_dirs) > 1:
                 self.log_callback(f"  Processing {len(image_dirs)} volumes...")
-            
+
             for vol_idx, image_dir in enumerate(image_dirs, 1):
                 # Detect volume number from the image directory name
                 if self.log_callback and len(image_dirs) > 1:
-                    self.log_callback(f"  Processing volume {vol_idx}/{len(image_dirs)}...")
-                
-                # First try to get volume from the original archive name (most reliable)
-                volume, special = self.volume_detector.detect_volume_from_archive(archive_path)
-                
-                # If not found and only single directory, try directory name
+                    self.log_callback(
+                        f"  Processing volume {vol_idx}/{len(image_dirs)}..."
+                    )
+
+                # Priority 1: Try to get volume from the image directory name first
+                volume, special = self.volume_detector.detect_volume(image_dir)
+
+                # Priority 2: For single directory archives only, try archive name
                 if volume is None and len(image_dirs) == 1:
-                    volume_from_dir, special_from_dir = self.volume_detector.detect_volume(image_dir)
-                    if volume_from_dir is not None:
-                        volume = volume_from_dir
-                        special = special_from_dir
-                # If multiple dirs and no volume number, use index
+                    volume_from_archive, special_from_archive = (
+                        self.volume_detector.detect_volume_from_archive(archive_path)
+                    )
+                    if volume_from_archive is not None:
+                        volume = volume_from_archive
+                        special = special_from_archive
+                # Priority 3: If multiple dirs and no volume number, use index
                 elif volume is None and len(image_dirs) > 1:
                     volume = vol_idx
 
@@ -141,21 +149,29 @@ class FileOrganizer:
                 except Exception as e:
                     logger.error(f"Failed to delete original: {e}")
 
-            return results if results else [ProcessResult(
-                original_path=archive_path,
-                output_path=None,
-                success=False,
-                error_message="No volumes processed",
-            )]
+            return (
+                results
+                if results
+                else [
+                    ProcessResult(
+                        original_path=archive_path,
+                        output_path=None,
+                        success=False,
+                        error_message="No volumes processed",
+                    )
+                ]
+            )
 
         except Exception as e:
             logger.error(f"Error processing {archive_path}: {e}")
-            return [ProcessResult(
-                original_path=archive_path,
-                output_path=None,
-                success=False,
-                error_message=str(e),
-            )]
+            return [
+                ProcessResult(
+                    original_path=archive_path,
+                    output_path=None,
+                    success=False,
+                    error_message=str(e),
+                )
+            ]
         finally:
             # Cleanup temporary files
             self.archive_handler.cleanup()

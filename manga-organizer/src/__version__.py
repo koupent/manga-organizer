@@ -4,8 +4,8 @@ This file is the single source of truth for version information.
 It should be imported by all modules that need version info.
 """
 
-__version__ = "3.6.1"
-__release_date__ = "2024-08-25"
+__version__ = "3.6.2"
+__release_date__ = "2025-08-28"
 __author__ = "Manga Organizer Team"
 __description__ = "Japanese manga archive organizer with intelligent volume detection"
 

@@ -1,5 +1,26 @@
 # Manga Organizer - Changelog
 
+## Version 3.6.2 - Volume Detection Logic Fix
+
+### Bug Fixes
+
+#### Volume Number Detection
+- **Fixed Multiple Volume Detection**: Archives containing multiple volumes now correctly detect individual volume numbers
+  - Changed priority: Now checks image directory names first before archive names
+  - Example: `DLRAW.TO_3Gatsu Lion vol 01-17.rar` with directories `001/`, `002/`...`017/` now correctly creates volumes 1-17
+  - Previously all volumes from such archives were incorrectly labeled as volume 1
+  
+### Improvements
+
+#### Documentation
+- **Volume Detection Specification**: Added detailed specification document at `docs/volume-detection-spec.md`
+  - Comprehensive explanation of volume number detection logic
+  - Priority rules for different archive types
+  - Examples of various naming patterns
+- **README Updates**: Added link to detailed volume detection specification
+  - Clarified that `manga_` prefix directories are now processed correctly
+  - Updated troubleshooting section with v3.6.2 improvements
+
 ## Version 3.6.1 - Console Window Suppression Fix
 
 ### Bug Fixes
