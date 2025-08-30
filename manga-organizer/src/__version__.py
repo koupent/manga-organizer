@@ -4,8 +4,8 @@ This file is the single source of truth for version information.
 It should be imported by all modules that need version info.
 """
 
-__version__ = "3.6.2"
-__release_date__ = "2025-08-28"
+__version__ = "3.6.3"
+__release_date__ = "2025-08-30"
 __author__ = "Manga Organizer Team"
 __description__ = "Japanese manga archive organizer with intelligent volume detection"
 
@@ -19,9 +19,11 @@ FEATURES = {
     "console_suppression": True,
 }
 
+
 def get_version_string():
     """Return formatted version string for display"""
     return f"v{__version__}"
+
 
 def get_full_version_info():
     """Return complete version information"""
@@ -30,8 +32,9 @@ def get_full_version_info():
         "release_date": __release_date__,
         "author": __author__,
         "description": __description__,
-        "features": FEATURES
+        "features": FEATURES,
     }
+
 
 if __name__ == "__main__":
     print(f"Manga Organizer {get_version_string()}")

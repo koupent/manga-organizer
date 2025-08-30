@@ -507,6 +507,7 @@ dependencies = [
     { name = "py7zr", version = "0.22.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "py7zr", version = "1.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "pyinstaller" },
+    { name = "rarfile" },
     { name = "requests", version = "2.32.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "requests", version = "2.32.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "tkinterdnd2" },
@@ -518,6 +519,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "py7zr", specifier = ">=0.20.0" },
     { name = "pyinstaller", specifier = ">=6.15.0" },
+    { name = "rarfile", specifier = ">=4.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "tkinterdnd2", specifier = ">=0.3.0" },
 ]
@@ -1301,6 +1303,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/48/73/c4d8937b6eb755ff794ca695c5eaf369855dbab873ba44a76402100b3411/pyzstd-0.17.0-pp39-pypy39_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b2d6cce91a8ac8ae1aab06684a8bf0dee088405de7f451e1e89776ddc1f40074", size = 329412, upload-time = "2025-05-10T14:14:45.608Z" },
     { url = "https://files.pythonhosted.org/packages/9b/d3/cac07c183ee124d809e025674e092b186f23083003339379a27708f8deff/pyzstd-0.17.0-pp39-pypy39_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bc668b67a13bf6213d0a9c09edc1f4842ed680b92fc3c9361f55a904903bfd1f", size = 349446, upload-time = "2025-05-10T14:14:47Z" },
     { url = "https://files.pythonhosted.org/packages/ee/21/c8726b1738d72c7f1602a6720996c4c227754b12335ad84e7db1300f8363/pyzstd-0.17.0-pp39-pypy39_pp73-win_amd64.whl", hash = "sha256:a67d7ef18715875b31127eb90075c03ced722fd87902b34bca4b807a2ce1e4d9", size = 241664, upload-time = "2025-05-10T14:14:48.374Z" },
+]
+
+[[package]]
+name = "rarfile"
+version = "4.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/3f/3118a797444e7e30e784921c4bfafb6500fb288a0c84cb8c32ed15853c16/rarfile-4.2.tar.gz", hash = "sha256:8e1c8e72d0845ad2b32a47ab11a719bc2e41165ec101fd4d3fe9e92aa3f469ef", size = 153476, upload-time = "2024-04-03T17:10:53.798Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/fc/ab37559419ca36dd8dd317c3a98395ed4dcee2beeb28bf6059b972906727/rarfile-4.2-py3-none-any.whl", hash = "sha256:8757e1e3757e32962e229cab2432efc1f15f210823cc96ccba0f6a39d17370c9", size = 29052, upload-time = "2024-04-03T17:10:52.632Z" },
 ]
 
 [[package]]

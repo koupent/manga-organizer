@@ -11,4 +11,5 @@ dependencies = [
     "requests>=2.31.0",
     "nuitka>=2.7.12",
     "pyinstaller>=6.15.0",
+    "rarfile>=4.0",
 ]
