@@ -22,6 +22,7 @@ class EnhancedAuthorCombobox(ttk.Frame):
         self.author_suggestions = []  # List of author names
         self.api_search_thread = None
         self.current_title = ""
+        self.pending_title = None  # Title to search when field gets focus
         
         # Create UI
         self.setup_ui()
@@ -44,34 +45,50 @@ class EnhancedAuthorCombobox(ttk.Frame):
         self.combobox.bind('<<ComboboxSelected>>', self.on_selection)
         self.combobox.bind('<FocusIn>', self.on_focus_in)
         self.combobox.bind('<Button-1>', self.on_click)
+        self.combobox.bind('<KeyRelease>', self.on_key_release)
     
     def search_author_for_title(self, title: str):
-        """Search for author suggestions based on the given title"""
-        if not title or title == self.current_title:
+        """Search author based on title - automatic API search when 2+ characters"""
+        # Reset state and clear author field first
+        self.current_title = title
+        self.pending_title = None
+        self.author_suggestions = []
+        
+        # Cancel any existing search thread
+        if self.api_search_thread and self.api_search_thread.is_alive():
+            pass  # Thread will finish naturally
+        
+        # Clear author field first when title changes
+        # This ensures old author doesn't remain
+        self.author_var.set("")
+        self.combobox['values'] = []
+        self.combobox.configure(foreground='black')  # Reset to default color
+        self.dropdown_open = False
+        
+        if not title:
+            self.clear()
             return
         
-        self.current_title = title
-        
-        # First check database
+        # First check database for exact match
         db_author = self.database.get_author_by_title(title)
         if db_author:
-            # If in database, just set that author
+            # DB match found - auto-fill immediately
             self.author_suggestions = [db_author]
             self.combobox['values'] = self.author_suggestions
             self.author_var.set(db_author)
-            logger.info(f"Found author in database: {db_author} for title: {title}")
+            self.combobox.configure(foreground='#1976d2')  # Blue for DB
+            self.pending_title = None  # No API search needed
+            logger.info(f"DB match found: {title} -> {db_author}")
             return
         
-        # If not in database, search APIs
-        if len(title) >= 3:
-            # Cancel previous search if running
-            if self.api_search_thread and self.api_search_thread.is_alive():
-                return
+        # No DB match - start API search automatically when 2+ characters
+        if len(title) >= 2:
+            logger.info(f"Starting automatic API search for: {title}")
             
             # Show loading indicator
             self.loading_label.pack(side=tk.LEFT, padx=(5, 0))
             
-            # Start search in background thread
+            # Start API search immediately
             self.api_search_thread = threading.Thread(
                 target=self._api_search_worker,
                 args=(title,),
@@ -119,15 +136,16 @@ class EnhancedAuthorCombobox(ttk.Frame):
         # If we have suggestions, show them
         if authors:
             logger.info(f"Found {len(authors)} author suggestions for '{title}'")
-            # Set the first suggestion as default
+            # Set the first suggestion and color (yellow for API)
             if not self.author_var.get():
                 self.author_var.set(authors[0])
+                self.combobox.configure(foreground='#ffa726')  # Yellow for API
             
-            # Open dropdown to show suggestions if multiple options
-            if len(authors) > 1:
+            # Open dropdown to show suggestions
+            if not self.dropdown_open:
                 self.dropdown_open = True
+                self.combobox.event_generate('<<ComboboxPopdown>>')
                 self.combobox.focus_set()
-                self.combobox.event_generate('<Down>')
         else:
             logger.info(f"No author suggestions found for '{title}'")
     
@@ -154,8 +172,9 @@ class EnhancedAuthorCombobox(ttk.Frame):
         self.after(50, lambda: self.combobox.selection_clear())
     
     def on_focus_in(self, event=None):
-        """Handle focus in event - open dropdown only if not already open"""
-        # Don't auto-open dropdown on focus, let user control it
+        """Handle focus in event - API search is now automatic, no longer triggered here"""
+        # API search is now automatic when title is 2+ characters
+        # This method is kept for potential future use or dropdown control
         pass
     
     def on_click(self, event=None):
@@ -168,6 +187,22 @@ class EnhancedAuthorCombobox(ttk.Frame):
                 self.dropdown_open = False
                 # Close by moving focus
                 self.focus_set()
+
+    
+    def on_key_release(self, event):
+        """Handle key release events"""
+        if event.keysym == 'Escape':
+            # Clear the field
+            self.clear()
+            return
+        elif event.keysym in ['Return', 'Tab']:
+            # Confirm selection
+            self.dropdown_open = False
+            return
+        
+        # If user is typing manually, set black color
+        if self.author_var.get() and not self.author_suggestions:
+            self.combobox.configure(foreground='black')  # Manual input
     
     def get_author(self) -> str:
         """Get the current author text"""
@@ -178,6 +213,8 @@ class EnhancedAuthorCombobox(ttk.Frame):
         self.author_var.set(author)
         self.author_suggestions = [author]
         self.combobox['values'] = self.author_suggestions
+        # Set blue color as this is typically from DB
+        self.combobox.configure(foreground='#1976d2')
     
     def clear(self):
         """Clear the author field"""
@@ -185,3 +222,9 @@ class EnhancedAuthorCombobox(ttk.Frame):
         self.author_suggestions = []
         self.combobox['values'] = []
         self.current_title = ""
+        self.pending_title = None
+        self.dropdown_open = False
+        # Reset color to default
+        self.combobox.configure(foreground='black')
+        # Hide loading if shown
+        self.loading_label.pack_forget()

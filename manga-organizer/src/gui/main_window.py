@@ -11,7 +11,7 @@ try:
     from __version__ import __version__ as VERSION
 except ImportError:
     # Fallback if __version__.py is not found
-    VERSION = "3.6.1"
+    VERSION = "3.6.4"
 
 from core.file_organizer import FileOrganizer
 from core.manga_database import MangaDatabase

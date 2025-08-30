@@ -1,5 +1,38 @@
 # Manga Organizer - Changelog
 
+## Version 3.6.4 - UI Performance and Author Search Improvements
+
+### Removed
+
+#### Title Input
+
+- **Removed API Title Suggestions**: Eliminated API-based title suggestions for better performance
+  - Title input now uses database-only search for immediate response
+  - Removed debouncing and threading for title suggestions
+  - Significantly improved UI responsiveness during title input
+
+### Changed
+
+#### Author Search
+
+- **Automatic Author Search**: Author API search now triggers automatically when title has 2+ characters
+  - Previously required 3 characters and manual focus on author field
+  - Removed focus-based triggering in favor of automatic execution
+  - Author suggestions appear immediately without user interaction
+
+### Improvements
+
+#### Performance
+
+- **Faster Title Input Response**: Removed 300ms debounce delay for title suggestions
+- **Reduced API Calls**: Only author search uses API, title search is database-only
+- **Better User Experience**: More predictable and responsive interface
+
+#### Code Quality
+
+- **Simplified Component Logic**: Removed unnecessary API search code from EnhancedTitleCombobox
+- **Cleaner Architecture**: Clear separation between title (DB) and author (API) search
+
 ## Version 3.6.3 - RAR Module Build Fix
 
 ### Bug Fixes

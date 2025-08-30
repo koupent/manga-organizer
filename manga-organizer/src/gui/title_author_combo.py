@@ -154,4 +154,14 @@ class TitleAuthorCombo:
         author = self.get_author()
         if title and author:
             self.database.save_manga_info(title, author)
-            self.refresh()  # Refresh to update the dropdown
+            logger.info(f"Saved to DB: {title} by {author}")
+            
+            # Update UI to reflect DB save
+            self.title_combo.refresh()  # Refresh title dropdown
+            
+            # Change author color to blue (DB registered)
+            if hasattr(self.author_combo, 'combobox'):
+                self.author_combo.combobox.configure(foreground='#1976d2')  # Blue for DB
+            
+            return True
+        return False  # Refresh to update the dropdown
