@@ -1,5 +1,25 @@
 # Manga Organizer - Changelog
 
+## Version 3.6.5 - Volume Detection Fix for Flat Archives
+
+### Bug Fixes
+
+#### Volume Detection
+
+- **Fixed incorrect volume number detection**: Resolved critical issue where temporary directory names were incorrectly used for volume detection
+  - Previously: Flat archives extracted to `manga_xxxxx/` caused random numbers in temp directory names to be detected as volume numbers
+  - Now: Archives are extracted to `manga_xxxxx/[archive_name]/` subdirectory structure
+  - Example: `[渡邊ダイスケ] 善悪の屑 第001巻.zip` now correctly creates `第001巻.zip` instead of random volume numbers
+
+### Improvements
+
+#### Archive Processing
+
+- **Improved temporary directory structure**: Enhanced extraction process for better volume detection
+  - Creates subdirectory named after archive file (without extension) before extraction
+  - Ensures flat archives maintain proper naming for volume detection
+  - Prevents temporary directory random strings from interfering with volume numbering
+
 ## Version 3.6.4 - UI Performance and Author Search Improvements
 
 ### Removed

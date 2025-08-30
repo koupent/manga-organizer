@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Version information for Manga Organizer"""
 
-VERSION = "3.6.4"
+VERSION = "3.6.5"
 RELEASE_DATE = "2025-08-30"
 
 if __name__ == "__main__":

@@ -301,20 +301,26 @@ class ArchiveHandler:
     def process_archive(self, archive_path: Path) -> Tuple[List[Path], Optional[str]]:
         """Process archive and return all image directories found"""
         self.temp_dir = Path(tempfile.mkdtemp(prefix="manga_"))
+        
+        # Create subdirectory named after the archive (without extension)
+        # This ensures that flat archives get a proper directory name for volume detection
+        archive_subdir = self.temp_dir / archive_path.stem
+        archive_subdir.mkdir(parents=True, exist_ok=True)
 
         try:
             # Extract the main archive
             if self.log_callback:
                 self.log_callback(f"  Starting extraction to temporary directory...")
 
-            if not self.extract_archive(archive_path, self.temp_dir):
+            # Extract to the subdirectory instead of directly to temp_dir
+            if not self.extract_archive(archive_path, archive_subdir):
                 return [], "Failed to extract archive"
 
             if self.log_callback:
                 self.log_callback(f"  Main archive extracted, analyzing contents...")
 
-            # Find all directories containing images
-            image_dirs = self.find_all_image_directories(self.temp_dir)
+            # Find all directories containing images (now searching from archive_subdir)
+            image_dirs = self.find_all_image_directories(archive_subdir)
 
             if not image_dirs:
                 return [], "No images found in archive"
