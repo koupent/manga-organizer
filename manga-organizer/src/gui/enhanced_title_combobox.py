@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-from typing import List, Callable, Optional, Tuple
+from typing import Callable, Optional
 import logging
 
 logger = logging.getLogger(__name__)

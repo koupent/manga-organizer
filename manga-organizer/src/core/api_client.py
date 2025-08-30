@@ -2,13 +2,11 @@
 API clients for fetching manga metadata from external sources
 """
 import requests
-import json
 import time
 import logging
 import difflib
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Tuple
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

@@ -7,11 +7,7 @@ from typing import List
 import logging
 
 # Import version from the src directory
-try:
-    from __version__ import __version__ as VERSION
-except ImportError:
-    # Fallback if __version__.py is not found
-    VERSION = "3.6.5"
+from __version__ import __version__ as VERSION
 
 from core.file_organizer import FileOrganizer
 from core.manga_database import MangaDatabase
