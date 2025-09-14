@@ -1,5 +1,47 @@
 # Manga Organizer - Changelog
 
+## Version 3.7.0 - Standalone 7za.exe Bundling Support
+
+### New Features
+
+#### Complete Standalone RAR Support
+
+- **7za.exe bundling**: Implemented support for bundling 7za.exe (standalone version) with the executable
+  - No DLL dependencies required - 7za.exe works completely standalone
+  - Automatic extraction and usage from bundled executable
+  - Users no longer need to install 7-Zip separately for RAR support
+  - Smaller footprint compared to 7z.exe + 7z.dll combination
+
+#### GitHub Actions Improvements
+
+- **Updated build workflow**: Modified to download and bundle 7za.exe standalone version
+  - Changed from 7z2408-extra to 7z2501-extra for latest version
+  - Simplified extraction process for standalone executable
+  - Better file verification and size reporting
+
+### Technical Changes
+
+- **archive_handler.py**: Enhanced bundled tool detection
+  - Prioritizes 7za.exe (standalone) over 7z.exe
+  - Improved logging to show which executable is being used
+  - Better configuration for rarfile module with standalone 7za.exe
+
+- **MangaOrganizer.spec**: Updated PyInstaller configuration
+  - Changed to bundle 7za.exe instead of 7z.exe + 7z.dll
+  - Added file size verification during build
+
+- **build-release.yml**: Workflow improvements
+  - Downloads 7-Zip Extra version 25.01
+  - Extracts and bundles 7za.exe standalone executable
+  - Improved error handling and progress reporting
+
+### Benefits
+
+- **Zero dependencies**: MangaOrganizer.exe now works completely standalone
+- **Full RAR support**: Built-in RAR extraction without external tools
+- **Smaller size**: Single 7za.exe (~1-2MB) instead of multiple files
+- **Better user experience**: No installation requirements for end users
+
 ## Version 3.6.6 - RAR Archive Support Improvements
 
 ### Improvements
