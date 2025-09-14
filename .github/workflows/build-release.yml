@@ -116,7 +116,7 @@ jobs:
         shell: powershell
         run: |
           $version = "${{ steps.get_version.outputs.VERSION }}"
-          $changelog = Get-Content "../CHANGELOG.md" -Raw
+          $changelog = Get-Content "CHANGELOG.md" -Raw
 
           # Extract section for current version
           $pattern = "## Version $version[^\#]*"
