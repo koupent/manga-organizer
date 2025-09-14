@@ -58,19 +58,36 @@ else
 fi
 echo "現在のバージョン: v$VERSION"
 
-# ビルド実行
-echo "ビルドを開始します..."
-EXE_NAME="MangaOrganizer-v${VERSION}"
-echo "コマンド: uv run pyinstaller --onefile --noconsole --windowed --name $EXE_NAME --paths src --hidden-import rarfile src/main.py"
+# 7-Zipファイルの確認
+echo "7-Zipファイルを確認中..."
+if [ -f "resources/7zip/7z.exe" ] && [ -f "resources/7zip/7z.dll" ]; then
+    echo "  ✓ 7-Zipファイルが見つかりました（RAR対応）"
+else
+    echo "  ⚠ 7-Zipファイルが見つかりません"
+    echo "    RAR対応が必要な場合は、resources/7zip/README.md を参照してください"
+fi
 echo
 
-# Windows用のフラグ:
-# --noconsole: コンソールウィンドウを表示しない
-# --windowed: GUIアプリケーションとして実行
-# 注: PyInstaller v6.0以降では --win-no-prefer-redirects と --win-private-assemblies は削除されました
-# --add-data フラグは削除: 漫画データは実行時に外部から読み込む
-# --hidden-import rarfile: 条件付きインポートのrarfileを確実に含める
-uv run pyinstaller --onefile --noconsole --windowed --name "$EXE_NAME" --paths src --hidden-import rarfile src/main.py
+# ビルド実行
+echo "ビルドを開始します..."
+
+# specファイルが存在する場合はそれを使用、なければ従来の方法
+if [ -f "MangaOrganizer.spec" ]; then
+    echo "specファイルを使用してビルド"
+    echo "コマンド: uv run pyinstaller MangaOrganizer.spec"
+    uv run pyinstaller MangaOrganizer.spec
+else
+    EXE_NAME="MangaOrganizer-v${VERSION}"
+    echo "コマンド: uv run pyinstaller --onefile --noconsole --windowed --name $EXE_NAME --paths src --hidden-import rarfile src/main.py"
+    echo
+    # Windows用のフラグ:
+    # --noconsole: コンソールウィンドウを表示しない
+    # --windowed: GUIアプリケーションとして実行
+    # 注: PyInstaller v6.0以降では --win-no-prefer-redirects と --win-private-assemblies は削除されました
+    # --add-data フラグは削除: 漫画データは実行時に外部から読み込む
+    # --hidden-import rarfile: 条件付きインポートのrarfileを確実に含める
+    uv run pyinstaller --onefile --noconsole --windowed --name "$EXE_NAME" --paths src --hidden-import rarfile src/main.py
+fi
 
 # ビルド結果の確認
 if [ $? -eq 0 ]; then

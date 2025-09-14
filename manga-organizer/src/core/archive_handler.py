@@ -30,11 +30,16 @@ class ArchiveHandler:
     # Class-level constants
     SUPPORTED_ARCHIVES = {".zip", ".rar", ".7z", ".cbz", ".cbr", ".cb7", ".epub"}
     IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
-    SEVEN_ZIP_PATHS = [
-        "C:/Program Files/7-Zip/7z.exe",
-        "C:/Program Files (x86)/7-Zip/7z.exe",
-        "7z",  # Try system PATH
-    ]
+
+    @staticmethod
+    def _get_bundled_7zip_path():
+        """Get path to bundled 7-Zip executable when running from PyInstaller bundle"""
+        if hasattr(sys, '_MEIPASS'):
+            # Running from PyInstaller bundle
+            bundled_path = Path(sys._MEIPASS) / "resources" / "7zip" / "7z.exe"
+            if bundled_path.exists():
+                return str(bundled_path)
+        return None
     
     def __init__(self, log_callback=None):
         self.temp_dir = None
@@ -80,8 +85,22 @@ class ArchiveHandler:
 
     def _find_7zip_executable(self) -> Optional[str]:
         """Find 7-Zip executable path"""
-        for path in self.SEVEN_ZIP_PATHS:
-            if Path(path).exists() or shutil.which(path):
+        # Check for bundled 7-Zip first (when running from PyInstaller)
+        if hasattr(sys, '_MEIPASS'):
+            bundled_path = Path(sys._MEIPASS) / "resources" / "7zip" / "7z.exe"
+            if bundled_path.exists():
+                self._log(f"    Using bundled 7-Zip from executable")
+                return str(bundled_path)
+
+        # Fall back to system 7-Zip
+        system_paths = [
+            "C:/Program Files/7-Zip/7z.exe",
+            "C:/Program Files (x86)/7-Zip/7z.exe",
+            "7z",  # Try system PATH
+        ]
+
+        for path in system_paths:
+            if path and (Path(path).exists() or shutil.which(path)):
                 return path
         return None
 
@@ -166,23 +185,58 @@ class ArchiveHandler:
         # Try 7-Zip first
         if self._extract_with_7zip(archive_path, extract_to):
             return True
-        
+
         # Fallback to rarfile module
         try:
             import rarfile
-            
-            self._log(f"    7-Zip not found, using rarfile module...")
+
+            # Configure rarfile to use 7-Zip if available
+            seven_zip_exe = self._find_7zip_executable()
+            if seven_zip_exe:
+                self._log(f"    Configuring rarfile to use 7-Zip: {seven_zip_exe}")
+                rarfile.UNRAR_TOOL = seven_zip_exe
+                rarfile.OPEN_ARGS = ('x', '-y')
+                rarfile.EXTRACT_ARGS = ('x', '-y', '-o')
+                rarfile.TEST_ARGS = ('t',)
+            else:
+                # Try to find unrar or other RAR tools
+                import shutil
+                unrar_tools = ['unrar', 'UnRAR.exe', 'WinRAR.exe']
+                found_tool = None
+                for tool in unrar_tools:
+                    if shutil.which(tool):
+                        found_tool = tool
+                        break
+
+                if found_tool:
+                    self._log(f"    Using {found_tool} for RAR extraction")
+                    rarfile.UNRAR_TOOL = found_tool
+                else:
+                    self._log(f"    WARNING: No RAR extraction tool found. Trying default configuration...")
+
+            self._log(f"    Using rarfile module with tool: {rarfile.UNRAR_TOOL}")
             with rarfile.RarFile(archive_path, "r") as rf:
                 members = rf.namelist()
                 self._log(f"    Extracting {len(members)} files from RAR archive...")
                 rf.extractall(extract_to)
                 self._log(f"    RAR extraction complete (using rarfile)")
                 return True
-                
+
         except ImportError:
             error_msg = (
                 "Failed to extract RAR file: Neither 7-Zip nor rarfile module is available.\n"
                 "Please install 7-Zip from https://www.7-zip.org/ for better RAR support."
+            )
+            self._log(f"    ERROR: {error_msg}", "error")
+            return False
+        except (rarfile.RarCannotExec, rarfile.RarExecError) as e:
+            error_msg = (
+                f"Cannot find working tool for RAR extraction.\n"
+                f"Please install one of the following:\n"
+                f"  1. 7-Zip from https://www.7-zip.org/ (recommended)\n"
+                f"  2. UnRAR command line tool\n"
+                f"  3. WinRAR\n"
+                f"Error details: {e}"
             )
             self._log(f"    ERROR: {error_msg}", "error")
             return False

@@ -1,5 +1,37 @@
 # Manga Organizer - Changelog
 
+## Version 3.6.6 - RAR Archive Support Improvements
+
+### Improvements
+
+#### RAR Archive Support
+
+- **Enhanced RAR extraction reliability**: Improved RAR file handling for PyInstaller-built executables
+  - Added automatic configuration for rarfile module to use 7-Zip when available
+  - Implemented fallback mechanism to search for multiple RAR extraction tools (7-Zip, UnRAR, WinRAR)
+  - Added support for bundling 7-Zip portable version with executable
+  - Better error messages with specific instructions when RAR tools are not found
+
+#### Build System
+
+- **PyInstaller spec file support**: Added configuration for bundling external tools
+  - Created MangaOrganizer.spec for customized build process
+  - Support for including 7-Zip portable files in the executable
+  - Added resources directory structure for bundled tools
+
+#### Error Handling
+
+- **Improved RAR error diagnostics**: Better error messages and recovery options
+  - Specific handling for RarCannotExec and RarExecError exceptions
+  - Clear instructions for users on how to install required tools
+  - Automatic detection and configuration of available extraction tools
+
+### Technical Changes
+
+- **archive_handler.py**: Enhanced to support bundled 7-Zip in PyInstaller builds
+- **build.sh**: Updated to use spec file when available
+- **Added helper scripts**: Created download_7zip.py for easier setup
+
 ## Version 3.6.5 - Volume Detection Fix for Flat Archives
 
 ### Bug Fixes

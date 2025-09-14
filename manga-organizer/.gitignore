@@ -58,3 +58,6 @@ test_*.py
 *.tmp
 temp/
 tmp/
+# 7-Zip portable files (download separately)
+resources/7zip/*.exe
+resources/7zip/*.dll
