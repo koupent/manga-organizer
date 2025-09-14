@@ -21,10 +21,10 @@ if seven_zip_exe.exists() and seven_zip_dll.exists():
         (str(seven_zip_exe), "resources/7zip"),
         (str(seven_zip_dll), "resources/7zip"),
     ]
-    print(f"✓ Found 7-Zip files to bundle")
+    print("Found 7-Zip files to bundle")
 else:
-    print(f"⚠ 7-Zip files not found in resources/7zip/")
-    print(f"  RAR support will depend on system-installed 7-Zip or UnRAR")
+    print("Warning: 7-Zip files not found in resources/7zip/")
+    print("  RAR support will depend on system-installed 7-Zip or UnRAR")
 
 a = Analysis(
     ['src/main.py'],
