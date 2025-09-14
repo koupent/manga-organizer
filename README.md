@@ -47,6 +47,40 @@
 - 7-Zip 不要（内蔵済み）
 - ダブルクリックで起動
 
+### インストール手順
+
+1. **専用フォルダを作成**
+   ```
+   C:\Users\[ユーザー名]\Documents\MangaOrganizer\
+   ```
+   または任意の場所に `MangaOrganizer` フォルダを作成
+
+2. **実行ファイルを配置**
+   - ダウンロードした `MangaOrganizer-vX.X.X.exe` をフォルダに移動
+   - ファイル名を `MangaOrganizer.exe` に変更してもOK
+
+3. **初回起動**
+   - `MangaOrganizer.exe` をダブルクリック
+   - 必要なフォルダが自動作成されます
+
+### 使用後のフォルダ構成
+
+```
+MangaOrganizer/
+├── MangaOrganizer.exe          # 実行ファイル
+├── data/                        # データ保存用（自動作成）
+│   ├── manga_info.db           # 作品データベース
+│   └── manga_info_backup.json  # データベースバックアップ
+├── logs/                        # ログファイル（自動作成）
+│   └── manga_organizer_YYYYMMDD.log
+└── _internal/                   # 一時ファイル（自動作成・削除）
+```
+
+**注意事項:**
+- `data/` フォルダには作品情報が保存されるため、削除しないでください
+- `logs/` フォルダは問題解決時に必要になる場合があります
+- `_internal/` は実行時の一時フォルダで、終了時に自動削除されます
+
 ## 🚀 使い方
 
 ### 基本的な使用手順
