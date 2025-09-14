@@ -28,6 +28,7 @@ dist/
 *.dll
 *.pyd
 *.spec
+!MangaOrganizer.spec
 nuitka-crash-report.xml
 
 # Virtual Environment
