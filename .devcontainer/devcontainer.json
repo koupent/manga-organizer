@@ -1,5 +1,5 @@
 {
-  "name": "Claude Code with Playwright and noVNC",
+  "name": "Manga Organizer",
   "build": {
     "dockerfile": "Dockerfile",
     "args": {
