@@ -58,15 +58,25 @@ jobs:
               Write-Host "Extracting with 7z..."
               7z x $output -o"temp_7zip" -y
 
-              # Copy required files
-              Copy-Item "temp_7zip/x64/7z.exe" "resources/7zip/7z.exe"
-              Copy-Item "temp_7zip/x64/7z.dll" "resources/7zip/7z.dll"
+              # List extracted files to understand structure
+              Write-Host "Extracted files:"
+              Get-ChildItem -Recurse "temp_7zip" | Select-Object Name, Directory
+
+              # Try to find and copy 7z.exe and 7z.dll from any location
+              $exe = Get-ChildItem -Recurse "temp_7zip" -Filter "7z.exe" | Select-Object -First 1
+              $dll = Get-ChildItem -Recurse "temp_7zip" -Filter "7z.dll" | Select-Object -First 1
+
+              if ($exe -and $dll) {
+                  Copy-Item $exe.FullName "resources/7zip/7z.exe"
+                  Copy-Item $dll.FullName "resources/7zip/7z.dll"
+                  Write-Host "7-Zip files prepared successfully"
+              } else {
+                  Write-Host "Warning: Could not find 7z.exe or 7z.dll in extracted files"
+              }
 
               # Clean up
               Remove-Item -Recurse -Force "temp_7zip"
               Remove-Item $output
-
-              Write-Host "7-Zip files prepared successfully"
           } else {
               Write-Host "Warning: Cannot extract 7-Zip files (7z not available)"
               Write-Host "RAR support will depend on user's system"
