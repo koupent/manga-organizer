@@ -79,11 +79,11 @@ jobs:
           # Build using spec file if it exists, otherwise use command line
           if (Test-Path "MangaOrganizer.spec") {
               Write-Host "Building with spec file..."
-              pyinstaller MangaOrganizer.spec
+              uv run pyinstaller MangaOrganizer.spec
           } else {
               Write-Host "Building with command line..."
               $version = "${{ steps.get_version.outputs.VERSION }}"
-              pyinstaller --onefile --noconsole --windowed `
+              uv run pyinstaller --onefile --noconsole --windowed `
                 --name "MangaOrganizer-v$version" `
                 --paths src `
                 --hidden-import rarfile `
