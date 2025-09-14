@@ -10,20 +10,19 @@ from __version__ import __version__
 
 block_cipher = None
 
-# Check if 7-Zip files exist
-seven_zip_exe = Path("resources/7zip/7z.exe")
-seven_zip_dll = Path("resources/7zip/7z.dll")
+# Check if 7za.exe (standalone) exists
+seven_za_exe = Path("resources/7zip/7za.exe")
 
 binaries = []
-if seven_zip_exe.exists() and seven_zip_dll.exists():
-    # Include 7-Zip files in the bundle
+if seven_za_exe.exists():
+    # Include 7za.exe standalone in the bundle
     binaries = [
-        (str(seven_zip_exe), "resources/7zip"),
-        (str(seven_zip_dll), "resources/7zip"),
+        (str(seven_za_exe), "resources/7zip"),
     ]
-    print("Found 7-Zip files to bundle")
+    print(f"Found 7za.exe standalone to bundle: {seven_za_exe}")
+    print(f"  File size: {seven_za_exe.stat().st_size} bytes")
 else:
-    print("Warning: 7-Zip files not found in resources/7zip/")
+    print("Warning: 7za.exe not found in resources/7zip/")
     print("  RAR support will depend on system-installed 7-Zip or UnRAR")
 
 a = Analysis(

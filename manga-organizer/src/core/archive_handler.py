@@ -36,9 +36,15 @@ class ArchiveHandler:
         """Get path to bundled 7-Zip executable when running from PyInstaller bundle"""
         if hasattr(sys, '_MEIPASS'):
             # Running from PyInstaller bundle
-            bundled_path = Path(sys._MEIPASS) / "resources" / "7zip" / "7z.exe"
-            if bundled_path.exists():
-                return str(bundled_path)
+            # First try 7za.exe (standalone version)
+            bundled_7za = Path(sys._MEIPASS) / "resources" / "7zip" / "7za.exe"
+            if bundled_7za.exists():
+                return str(bundled_7za)
+
+            # Fallback to 7z.exe if available
+            bundled_7z = Path(sys._MEIPASS) / "resources" / "7zip" / "7z.exe"
+            if bundled_7z.exists():
+                return str(bundled_7z)
         return None
     
     def __init__(self, log_callback=None):
@@ -86,17 +92,17 @@ class ArchiveHandler:
     def _find_7zip_executable(self) -> Optional[str]:
         """Find 7-Zip executable path"""
         # Check for bundled 7-Zip first (when running from PyInstaller)
-        if hasattr(sys, '_MEIPASS'):
-            bundled_path = Path(sys._MEIPASS) / "resources" / "7zip" / "7z.exe"
-            if bundled_path.exists():
-                self._log(f"    Using bundled 7-Zip from executable")
-                return str(bundled_path)
+        bundled_path = self._get_bundled_7zip_path()
+        if bundled_path:
+            self._log(f"    Using bundled 7-Zip from executable: {Path(bundled_path).name}")
+            return bundled_path
 
         # Fall back to system 7-Zip
         system_paths = [
             "C:/Program Files/7-Zip/7z.exe",
             "C:/Program Files (x86)/7-Zip/7z.exe",
-            "7z",  # Try system PATH
+            "7za",  # Try standalone 7za in PATH
+            "7z",   # Try 7z in PATH
         ]
 
         for path in system_paths:
@@ -193,8 +199,12 @@ class ArchiveHandler:
             # Configure rarfile to use 7-Zip if available
             seven_zip_exe = self._find_7zip_executable()
             if seven_zip_exe:
-                self._log(f"    Configuring rarfile to use 7-Zip: {seven_zip_exe}")
+                exe_name = Path(seven_zip_exe).name
+                self._log(f"    Configuring rarfile to use {exe_name}: {seven_zip_exe}")
                 rarfile.UNRAR_TOOL = seven_zip_exe
+
+                # Different args depending on whether it's 7z.exe or 7za.exe
+                # Both versions use the same command syntax
                 rarfile.OPEN_ARGS = ('x', '-y')
                 rarfile.EXTRACT_ARGS = ('x', '-y', '-o')
                 rarfile.TEST_ARGS = ('t',)
