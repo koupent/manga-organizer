@@ -1,5 +1,31 @@
 # Manga Organizer - Changelog
 
+## Version 3.7.1 - Logging Improvements and Documentation
+
+### Improvements
+
+#### Logging System
+- **Enhanced log file management**: Logs are now saved in a dedicated `logs/` directory
+  - Date-based file naming: `manga_organizer_YYYYMMDD.log`
+  - Automatic cleanup of logs older than 30 days
+  - UTF-8 encoding support for Japanese text
+  - Better organization for troubleshooting
+
+#### Documentation
+- **Comprehensive README.md**: Added detailed installation and usage instructions
+  - Step-by-step installation guide
+  - Folder structure after installation
+  - Troubleshooting section
+- **Developer documentation**: Separated developer content into DEVELOPMENT.md
+  - Version update procedures
+  - Build instructions
+  - Development environment setup
+
+### Technical Changes
+- **main.py**: Refactored logging setup with automatic directory creation
+- **README.md**: Focused on end-user documentation
+- **DEVELOPMENT.md**: New file for developer-specific documentation
+
 ## Version 3.7.0 - Standalone 7za.exe Bundling Support
 
 ### New Features

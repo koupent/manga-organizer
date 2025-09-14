@@ -149,58 +149,9 @@ MangaOrganizer/
 - 番外編、外伝、短編などの認識
 - 一時ディレクトリ名は無視
 
-## 💻 開発者向け情報
+## 💻 開発者向け
 
-### ソースコードから実行
-
-#### 必要環境
-
-- Python 3.8 以上
-- Windows/macOS/Linux
-
-#### インストール
-
-```bash
-# リポジトリをクローン
-git clone https://github.com/koupent/manga-organizer.git
-cd manga-organizer
-
-# uvを使用（推奨）
-pip install uv
-uv sync
-
-# または pip を使用
-pip install -r requirements.txt
-```
-
-#### 実行
-
-```bash
-cd manga-organizer
-python src/main.py
-```
-
-### ビルド方法
-
-#### GitHub Actions（推奨）
-
-タグをプッシュすると自動ビルド:
-
-```bash
-git tag v3.7.0
-git push origin v3.7.0
-```
-
-#### ローカルビルド
-
-```bash
-# ビルドスクリプトを使用（推奨）
-cd manga-organizer
-./build.sh  # Linux/Mac/Git Bash
-
-# または手動でビルド
-uv run pyinstaller MangaOrganizer.spec
-```
+開発環境のセットアップ、ビルド方法、バージョンアップ手順などの詳細は [DEVELOPMENT.md](DEVELOPMENT.md) を参照してください。
 
 ## 📊 処理フロー
 
