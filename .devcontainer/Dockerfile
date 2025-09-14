@@ -1,119 +1,110 @@
+# 公式のClaude Code DevContainerのベースを使用
 FROM node:20
 
-# Set timezone argument
-ARG TZ=Asia/Tokyo
+ARG TZ
 ENV TZ="$TZ"
 
-# Install necessary packages including VNC components and development tools
-RUN apt-get update && apt-get install -y \
-    bash \
-    fluxbox \
-    git \
-    net-tools \
-    novnc \
-    supervisor \
-    x11vnc \
-    xterm \
-    xvfb \
-    python3 \
-    python3-venv \
-    wget \
-    less \
-    sudo \
-    fzf \
-    zsh \
-    unzip \
-    gnupg2 \
-    gh \
-    jq \
-    && rm -rf /var/lib/apt/lists/*
+ARG CLAUDE_CODE_VERSION=latest
 
-# Install Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+# rootユーザーに切り替え、Playwright、noVNC、GUIアプリケーションの依存関係をインストール
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  # 開発・ネットワーク CLI
+  git gh jq wget curl ca-certificates \
+  # シェル・UX
+  zsh fzf man-db less \
+  # エディタ
+  nano vim \
+  # アーカイブ・暗号
+  unzip gnupg2 \
+  # システム管理
+  procps sudo \
+  # ロケール・フォント
+  locales fonts-noto-cjk fonts-ipafont-gothic \
+  # GUI ランタイム（ブラウザ依存）
+  libgtk-3-0 libnotify4 libnss3 libxss1 libasound2 libxkbcommon0 \
+  # 仮想ディスプレイ・WM
+  xvfb fluxbox feh \
+  # VNC/リモートデスクトップ
+  x11vnc novnc websockify \
+  # プロセス管理
+  supervisor \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright browser binaries and dependencies
-RUN npx playwright install chrome
-RUN npx playwright install-deps
+# Generate locales and set defaults to C.UTF-8
+RUN sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen \
+  && sed -i 's/^# *C.UTF-8/C.UTF-8/' /etc/locale.gen \
+  && locale-gen en_US.UTF-8 C.UTF-8 \
+  && update-locale LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-# Install delta for better git diffs
-RUN ARCH=$(dpkg --print-architecture) && \
-    wget "https://github.com/dandavison/delta/releases/download/0.18.2/git-delta_0.18.2_${ARCH}.deb" && \
-    dpkg -i "git-delta_0.18.2_${ARCH}.deb" && \
-    rm "git-delta_0.18.2_${ARCH}.deb"
+# nodeユーザーにパスワードなしのsudo権限を付与
+RUN echo "node ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/node-user \
+    && chmod 0440 /etc/sudoers.d/node-user
 
-# Setup environment variables for VNC
-ENV HOME=/home/node \
-    DEBIAN_FRONTEND=noninteractive \
-    LANG=en_US.UTF-8 \
-    LANGUAGE=en_US.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    DISPLAY=:0.0 \
-    DISPLAY_WIDTH=1600 \
-    DISPLAY_HEIGHT=900 \
-    RUN_XTERM=yes \
-    RUN_FLUXBOX=yes \
-    DEVCONTAINER=true \
-    SHELL=/bin/zsh
+# npm globalパッケージのインストール先を確保
+RUN mkdir -p /usr/local/share/npm-global && \
+  chown -R node:node /usr/local/share
 
-# Ensure default node user has access to /usr/local/share and Python packages
-RUN mkdir -p /usr/local/share/npm-global/lib /usr/local/share/npm-global/bin && \
-    chown -R node:node /usr/local/share
+ARG USERNAME=node
 
-# Create necessary directories including claude config and command history
-RUN mkdir -p /vnc-config /workspace /home/node/.claude /commandhistory && \
-    chown -R node:node /vnc-config /workspace /home/node/.claude /commandhistory
-
-# Persist bash history
+# bash履歴の永続化
 RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
-    && touch /commandhistory/.bash_history \
-    && chown -R node /commandhistory
+  && mkdir /commandhistory \
+  && touch /commandhistory/.bash_history \
+  && chown -R $USERNAME /commandhistory
 
-# Copy VNC configuration files
-COPY vnc-config/ /vnc-config/
+# 環境変数を設定
+ENV DEVCONTAINER=true
 
-# Set proper permissions
-RUN chmod +x /vnc-config/*.sh && \
-    chown -R node:node /vnc-config
+# ワークスペースと設定ディレクトリを作成し、パーミッションを設定
+RUN mkdir -p /workspace /home/node/.claude && \
+  chown -R node:node /workspace /home/node/.claude
 
-# Switch to node user
-USER node
-
-# Install uv for Python package management
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/home/node/.local/bin:${PATH}"
-
-# Install SuperClaude Framework using uv
-RUN mkdir -p /home/node/.claude/SuperClaude_Framework && \
-    cd /home/node/.claude/SuperClaude_Framework && \
-    git clone https://github.com/SuperClaude-Org/SuperClaude_Framework.git . && \
-    uv sync && \
-    chown -R node:node /home/node/.claude/SuperClaude_Framework
-
-# Ensure SuperClaude is properly configured
-RUN mkdir -p /home/node/.claude/SuperClaude_Framework && \
-    chown -R node:node /home/node/.claude/SuperClaude_Framework
-
-# Verify SuperClaude installation
-RUN cd /home/node/.claude/SuperClaude_Framework && \
-    python3 -c "import sys; sys.path.insert(0, '.'); import SuperClaude; print('SuperClaude installed successfully')" || \
-    echo "SuperClaude installation completed"
-
-# Configure global npm packages path
-ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
-ENV PATH="/home/node/.local/bin:/usr/local/share/npm-global/bin:${PATH}"
-
-# Install zsh with powerline10k theme
-RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.2.0/zsh-in-docker.sh)" -- \
-    -y \
-    -p git \
-    -p fzf \
-    -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
-    -a "source /usr/share/doc/fzf/examples/completion.zsh" \
-    -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
-    -x
-
-# Create working directory
 WORKDIR /workspace
 
-# Expose noVNC port
-EXPOSE 8080
+# git-deltaをインストール
+ARG GIT_DELTA_VERSION=0.18.2
+RUN ARCH=$(dpkg --print-architecture) && \
+  wget "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
+  dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
+  rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
+
+# 非rootユーザーに切り替え
+USER node
+
+# Create per-user config directories with safe permissions (simplified)
+RUN mkdir -p "$HOME/.config" "$HOME/.config/gh" && \
+  chmod 700 "$HOME/.config" "$HOME/.config/gh"
+
+# グローバルパッケージのインストール
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+ENV PATH=$PATH:/usr/local/share/npm-global/bin
+
+# デフォルトシェルをzshに設定
+ENV SHELL=/bin/zsh
+
+# デフォルトエディタを設定
+ENV EDITOR=nano
+ENV VISUAL=nano
+
+# powerline10kテーマを設定
+ARG ZSH_IN_DOCKER_VERSION=1.2.0
+RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
+  -p git \
+  -p fzf \
+  -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
+  -a "source /usr/share/doc/fzf/examples/completion.zsh" \
+  -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
+  -x
+
+# ClaudeCodeをインストール
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
+# Playwrightブラウザをインストール (nodeユーザーとして)
+RUN npx playwright install chrome
+
+# uv を node ユーザー環境にインストール
+RUN wget -qO- https://astral.sh/uv/install.sh | sh
+
+# uv のバイナリパスを PATH に追加
+ENV PATH=/home/node/.local/bin:$PATH

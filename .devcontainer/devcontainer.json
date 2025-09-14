@@ -1,25 +1,18 @@
 {
-  "name": "Manga Organizer DevContainer",
+  "name": "Claude Code with Playwright and noVNC",
   "build": {
     "dockerfile": "Dockerfile",
-    "context": "..",
     "args": {
-      "TZ": "${localEnv:TZ:Asia/Tokyo}"
+      "TZ": "${localEnv:TZ:Asia/Tokyo}",
+      "CLAUDE_CODE_VERSION": "latest",
+      "GIT_DELTA_VERSION": "0.18.2",
+      "ZSH_IN_DOCKER_VERSION": "1.2.0"
     }
   },
-  "forwardPorts": [8080],
-  "portsAttributes": {
-    "8080": {
-      "label": "noVNC",
-      "onAutoForward": "openBrowser"
-    }
-  },
-  "postAttachCommand": "/vnc-config/start-vnc.sh",
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-azuretools.vscode-docker",
-        "ms-playwright.playwright",
+        "anthropic.claude-code",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
         "mhutchie.git-graph",
@@ -69,7 +62,7 @@
         },
 
         // Python設定
-        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "python.defaultInterpreterPath": "/home/node/.venv/bin/python",
         "python.terminal.activateEnvironment": false,
         "python.analysis.autoImportCompletions": true,
         "python.formatting.provider": "black",
@@ -88,26 +81,35 @@
     }
   },
   "remoteUser": "node",
+  "updateRemoteUserUID": true,
+  "features": {
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
   "mounts": [
     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
     "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
     "source=claude-code-gh-config-${devcontainerId},target=/home/node/.config/gh,type=volume"
   ],
   "containerEnv": {
-    "PLAYWRIGHT_MCP_HEADLESS": "false",
-    "PLAYWRIGHT_MCP_SANDBOX": "false",
-    "SUPERCLAUDE_ENABLED": "true",
-    "SUPERCLAUDE_AUTO_UPDATE": "true",
-    "CLAUDE_SUPERCLAUDE_INTEGRATION": "true",
-    "PYTHONPATH": "/home/node/.claude/SuperClaude_Framework:${PYTHONPATH}"
-  },
-  "remoteEnv": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
-    "SUPERCLAUDE_CONFIG_DIR": "/home/node/.claude/SuperClaude_Framework",
     "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
-    "PATH": "/home/node/.local/bin:${containerEnv:PATH}"
+    "PLAYWRIGHT_MCP_HEADLESS": "false",
+    "PLAYWRIGHT_MCP_SANDBOX": "false",
+    "DISPLAY": ":0"
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
-  "workspaceFolder": "/workspace"
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [6080, 5900],
+  "portsAttributes": {
+    "6080": {
+      "label": "noVNC access",
+      "onAutoForward": "notify"
+    },
+    "5900": {
+      "label": "VNC (raw)"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/scripts/setup-superclaude.sh",
+  "postStartCommand": "bash .devcontainer/scripts/start-vnc.sh"
 }
