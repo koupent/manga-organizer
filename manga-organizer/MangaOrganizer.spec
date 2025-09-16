@@ -13,17 +13,21 @@ block_cipher = None
 # Check if 7za.exe (standalone) exists
 seven_za_exe = Path("resources/7zip/7za.exe")
 
+# Note: 7za.exe is now distributed separately to reduce false positives
+# Users should download 7za.exe separately if RAR support is needed
 binaries = []
 if seven_za_exe.exists():
-    # Include 7za.exe standalone in the bundle
-    binaries = [
-        (str(seven_za_exe), "resources/7zip"),
-    ]
-    print(f"Found 7za.exe standalone to bundle: {seven_za_exe}")
-    print(f"  File size: {seven_za_exe.stat().st_size} bytes")
+    # Option to include 7za.exe if present (but not recommended for false positive reduction)
+    print("Warning: Including 7za.exe in bundle may increase false positive detections")
+    print("  Consider distributing 7za.exe separately for better antivirus compatibility")
+    # Uncomment the following lines if you still want to bundle 7za.exe
+    # binaries = [
+    #     (str(seven_za_exe), "resources/7zip"),
+    # ]
+    # print(f"  File size: {seven_za_exe.stat().st_size} bytes")
 else:
-    print("Warning: 7za.exe not found in resources/7zip/")
-    print("  RAR support will depend on system-installed 7-Zip or UnRAR")
+    print("Info: 7za.exe not bundled (reduces false positives)")
+    print("  RAR support will depend on system-installed 7-Zip or separate 7za.exe distribution")
 
 a = Analysis(
     ['src/main.py'],
@@ -54,7 +58,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # Disabled UPX compression to reduce false positives
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -64,4 +68,6 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=None,
+    # Consider adding version info file for better identification
+    # version='version_info.txt',
 )

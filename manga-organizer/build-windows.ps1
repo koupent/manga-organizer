@@ -49,10 +49,8 @@ if (Test-Path "build") {
     Remove-Item -Recurse -Force "build"
     Write-Host "  - Removed build\" -ForegroundColor Gray
 }
-if (Test-Path "*.spec") {
-    Remove-Item -Force "*.spec" -Exclude "MangaOrganizer-Windows.spec"
-    Write-Host "  - Removed old spec files" -ForegroundColor Gray
-}
+# Note: MangaOrganizer.spec is now version-controlled for consistent builds
+# Do not delete it during cleanup
 Write-Host "Cleanup complete" -ForegroundColor Green
 Write-Host ""
 
@@ -69,13 +67,20 @@ try {
 Write-Host ""
 
 # Build using spec file if available
-if (Test-Path "MangaOrganizer-Windows.spec") {
+if (Test-Path "MangaOrganizer.spec") {
+    Write-Host "Building with optimized spec file..." -ForegroundColor Yellow
+    Write-Host "  - UPX compression: Disabled (false positive reduction)" -ForegroundColor Cyan
+    Write-Host "  - 7za.exe: Distributed separately (false positive reduction)" -ForegroundColor Cyan
+    Write-Host "This prevents console windows from appearing" -ForegroundColor Cyan
+    & pyinstaller MangaOrganizer.spec
+} elseif (Test-Path "MangaOrganizer-Windows.spec") {
     Write-Host "Building with Windows spec file..." -ForegroundColor Yellow
     Write-Host "This prevents console windows from appearing" -ForegroundColor Cyan
     & pyinstaller MangaOrganizer-Windows.spec
 } else {
     # Fallback to command line build
     Write-Host "Building with command line options..." -ForegroundColor Yellow
+    Write-Host "Note: Using spec file is recommended for false positive reduction" -ForegroundColor Yellow
     # Note: PyInstaller v6.0+ removed --win-no-prefer-redirects and --win-private-assemblies
     $buildArgs = @(
         "--onefile",
@@ -83,11 +88,7 @@ if (Test-Path "MangaOrganizer-Windows.spec") {
         "--windowed",
         "--name", $ExeName,
         "--paths", "src",
-        "--add-data", "data;data",
-        "--hidden-import", "tkinterdnd2",
-        "--hidden-import", "PIL",
-        "--hidden-import", "py7zr",
-        "--hidden-import", "requests",
+        "--hidden-import", "rarfile",
         "--exclude-module", "matplotlib",
         "--exclude-module", "numpy",
         "--exclude-module", "scipy",
@@ -99,7 +100,9 @@ if (Test-Path "MangaOrganizer-Windows.spec") {
 }
 
 # Check build result
-$exePath = if (Test-Path "MangaOrganizer-Windows.spec") {
+$exePath = if (Test-Path "MangaOrganizer.spec") {
+    "dist\${ExeName}.exe"
+} elseif (Test-Path "MangaOrganizer-Windows.spec") {
     "dist\MangaOrganizer.exe"
 } else {
     "dist\${ExeName}.exe"
