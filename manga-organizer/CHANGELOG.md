@@ -1,5 +1,37 @@
 # Manga Organizer - Changelog
 
+## Version 3.7.2 - Windows Defender False Positive Mitigation
+
+### Improvements
+
+#### Security and Compatibility
+- **PyInstaller optimization**: Disabled UPX compression to reduce false positive detections
+  - File size increased to ~30MB but significantly reduces antivirus false positives
+  - Improved startup performance (no decompression needed)
+  - Better compatibility with Windows Defender and other antivirus software
+
+#### Build System
+- **Build script improvements**: Enhanced build scripts for consistent optimization
+  - Preserved spec file in version control for reproducible builds
+  - Added clear warnings about bundling executable files
+  - Improved build output messages for transparency
+
+#### Architecture Changes
+- **7-Zip distribution strategy**: Moved to system-installed 7-Zip approach
+  - No longer bundles 7za.exe to reduce false positive risks
+  - Relies on user-installed 7-Zip for RAR support
+  - Cleaner executable without embedded binaries
+
+### Technical Changes
+- **MangaOrganizer.spec**: Set `upx=False` to disable compression
+- **build.sh**: Updated to preserve spec file and show optimization settings
+- **build-windows.ps1**: Enhanced for Windows-specific optimizations
+
+### Notes
+- Users need to install 7-Zip separately for RAR archive support
+- ZIP, 7z, and CBZ formats work without additional software
+- This version focuses on reducing false positive detections by antivirus software
+
 ## Version 3.7.1 - Logging Improvements and Documentation
 
 ### Improvements
