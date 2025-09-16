@@ -1,6 +1,15 @@
 # Manga Organizer - Changelog
 
-## Version 3.7.2 - Windows Defender False Positive Mitigation
+## Version 3.8.0 - Breaking Change: 7-Zip External Dependency
+
+**重要**: このバージョンから7-Zipの内蔵を廃止しました。RAR形式のサポートには7-Zipの事前インストールが必要です。
+
+### Breaking Changes
+
+#### 7-Zip内蔵の廃止
+- **理由**: Windows Defenderおよび他のアンチウイルスソフトによる誤検知を削減
+- **影響**: RAR形式（.rar, .cbr）を扱うユーザーは7-Zipを別途インストールする必要があります
+- **対象外**: ZIP, 7z, CBZ形式は引き続き追加ソフトウェアなしで動作します
 
 ### Improvements
 
