@@ -25,10 +25,12 @@ if [ -d "build" ]; then
     rm -rf build
     echo "  - build/ ディレクトリを削除"
 fi
-if [ -f "MangaOrganizer.spec" ]; then
-    rm -f MangaOrganizer.spec
-    echo "  - MangaOrganizer.spec を削除"
-fi
+# Note: MangaOrganizer.spec is now version-controlled for consistent builds
+# Do not delete it during cleanup
+# if [ -f "MangaOrganizer.spec" ]; then
+#     rm -f MangaOrganizer.spec
+#     echo "  - MangaOrganizer.spec を削除"
+# fi
 echo "クリーンアップ完了"
 echo
 
@@ -60,11 +62,16 @@ echo "現在のバージョン: v$VERSION"
 
 # 7-Zipファイルの確認
 echo "7-Zipファイルを確認中..."
-if [ -f "resources/7zip/7z.exe" ] && [ -f "resources/7zip/7z.dll" ]; then
-    echo "  ✓ 7-Zipファイルが見つかりました（RAR対応）"
+if [ -f "resources/7zip/7za.exe" ]; then
+    echo "  ⚠ 7za.exe が見つかりました"
+    echo "    注意: 7za.exeのバンドルは誤検知を増やす可能性があります"
+    echo "    別配布を推奨します"
+elif [ -f "resources/7zip/7z.exe" ] && [ -f "resources/7zip/7z.dll" ]; then
+    echo "  ⚠ 7-Zipファイルが見つかりました"
+    echo "    注意: 実行ファイルのバンドルは誤検知を増やす可能性があります"
 else
-    echo "  ⚠ 7-Zipファイルが見つかりません"
-    echo "    RAR対応が必要な場合は、resources/7zip/README.md を参照してください"
+    echo "  ✓ 7-Zipファイルは別配布されます（誤検知対策）"
+    echo "    RAR対応が必要な場合は、システムに7-Zipをインストールしてください"
 fi
 echo
 
@@ -73,13 +80,17 @@ echo "ビルドを開始します..."
 
 # specファイルが存在する場合はそれを使用、なければ従来の方法
 if [ -f "MangaOrganizer.spec" ]; then
-    echo "specファイルを使用してビルド"
+    echo "specファイルを使用してビルド（最適化設定）"
+    echo "  - UPX圧縮: 無効（誤検知対策）"
+    echo "  - 7za.exe: 別配布（誤検知対策）"
     echo "コマンド: uv run pyinstaller MangaOrganizer.spec"
     uv run pyinstaller MangaOrganizer.spec
 else
     EXE_NAME="MangaOrganizer-v${VERSION}"
     echo "コマンド: uv run pyinstaller --onefile --noconsole --windowed --name $EXE_NAME --paths src --hidden-import rarfile src/main.py"
     echo
+    echo "注意: specファイルが見つからないため、デフォルト設定でビルドします"
+    echo "      誤検知対策のため、MangaOrganizer.specファイルの使用を推奨します"
     # Windows用のフラグ:
     # --noconsole: コンソールウィンドウを表示しない
     # --windowed: GUIアプリケーションとして実行
