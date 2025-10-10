@@ -29,7 +29,7 @@ def natural_sort_key(text: str):
 class ArchiveHandler:
     # Class-level constants
     SUPPORTED_ARCHIVES = {".zip", ".rar", ".7z", ".cbz", ".cbr", ".cb7", ".epub"}
-    IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+    IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".avif"}
 
     @staticmethod
     def _get_bundled_7zip_path():

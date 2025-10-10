@@ -1,11 +1,11 @@
 [project]
 name = "manga-organizer"
-version = "3.7.1"
+version = "3.8.1"
 description = "Automatic manga archive organizer with intelligent volume detection"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
-    "pillow>=10.0.0",
+    "pillow>=11.3.0",
     "py7zr>=0.20.0",
     "tkinterdnd2>=0.3.0",
     "requests>=2.31.0",
