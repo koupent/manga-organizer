@@ -1,42 +1,72 @@
 # Manga Organizer - Changelog
 
+## Version 3.8.1 - AVIF Image Format Support
+
+### New Features
+
+#### Modern Image Format Support
+
+- **AVIF support**: Added support for AVIF (AV1 Image File Format)
+  - High-efficiency image format with superior compression compared to JPEG and WebP
+  - Native support via Pillow 11.3.0+
+  - Preserves original .avif extension during image renaming
+  - Fully compatible with archive creation and processing workflows
+
+### Technical Changes
+
+- **IMAGE_EXTENSIONS**: Updated to include `.avif` extension
+- **Pillow dependency**: Upgraded to Pillow 11.3.0+ for native AVIF support
+- **No additional dependencies**: Uses built-in Pillow AVIF support (libavif included in wheels)
+
+### Benefits
+
+- **Better compression**: AVIF provides smaller file sizes while maintaining quality
+- **Future-proof**: Support for modern image formats from web and mobile sources
+- **Seamless integration**: Works with existing archive processing and renaming features
+
 ## Version 3.8.0 - Breaking Change: 7-Zip External Dependency
 
-**重要**: このバージョンから7-Zipの内蔵を廃止しました。RAR形式のサポートには7-Zipの事前インストールが必要です。
+**重要**: このバージョンから 7-Zip の内蔵を廃止しました。RAR 形式のサポートには 7-Zip の事前インストールが必要です。
 
 ### Breaking Changes
 
-#### 7-Zip内蔵の廃止
-- **理由**: Windows Defenderおよび他のアンチウイルスソフトによる誤検知を削減
-- **影響**: RAR形式（.rar, .cbr）を扱うユーザーは7-Zipを別途インストールする必要があります
-- **対象外**: ZIP, 7z, CBZ形式は引き続き追加ソフトウェアなしで動作します
+#### 7-Zip 内蔵の廃止
+
+- **理由**: Windows Defender および他のアンチウイルスソフトによる誤検知を削減
+- **影響**: RAR 形式（.rar, .cbr）を扱うユーザーは 7-Zip を別途インストールする必要があります
+- **対象外**: ZIP, 7z, CBZ 形式は引き続き追加ソフトウェアなしで動作します
 
 ### Improvements
 
 #### Security and Compatibility
+
 - **PyInstaller optimization**: Disabled UPX compression to reduce false positive detections
   - File size increased to ~30MB but significantly reduces antivirus false positives
   - Improved startup performance (no decompression needed)
   - Better compatibility with Windows Defender and other antivirus software
 
 #### Build System
+
 - **Build script improvements**: Enhanced build scripts for consistent optimization
   - Preserved spec file in version control for reproducible builds
   - Added clear warnings about bundling executable files
   - Improved build output messages for transparency
 
 #### Architecture Changes
+
 - **7-Zip distribution strategy**: Moved to system-installed 7-Zip approach
   - No longer bundles 7za.exe to reduce false positive risks
   - Relies on user-installed 7-Zip for RAR support
   - Cleaner executable without embedded binaries
 
 ### Technical Changes
+
 - **MangaOrganizer.spec**: Set `upx=False` to disable compression
 - **build.sh**: Updated to preserve spec file and show optimization settings
 - **build-windows.ps1**: Enhanced for Windows-specific optimizations
 
 ### Notes
+
 - Users need to install 7-Zip separately for RAR archive support
 - ZIP, 7z, and CBZ formats work without additional software
 - This version focuses on reducing false positive detections by antivirus software
@@ -46,6 +76,7 @@
 ### Improvements
 
 #### Logging System
+
 - **Enhanced log file management**: Logs are now saved in a dedicated `logs/` directory
   - Date-based file naming: `manga_organizer_YYYYMMDD.log`
   - Automatic cleanup of logs older than 30 days
@@ -53,6 +84,7 @@
   - Better organization for troubleshooting
 
 #### Documentation
+
 - **Comprehensive README.md**: Added detailed installation and usage instructions
   - Step-by-step installation guide
   - Folder structure after installation
@@ -63,6 +95,7 @@
   - Development environment setup
 
 ### Technical Changes
+
 - **main.py**: Refactored logging setup with automatic directory creation
 - **README.md**: Focused on end-user documentation
 - **DEVELOPMENT.md**: New file for developer-specific documentation
@@ -89,11 +122,13 @@
 ### Technical Changes
 
 - **archive_handler.py**: Enhanced bundled tool detection
+
   - Prioritizes 7za.exe (standalone) over 7z.exe
   - Improved logging to show which executable is being used
   - Better configuration for rarfile module with standalone 7za.exe
 
 - **MangaOrganizer.spec**: Updated PyInstaller configuration
+
   - Changed to bundle 7za.exe instead of 7z.exe + 7z.dll
   - Added file size verification during build
 
