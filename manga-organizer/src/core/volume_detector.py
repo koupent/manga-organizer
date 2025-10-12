@@ -19,15 +19,6 @@ class VolumeDetector:
             r"#(\d+)",  # #1
         ]
 
-        # Patterns for special editions
-        self.special_patterns = [
-            (r"番外", "Extra"),
-            (r"特別", "Special"),
-            (r"外伝", "Gaiden"),
-            (r"短編", "Short"),
-            (r"総集編", "Omnibus"),
-        ]
-
     def extract_numbers(self, text: str) -> List[int]:
         # Extract all number sequences from text
         numbers = re.findall(r"\d+", text)
@@ -47,57 +38,32 @@ class VolumeDetector:
 
         return None
 
-    def detect_special_edition(self, text: str) -> Optional[str]:
-        for pattern, label in self.special_patterns:
-            if re.search(pattern, text):
-                return label
-        return None
-
-    def detect_volume_from_archive(
-        self, archive_path: Path
-    ) -> Tuple[Optional[int], Optional[str]]:
+    def detect_volume_from_archive(self, archive_path: Path) -> Optional[int]:
         """Detect volume number from archive filename"""
         archive_name = archive_path.stem  # Get filename without extension
         return self.detect_volume_from_name(archive_name)
 
-    def detect_volume_from_name(self, name: str) -> Tuple[Optional[int], Optional[str]]:
+    def detect_volume_from_name(self, name: str) -> Optional[int]:
         """Detect volume number from a name string"""
-        # First, check for special editions
-        special = self.detect_special_edition(name)
-        if special:
-            # For special editions, still try to find a number
-            volume = self.detect_volume_from_patterns(name)
-            if volume:
-                return volume, special
-            else:
-                # If no number, extract any numbers and use the last one
-                numbers = self.extract_numbers(name)
-                if numbers:
-                    return numbers[-1], special
-                else:
-                    return None, special
-
         # Try pattern-based detection
         volume = self.detect_volume_from_patterns(name)
         if volume:
-            return volume, None
+            return volume
 
         # Fallback: extract all numbers and use the last one
         numbers = self.extract_numbers(name)
         if numbers:
             # Common heuristic: the last number is often the volume
-            return numbers[-1], None
+            return numbers[-1]
 
-        return None, None
+        return None
 
-    def detect_volume(
-        self, directory_path: Path
-    ) -> Tuple[Optional[int], Optional[str]]:
+    def detect_volume(self, directory_path: Path) -> Optional[int]:
         dir_name = directory_path.name
 
         # Skip obvious temporary directories (but not normal manga_vol type names)
         if dir_name.startswith("_extracted_") or dir_name.startswith("temp"):
-            return None, None
+            return None
 
         # Use existing name-based detection logic
         return self.detect_volume_from_name(dir_name)
@@ -107,17 +73,11 @@ class VolumeDetector:
         author: str,
         title: str,
         volume: Optional[int],
-        special: Optional[str] = None,
     ) -> str:
         base_name = f"[{author}] {title}"
 
         if volume is not None:
-            if special:
-                return f"{base_name} 第{volume:03d}巻 ({special})"
-            else:
-                return f"{base_name} 第{volume:03d}巻"
-        elif special:
-            return f"{base_name} {special}"
+            return f"{base_name} 第{volume:03d}巻"
         else:
             return f"{base_name} Unknown"
 

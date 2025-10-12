@@ -21,7 +21,6 @@ class ProcessResult:
     success: bool
     error_message: Optional[str] = None
     volume_number: Optional[int] = None
-    special_type: Optional[str] = None
 
 
 class FileOrganizer:
@@ -41,7 +40,7 @@ class FileOrganizer:
         """Unified logging helper method"""
         if self.log_callback:
             self.log_callback(message)
-        
+
         if level == "error":
             logger.error(message)
         elif level == "warning":
@@ -70,14 +69,16 @@ class FileOrganizer:
 
         return archives
 
-    def _validate_and_extract_archive(self, archive_path: Path) -> Tuple[List[Path], Optional[str]]:
+    def _validate_and_extract_archive(
+        self, archive_path: Path
+    ) -> Tuple[List[Path], Optional[str]]:
         """Validate and extract archive, returning image directories and any error"""
         self._log(f"  Processing archive structure...")
         image_dirs, error = self.archive_handler.process_archive(archive_path)
-        
+
         if error or not image_dirs:
             return [], error or "No images found"
-            
+
         self._log(f"Found {len(image_dirs)} volumes in {archive_path.name}")
         return image_dirs, None
 
@@ -90,43 +91,43 @@ class FileOrganizer:
 
     def _detect_volume_number(
         self, image_dir: Path, archive_path: Path, vol_idx: int, total_dirs: int
-    ) -> Tuple[Optional[int], Optional[str]]:
+    ) -> Optional[int]:
         """Detect volume number using priority-based detection"""
         # Priority 1: Try to get volume from the image directory name first
-        volume, special = self.volume_detector.detect_volume(image_dir)
-        
+        volume = self.volume_detector.detect_volume(image_dir)
+
         # Priority 2: For single directory archives only, try archive name
         if volume is None and total_dirs == 1:
-            volume_from_archive, special_from_archive = (
-                self.volume_detector.detect_volume_from_archive(archive_path)
+            volume_from_archive = self.volume_detector.detect_volume_from_archive(
+                archive_path
             )
             if volume_from_archive is not None:
                 volume = volume_from_archive
-                special = special_from_archive
         # Priority 3: If multiple dirs and no volume number, use index
         elif volume is None and total_dirs > 1:
             volume = vol_idx
-            
-        return volume, special
+
+        return volume
 
     def _process_volume(
-        self, image_dir: Path, archive_path: Path, manga_dir: Path,
-        volume: Optional[int], special: Optional[str]
+        self,
+        image_dir: Path,
+        archive_path: Path,
+        manga_dir: Path,
+        volume: Optional[int],
     ) -> ProcessResult:
         """Process a single volume and create output archive"""
         # Generate output filename
         output_name = self.volume_detector.format_volume_name(
-            self.author, self.title, volume, special
+            self.author, self.title, volume
         )
-        
+
         # Get unique output path in the manga subdirectory
-        output_path = self.volume_detector.get_unique_filename(
-            manga_dir, output_name
-        )
-        
+        output_path = self.volume_detector.get_unique_filename(manga_dir, output_name)
+
         # Create new archive for this volume
         success = self.archive_handler.create_archive(image_dir, output_path)
-        
+
         if success:
             self._log(f"Created: {output_path.name}")
             return ProcessResult(
@@ -134,7 +135,6 @@ class FileOrganizer:
                 output_path=output_path,
                 success=True,
                 volume_number=volume,
-                special_type=special,
             )
         else:
             return ProcessResult(
@@ -144,7 +144,9 @@ class FileOrganizer:
                 error_message=f"Failed to create archive for volume {volume}",
             )
 
-    def _handle_original_deletion(self, archive_path: Path, results: List[ProcessResult]):
+    def _handle_original_deletion(
+        self, archive_path: Path, results: List[ProcessResult]
+    ):
         """Delete original archive if requested and all volumes were successful"""
         if not self.keep_originals and all(r.success for r in results):
             try:
@@ -170,32 +172,32 @@ class FileOrganizer:
                         error_message=error,
                     )
                 ]
-            
+
             # Step 2: Create manga directory
             manga_dir = self._create_manga_directory()
-            
+
             # Step 3: Process each volume
             if len(image_dirs) > 1:
                 self._log(f"  Processing {len(image_dirs)} volumes...")
-            
+
             for vol_idx, image_dir in enumerate(image_dirs, 1):
                 if len(image_dirs) > 1:
                     self._log(f"  Processing volume {vol_idx}/{len(image_dirs)}...")
-                
+
                 # Detect volume number
-                volume, special = self._detect_volume_number(
+                volume = self._detect_volume_number(
                     image_dir, archive_path, vol_idx, len(image_dirs)
                 )
-                
+
                 # Process the volume
                 result = self._process_volume(
-                    image_dir, archive_path, manga_dir, volume, special
+                    image_dir, archive_path, manga_dir, volume
                 )
                 results.append(result)
-            
+
             # Step 4: Handle original deletion
             self._handle_original_deletion(archive_path, results)
-            
+
             return (
                 results
                 if results
