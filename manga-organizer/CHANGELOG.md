@@ -1,5 +1,22 @@
 # Manga Organizer - Changelog
 
+## Version 3.8.2 - Volume Detection Simplification
+
+### Changes
+
+#### Volume Detection Refactoring
+
+- **特殊エディション判定機能を削除**: 番外編、特別編、外伝、短編、総集編の自動判定機能を削除
+- **巻数検出の簡素化**: 通常の巻数検出のみに機能を集約
+- **戻り値の簡素化**: `detect_volume_from_name`、`detect_volume_from_archive`、`detect_volume`メソッドの戻り値を`Optional[int]`に統一
+- **コードのシンプル化**: `ProcessResult`から`special_type`フィールドを削除
+
+### Benefits
+
+- **より予測可能な動作**: 特殊エディション判定による予期しない動作を排除
+- **シンプルな出力**: 標準的な巻数フォーマットのみに統一
+- **保守性向上**: コードの複雑性を削減し、メンテナンスを容易に
+
 ## Version 3.8.1 - AVIF Image Format Support
 
 ### New Features
