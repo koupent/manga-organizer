@@ -9,11 +9,13 @@ Windows向け漫画アーカイブ整理アプリです。アプリ本体は `ma
 
 固定 SHA は `.engineering-workflow/workflow-plugin.lock.json` と `.dev-foundation/foundation.lock.json` を正本とします。
 
-Dev Container 再作成後、コンテナ内で Plugin を導入します。
+Dev Container 再作成後、コンテナ内で Plugin を導入します。これを忘れると marketplace が `cache-miss` になり、Claude Code ハーネス（Agent ルーティング）が動きません。
 
 ```bash
 bash scripts/install_workflow.sh
 ```
+
+導入後は Claude Code を再起動してください。SessionStart で provenance 検証が通れば、`workflow-coordinator` 経由の Agent / Task が使えます。
 
 ## 品質ゲート
 
