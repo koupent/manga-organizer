@@ -1,7 +1,6 @@
+import logging
 import re
 from pathlib import Path
-from typing import Optional, List, Tuple
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +18,12 @@ class VolumeDetector:
             r"#(\d+)",  # #1
         ]
 
-    def extract_numbers(self, text: str) -> List[int]:
+    def extract_numbers(self, text: str) -> list[int]:
         # Extract all number sequences from text
         numbers = re.findall(r"\d+", text)
         return [int(n) for n in numbers]
 
-    def detect_volume_from_patterns(self, text: str) -> Optional[int]:
+    def detect_volume_from_patterns(self, text: str) -> int | None:
         text_lower = text.lower()
 
         # Try each volume pattern
@@ -33,17 +32,17 @@ class VolumeDetector:
             if match:
                 try:
                     return int(match.group(1))
-                except:
+                except ValueError:
                     pass
 
         return None
 
-    def detect_volume_from_archive(self, archive_path: Path) -> Optional[int]:
+    def detect_volume_from_archive(self, archive_path: Path) -> int | None:
         """Detect volume number from archive filename"""
         archive_name = archive_path.stem  # Get filename without extension
         return self.detect_volume_from_name(archive_name)
 
-    def detect_volume_from_name(self, name: str) -> Optional[int]:
+    def detect_volume_from_name(self, name: str) -> int | None:
         """Detect volume number from a name string"""
         # Try pattern-based detection
         volume = self.detect_volume_from_patterns(name)
@@ -58,7 +57,7 @@ class VolumeDetector:
 
         return None
 
-    def detect_volume(self, directory_path: Path) -> Optional[int]:
+    def detect_volume(self, directory_path: Path) -> int | None:
         dir_name = directory_path.name
 
         # Skip obvious temporary directories (but not normal manga_vol type names)
@@ -72,7 +71,7 @@ class VolumeDetector:
         self,
         author: str,
         title: str,
-        volume: Optional[int],
+        volume: int | None,
     ) -> str:
         base_name = f"[{author}] {title}"
 

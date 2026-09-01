@@ -1,0 +1,25 @@
+{
+  "enabledPlugins": {
+    "ecc@ecc": true,
+    "engineering-workflow-plugin@engineering-workflow": true
+  },
+  "agent": "engineering-workflow-plugin:workflow-coordinator",
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/bin/engineering-workflow-statusline.sh\""
+  },
+  "extraKnownMarketplaces": {
+    "ecc": {
+      "source": {
+        "source": "directory",
+        "path": "C:\\Users\\koute\\.cache\\manga-organizer-workflow\\ecc\\5eddf1a3ffd311423be2d4ba7d26f7209c91b033"
+      }
+    },
+    "engineering-workflow": {
+      "source": {
+        "source": "directory",
+        "path": "C:\\Users\\koute\\.cache\\manga-organizer-workflow\\workflow-plugin\\05a14866bf421cda0fad1a64ac96f3e11c923f92"
+      }
+    }
+  }
+}

@@ -120,5 +120,24 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-.claude/
 .serena/
+.worktrees/
+.artifacts/
+
+# Claude: Pluginが追跡する最小設定だけを残す
+/.claude/*
+!/.claude/bin/
+!/.claude/rules/
+!/.claude/settings.json
+!/.claude/README.md
+/.claude/state/
+
+# engineering-workflow の一時状態
+/.engineering-workflow/task.json
+/.engineering-workflow/*.tmp
+
+# dev-foundation:local:start
+.dev-foundation/local.json
+.dev-foundation/state.json
+.dev-foundation/backups/
+# dev-foundation:local:end

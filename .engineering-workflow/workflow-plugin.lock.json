@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/koupent/engineering-workflow-plugin.git",
+  "version": "0.14.0",
+  "commit": "05a14866bf421cda0fad1a64ac96f3e11c923f92",
+  "ecc": {
+    "repository": "https://github.com/affaan-m/ECC.git",
+    "tag": "v2.2.0",
+    "version": "2.2.0",
+    "commit": "5eddf1a3ffd311423be2d4ba7d26f7209c91b033"
+  }
+}

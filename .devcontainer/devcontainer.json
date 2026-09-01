@@ -1,115 +1,67 @@
 {
-  "name": "Manga Organizer",
+  "name": "manga-organizer",
   "build": {
-    "dockerfile": "Dockerfile",
-    "args": {
-      "TZ": "${localEnv:TZ:Asia/Tokyo}",
-      "CLAUDE_CODE_VERSION": "latest",
-      "GIT_DELTA_VERSION": "0.18.2",
-      "ZSH_IN_DOCKER_VERSION": "1.2.0"
+    "dockerfile": "Dockerfile.project",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspaces/manga-organizer",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    },
+    "ghcr.io/koupent/engineering-dev-foundation/core:0.3.0": {
+      "installClaude": true,
+      "installCodex": true,
+      "claudeVersion": "latest",
+      "codexVersion": "latest"
+    },
+    "ghcr.io/koupent/engineering-dev-foundation/zsh:0.2.1": {},
+    "ghcr.io/koupent/engineering-dev-foundation/voice:0.2.0": {
+      "voiceMode": "docker-desktop",
+      "rancherPort": "24713"
     }
   },
   "customizations": {
     "vscode": {
       "extensions": [
-        "anthropic.claude-code",
-        "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode",
-        "mhutchie.git-graph",
-        "lang2hong.githd",
-        "bierner.markdown-mermaid",
-        "shd101wyy.markdown-preview-enhanced",
         "ms-python.python",
-        "ms-python.vscode-pylance",
-        "ms-python.black-formatter"
+        "charliermarsh.ruff",
+        "mhutchie.git-graph"
       ],
       "settings": {
-        // フォーマッター設定
-        "editor.defaultFormatter": "esbenp.prettier-vscode",
-        "editor.formatOnSave": true,
-        "editor.formatOnPaste": true,
-        "editor.codeActionsOnSave": {
-          "source.fixAll.eslint": "explicit"
-        },
+        "git.detectWorktrees": true,
         "[python]": {
-          "editor.defaultFormatter": "ms-python.black-formatter",
+          "editor.defaultFormatter": "charliermarsh.ruff",
           "editor.formatOnSave": true,
           "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
             "source.organizeImports": "explicit"
           }
         },
-        "notebook.defaultFormatter": "ms-python.black-formatter",
-        "notebook.formatOnSave.enabled": true,
-        "notebook.formatOnCellExecution": true,
-
-        // エディター設定
-        "files.autoSave": "onFocusChange",
-        "editor.unicodeHighlight.invisibleCharacters": false,
-        "editor.unicodeHighlight.ambiguousCharacters": false,
-        "diffEditor.hideUnchangedRegions.enabled": true,
-        "typescript.updateImportsOnFileMove.enabled": "always",
-
-        // ターミナル設定
-        "terminal.integrated.defaultProfile.linux": "zsh",
-        "terminal.integrated.profiles.linux": {
-          "bash": {
-            "path": "bash",
-            "icon": "terminal-bash"
-          },
-          "zsh": {
-            "path": "zsh"
-          }
-        },
-
-        // Python設定
-        "python.defaultInterpreterPath": "/home/node/.venv/bin/python",
-        "python.terminal.activateEnvironment": false,
-        "python.analysis.autoImportCompletions": true,
-        "python.formatting.provider": "black",
-        "python.formatting.blackArgs": ["--line-length=88"],
-
-        // Git設定
-        "git.autofetch": true,
-
-        // リモート・セキュリティ設定
-        "remote.autoForwardPortsSource": "hybrid",
-
-        // Markdown設定
-        "markdown-preview-enhanced.previewTheme": "atom-dark.css",
-        "extensions.ignoreRecommendations": true
+        "python.defaultInterpreterPath": "${workspaceFolder}/manga-organizer/.venv/bin/python"
       }
     }
   },
-  "remoteUser": "node",
-  "updateRemoteUserUID": true,
-  "features": {
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
-  },
+  "postCreateCommand": "bash -lc 'cd manga-organizer && uv sync --group dev'",
   "mounts": [
-    "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
-    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
-    "source=claude-code-gh-config-${devcontainerId},target=/home/node/.config/gh,type=volume"
+    "source=manga-organizer-foundation-claude,target=/home/vscode/.claude,type=volume",
+    "source=manga-organizer-foundation-codex,target=/home/vscode/.codex,type=volume",
+    "source=manga-organizer-foundation-gh,target=/home/vscode/.config/gh,type=volume",
+    "source=manga-organizer-foundation-azure,target=/home/vscode/.azure,type=volume",
+    "source=manga-organizer-foundation-worktrees,target=/workspaces/manga-organizer/.worktrees,type=volume",
+    "source=manga-organizer-foundation-shell-history,target=/commandhistory,type=volume",
+    "source=\\\\wsl.localhost\\Ubuntu\\mnt\\wslg,target=/run/dev-foundation-host/wslg,type=bind,readonly"
   ],
   "containerEnv": {
-    "NODE_OPTIONS": "--max-old-space-size=4096",
-    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
-    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
-    "PLAYWRIGHT_MCP_HEADLESS": "false",
-    "PLAYWRIGHT_MCP_SANDBOX": "false",
-    "DISPLAY": ":0"
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+    "CODEX_HOME": "/home/vscode/.codex",
+    "PULSE_SERVER": "unix:/run/dev-foundation/pulse-native",
+    "AUDIODRIVER": "pulseaudio"
   },
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
-  "workspaceFolder": "/workspace",
-  "forwardPorts": [6080, 5900],
-  "portsAttributes": {
-    "6080": {
-      "label": "noVNC access",
-      "onAutoForward": "notify"
-    },
-    "5900": {
-      "label": "VNC (raw)"
-    }
-  },
-  "postCreateCommand": "bash .devcontainer/scripts/setup-superclaude.sh",
-  "postStartCommand": "bash .devcontainer/scripts/start-vnc.sh"
+  "runArgs": [
+    "--security-opt=seccomp=${localWorkspaceFolder}/.devcontainer/foundation/codex-bwrap.json",
+    "--log-opt=max-size=10m",
+    "--log-opt=max-file=3"
+  ]
 }

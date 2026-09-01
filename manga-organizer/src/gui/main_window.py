@@ -1,19 +1,18 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from tkinterdnd2 import DND_FILES, TkinterDnD
-from pathlib import Path
-import threading
-from typing import List
 import logging
+import threading
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from tkinterdnd2 import DND_FILES, TkinterDnD
 
 # Import version from the src directory
 from __version__ import __version__ as VERSION
-
 from core.file_organizer import FileOrganizer
 from core.manga_database import MangaDatabase
-from gui.title_author_combo import TitleAuthorCombo
-from gui.sortable_listbox import SortableListbox
 from gui.database_editor import DatabaseEditorWindow
+from gui.sortable_listbox import SortableListbox
+from gui.title_author_combo import TitleAuthorCombo
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ class MainWindow:
         self.root.title(f"Manga Organizer v{VERSION}")
         self.root.geometry("900x750")
 
-        self.archive_files: List[Path] = []
+        self.archive_files: list[Path] = []
         self.organizer = None
         self.database = MangaDatabase()
         self.processing = False
@@ -306,14 +305,14 @@ class MainWindow:
                     0,
                     self.update_progress,
                     overall_progress,
-                    f"Processing {i+1}/{len(archive_files)}: {archive_file.name}",
+                    f"Processing {i + 1}/{len(archive_files)}: {archive_file.name}",
                 )
 
                 # Log extraction start
                 self.root.after(
                     0,
                     self.log_message,
-                    f"\n[{i+1}/{len(archive_files)}] Extracting: {archive_file.name}",
+                    f"\n[{i + 1}/{len(archive_files)}] Extracting: {archive_file.name}",
                 )
 
                 # Process single archive with detailed logging
@@ -335,7 +334,7 @@ class MainWindow:
                             )
                 else:
                     self.root.after(
-                        0, self.log_message, f"  ✗ Failed to process archive"
+                        0, self.log_message, "  ✗ Failed to process archive"
                     )
                     for result in results:
                         if not result.success:
@@ -390,13 +389,13 @@ class MainWindow:
         self.process_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
 
-        self.log_message(f"\n{'='*50}")
-        self.log_message(f"Processing complete!")
+        self.log_message(f"\n{'=' * 50}")
+        self.log_message("Processing complete!")
         self.log_message(f"Total volumes: {summary['total']}")
         self.log_message(f"Successful: {summary['successful']}")
         self.log_message(f"Failed: {summary['failed']}")
 
-        message = f"Processing complete!\n\n"
+        message = "Processing complete!\n\n"
         message += f"Total volumes: {summary['total']}\n"
         message += f"Successful: {summary['successful']}\n"
         message += f"Failed: {summary['failed']}"
@@ -418,8 +417,8 @@ class MainWindow:
         self.process_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
 
-        self.log_message(f"\n{'='*50}")
-        self.log_message(f"Processing stopped by user")
+        self.log_message(f"\n{'=' * 50}")
+        self.log_message("Processing stopped by user")
         self.log_message(f"Processed: {summary['successful']} volumes")
 
         messagebox.showinfo(

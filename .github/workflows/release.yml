@@ -1,0 +1,136 @@
+name: 成果物リリース
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_ref:
+        description: ローカルで公開済みの不変な成果物参照
+        required: true
+        type: string
+      artifact_sha256:
+        description: ローカルで測定した成果物のSHA-256
+        required: true
+        type: string
+      source_commit:
+        description: ローカルbuild元のmain commit
+        required: true
+        type: string
+      source_tree:
+        description: ローカルbuild元のGit tree
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: product-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 検証済みexeをGitHub Releaseへ公開
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: commit・tree・成果物参照を検証
+        id: provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_REF: ${{ inputs.artifact_ref }}
+          ARTIFACT_SHA256: ${{ inputs.artifact_sha256 }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_TREE: ${{ inputs.source_tree }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_TREE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          default_branch=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
+          [[ "$default_branch" == "main" ]]
+          [[ "$GITHUB_REF" == "refs/heads/$default_branch" ]]
+          [[ "$GITHUB_SHA" == "$SOURCE_COMMIT" ]]
+          remote_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$default_branch" --jq .object.sha)
+          [[ "$remote_head" == "$SOURCE_COMMIT" ]]
+
+          remote_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SOURCE_COMMIT" --jq .tree.sha)
+          [[ "$remote_tree" == "$SOURCE_TREE" ]]
+
+          tag="delivery-${SOURCE_COMMIT}-${ARTIFACT_SHA256}"
+          asset="MangaOrganizer-${ARTIFACT_SHA256}.exe"
+          expected_ref="github-release://${GITHUB_REPOSITORY}/${tag}/${asset}"
+          [[ "$ARTIFACT_REF" == "$expected_ref" ]]
+
+          release_json=$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
+            -H 'X-GitHub-Api-Version: 2026-03-10')
+          jq -e \
+            --arg tag "$tag" \
+            --arg asset "$asset" \
+            --arg digest "sha256:$ARTIFACT_SHA256" \
+            --arg commit "$SOURCE_COMMIT" \
+            '.prerelease == true
+              and .draft == false
+              and .tag_name == $tag
+              and .target_commitish == $commit
+              and ([.assets[] | select(
+                .name == $asset
+                and (.digest == $digest or .digest == null or .digest == "")
+                and .state == "uploaded"
+              )] | length) == 1' <<< "$release_json"
+
+          version=$(gh api \
+            "repos/$GITHUB_REPOSITORY/contents/manga-organizer/src/__version__.py?ref=$SOURCE_COMMIT" \
+            --jq .content | base64 -d | sed -n 's/^__version__ = "\([^"]*\)"/\1/p')
+          [[ -n "$version" ]]
+          printf 'tag=%s\nasset=%s\nversion=%s\n' "$tag" "$asset" "$version" >> "$GITHUB_OUTPUT"
+
+      - name: 公開済み成果物を取得
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.provenance.outputs.tag }}
+          ASSET_NAME: ${{ steps.provenance.outputs.asset }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .delivery
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET_NAME" \
+            --dir .delivery
+
+      - name: digestを照合する
+        shell: bash
+        env:
+          ARTIFACT_SHA256: ${{ inputs.artifact_sha256 }}
+          ASSET_NAME: ${{ steps.provenance.outputs.asset }}
+        run: |
+          set -Eeuo pipefail
+          archive=".delivery/$ASSET_NAME"
+          printf '%s  %s\n' "$ARTIFACT_SHA256" "$archive" | sha256sum --check --strict
+
+      - name: 製品リリースを作成または更新する
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          ASSET_NAME: ${{ steps.provenance.outputs.asset }}
+          VERSION: ${{ steps.provenance.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          product_tag="v${VERSION}"
+          product_asset="MangaOrganizer-v${VERSION}.exe"
+          cp ".delivery/$ASSET_NAME" ".delivery/$product_asset"
+
+          if gh release view "$product_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$product_tag" ".delivery/$product_asset" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$product_tag" ".delivery/$product_asset" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_COMMIT" \
+              --title "Release v${VERSION}" \
+              --notes "Manga Organizer v${VERSION}"
+          fi

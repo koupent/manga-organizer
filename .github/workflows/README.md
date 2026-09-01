@@ -1,54 +1,22 @@
 # GitHub Actions Workflows
 
-## Build and Release Workflow
+このリポジトリの Actions はローカル成果物 CD 専用です。PR や branch / tag push では起動しません。
 
-This workflow automatically builds Windows executables when a version tag is pushed.
+## release.yml
 
-### How to Use
+`workflow_dispatch` のみ。必須入力:
 
-1. **Update version**:
-   - Edit `src/__version__.py` to update the version number
-   - Update `pyproject.toml` to match
-   - Update `CHANGELOG.md` with release notes
+- `artifact_ref`
+- `artifact_sha256`
+- `source_commit`
+- `source_tree`
 
-2. **Commit changes**:
-   ```bash
-   git add .
-   git commit -m "Release version 3.6.6"
-   ```
+ジョブは公開済みの不変成果物を取得し、digest を照合したうえで製品向け GitHub Release に exe を添付します。ビルドは行いません。
 
-3. **Create and push tag**:
-   ```bash
-   git tag v3.6.6
-   git push origin main
-   git push origin v3.6.6
-   ```
+## ローカル手順
 
-4. **Wait for build**:
-   - Go to Actions tab on GitHub
-   - Watch the build progress
-   - The release will be created automatically
+1. Linux Dev Container で `bash scripts/run_merge_gate.sh --publish-status`
+2. Windows ホストで成果物をビルド・公開（`scripts/build_release_artifact.sh` と `scripts/publish_release_artifact.mjs`）
+3. Plugin の `local-delivery.mjs dispatch` で `release.yml` を一度だけ起動
 
-### Manual Trigger
-
-The workflow can also be triggered manually from the Actions tab for testing purposes.
-
-### Build Process
-
-1. Sets up Windows environment with Python 3.11
-2. Installs dependencies using `uv`
-3. Downloads 7-Zip portable (optional, for RAR support)
-4. Builds executable with PyInstaller
-5. Creates GitHub release with the built exe
-
-### Artifacts
-
-- The built executable is uploaded as an artifact (kept for 30 days)
-- The executable is also attached to the GitHub release
-
-### Requirements
-
-The workflow requires:
-- PyInstaller configuration in `MangaOrganizer.spec`
-- Version info in `src/__version__.py`
-- Release notes in `CHANGELOG.md`
+詳細はリポジトリ直下の `DEVELOPMENT.md` を参照してください。

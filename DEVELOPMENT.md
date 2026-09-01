@@ -1,300 +1,170 @@
 # Manga Organizer - 開発者ドキュメント
 
-このドキュメントは、Manga Organizerの開発者向け情報をまとめたものです。
+このドキュメントは、Manga Organizer の開発者向け情報です。
 
-## 📋 目次
+## 目次
 
-- [バージョンアップ手順](#バージョンアップ手順)
+- [開発基盤](#開発基盤)
 - [開発環境のセットアップ](#開発環境のセットアップ)
-- [ビルド方法](#ビルド方法)
-- [リリース手順](#リリース手順)
+- [Local Merge Gate](#local-merge-gate)
+- [ビルドとリリース](#ビルドとリリース)
+- [バージョンアップ手順](#バージョンアップ手順)
 - [プロジェクト構造](#プロジェクト構造)
 - [コーディング規約](#コーディング規約)
 
-## バージョンアップ手順
+## 開発基盤
 
-### 1. バージョン番号の更新
+正本は次の2つです。
 
-以下のファイルのバージョン番号を更新します：
+- Engineering Dev Foundation v0.7.0（`.dev-foundation/`）
+- Engineering Workflow Plugin v0.14.0 + 公式 ECC v2.2.0（`.engineering-workflow/`）
 
-#### `manga-organizer/src/__version__.py`
-```python
-__version__ = "X.Y.Z"  # 新しいバージョン番号
-__release_date__ = "YYYY-MM-DD"  # リリース日
-```
+固定 SHA:
 
-#### `manga-organizer/pyproject.toml`
-```toml
-[project]
-version = "X.Y.Z"  # 新しいバージョン番号
-```
+- Foundation: `.dev-foundation/foundation.lock.json`
+- Plugin / ECC: `.engineering-workflow/workflow-plugin.lock.json`
 
-### 2. CHANGELOG.mdの更新
-
-`manga-organizer/CHANGELOG.md`に新バージョンのセクションを追加：
-
-```markdown
-## Version X.Y.Z - 簡潔な説明
-
-### New Features / Improvements / Bug Fixes
-- 変更内容の詳細
-```
-
-### 3. コミットとタグ付け
-
-```bash
-# 変更をステージング
-git add -A
-
-# バージョンアップをコミット
-git commit -m "バージョンX.Y.Zリリース: 主な変更点の要約"
-
-# タグを作成
-git tag vX.Y.Z
-
-# リモートにプッシュ
-git push origin main
-git push origin vX.Y.Z
-```
-
-### 4. GitHub Actionsによる自動ビルド
-
-タグをプッシュすると、GitHub Actionsが自動的に：
-1. Windows実行ファイルをビルド
-2. GitHubリリースを作成
-3. ビルド済みexeファイルを添付
+Dev Container は Foundation が生成します。製品固有設定の正本は `.devcontainer/devcontainer.project.json` と `.devcontainer/Dockerfile.project` です。
 
 ## 開発環境のセットアップ
 
 ### 必要環境
 
-- Python 3.8以上
-- Git
-- uv（推奨）またはpip
+- Docker Desktop（Linux Dev Container）
+- Windows ホスト（exe ビルド時）
+- Python 3.11（アプリ側は `manga-organizer/.python-version`）
+- uv
+- Git / GitHub CLI
 
-### セットアップ手順
+### 手順
 
 ```bash
-# リポジトリをクローン
 git clone https://github.com/koupent/manga-organizer.git
 cd manga-organizer
-
-# uvを使用（推奨）
-pip install uv
-cd manga-organizer
-uv sync
-
-# または pip を使用
-cd manga-organizer
-pip install -r requirements.txt
 ```
 
-### 開発用実行
+1. Cursor / VS Code で Dev Container を再作成する
+2. コンテナ内で Plugin を導入する
+
+```bash
+bash scripts/install_workflow.sh
+```
+
+3. アプリ依存を同期する（`postCreateCommand` でも実行されます）
 
 ```bash
 cd manga-organizer
-python src/main.py
+uv sync --group dev
+uv run python src/main.py
 ```
 
-## ビルド方法
+## Local Merge Gate
 
-### GitHub Actions（推奨）
-
-タグをプッシュすると自動ビルド：
+品質判定は GitHub Actions ではなくローカル必須です。
 
 ```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
+bash scripts/run_merge_gate.sh
+bash scripts/run_merge_gate.sh --publish-status
 ```
 
-ワークフロー設定: `.github/workflows/build-release.yml`
+実行内容（`manga-organizer/` 配下）:
 
-### ローカルビルド
+- `uv lock --check`
+- `uv run ruff check src`
+- `uv run ruff format --check src`
+- `uv run python -m compileall -q src`
 
-#### Linuxでのビルド
+`--publish-status` は GitHub の `Local Merge Gate` commit status を更新します。
+
+Repository policy のローカル検証:
+
+```bash
+node <plugin-root>/scripts/repository-policy.mjs verify --local-only --project-dir .
+```
+
+## ビルドとリリース
+
+タグ push では何も起動しません。Actions は `workflow_dispatch` 専用の照合・公開だけを行います。
+
+### Windows ホストでの成果物作成
+
+```bash
+# リポジトリルート（Git Bash）
+bash scripts/build_release_artifact.sh
+# 成果物: .artifacts/MangaOrganizer.exe
+```
+
+公開と CD 起動は Plugin の local-delivery 境界を使います。
+
+```bash
+node <plugin-root>/scripts/local-delivery.mjs prepare --project-dir .
+node <plugin-root>/scripts/local-delivery.mjs dispatch --project-dir .
+```
+
+`prepare` は Local Merge Gate → Windows ビルド → 不変 prerelease 公開までを行います。`dispatch` は `.github/workflows/release.yml` を一度だけ起動し、digest 照合後に製品向け GitHub Release へ exe を添付します。
+
+非 Windows では `scripts/build_release_artifact.sh` は失敗します。
+
+### 従来のローカルビルド
 
 ```bash
 cd manga-organizer
-./build.sh
-```
-
-#### Windowsでのビルド
-
-```powershell
-cd manga-organizer
-powershell -ExecutionPolicy Bypass -File build-windows.ps1
-```
-
-#### 手動ビルド
-
-```bash
-cd manga-organizer
-
-# PyInstallerを使用
 uv run pyinstaller MangaOrganizer.spec
-
-# または直接コマンド
-uv run pyinstaller --onefile --noconsole --windowed \
-    --name "MangaOrganizer-vX.Y.Z" \
-    --paths src \
-    --hidden-import rarfile \
-    src/main.py
 ```
 
-### ビルド成果物
+## バージョンアップ手順
 
-- 出力先: `dist/MangaOrganizer-vX.Y.Z.exe`
-- ファイルサイズ: 約20-30MB
-- 7za.exe内蔵（RAR対応）
-
-## リリース手順
-
-### 1. 事前確認
-
-- [ ] すべてのテストが通過
-- [ ] CHANGELOGが更新済み
-- [ ] バージョン番号が正しい
-- [ ] ローカルでビルドテスト完了
-
-### 2. リリース作成
-
-1. バージョンタグをプッシュ（自動ビルド開始）
-2. GitHub Actionsのビルド完了を確認
-3. リリースページで内容を確認
-4. 必要に応じてリリースノートを編集
-
-### 3. リリース後の確認
-
-- [ ] ダウンロードリンクの動作確認
-- [ ] 実行ファイルの起動テスト
-- [ ] ウイルス対策ソフトでの誤検知確認
+1. `manga-organizer/src/__version__.py` と `manga-organizer/pyproject.toml` の version を更新
+2. `manga-organizer/CHANGELOG.md` を更新
+3. PR 経由で main へ squash merge（Local Merge Gate 必須）
+4. Windows ホストで local-delivery の prepare / dispatch を実行
 
 ## プロジェクト構造
 
 ```
-manga-organizer/
-├── src/                        # ソースコード
-│   ├── __version__.py         # バージョン情報
-│   ├── main.py                # エントリーポイント
-│   ├── core/                  # コアロジック
-│   │   ├── archive_handler.py # アーカイブ処理
-│   │   ├── file_organizer.py  # ファイル整理
-│   │   └── volume_detector.py # 巻番号検出
-│   ├── gui/                   # GUI関連
-│   │   └── main_window.py     # メインウィンドウ
-│   └── api/                   # API連携
-│       └── anilist_client.py  # AniList API
-├── resources/                  # リソースファイル
-│   └── 7zip/                  # 7za.exe配置用
-├── scripts/                    # ユーティリティスクリプト
-├── tests/                      # テストコード
-├── docs/                       # ドキュメント
-├── .github/                    # GitHub設定
-│   └── workflows/             # GitHub Actions
-├── build.sh                   # ビルドスクリプト（Unix）
-├── MangaOrganizer.spec        # PyInstaller設定
-├── pyproject.toml             # プロジェクト設定
-├── CHANGELOG.md               # 変更履歴
-├── README.md                  # ユーザー向けドキュメント
-└── DEVELOPMENT.md             # このファイル
+manga-organizer/                 # リポジトリルート
+├── manga-organizer/             # アプリ本体
+│   ├── src/
+│   ├── pyproject.toml
+│   ├── uv.lock
+│   ├── MangaOrganizer.spec
+│   └── .python-version
+├── scripts/
+│   ├── run_merge_gate.sh
+│   ├── build_release_artifact.sh
+│   ├── publish_release_artifact.mjs
+│   └── install_workflow.sh
+├── .devcontainer/               # Foundation 生成層 + Project Layer
+├── .dev-foundation/
+├── .engineering-workflow/
+├── .github/workflows/release.yml
+├── CLAUDE.md
+└── DEVELOPMENT.md
 ```
 
 ## コーディング規約
 
-### Python コーディングスタイル
-
-- PEP 8準拠
-- 型ヒントの使用を推奨
-- docstringは必須（Google スタイル）
-
-### コミットメッセージ
-
-形式：`<type>: <description>`
-
-タイプ：
-- `feat`: 新機能
-- `fix`: バグ修正
-- `docs`: ドキュメント
-- `style`: コードスタイル
-- `refactor`: リファクタリング
-- `test`: テスト
-- `chore`: その他
-
-例：
-```
-feat: RAR形式のサポートを追加
-fix: 巻番号検出の不具合を修正
-docs: インストール手順を更新
-```
-
-### ブランチ戦略
-
-- `main`: メインブランチ（安定版）
-- `feature/*`: 新機能開発
-- `fix/*`: バグ修正
-- `docs/*`: ドキュメント更新
-
-### テスト
-
-```bash
-# テスト実行
-cd manga-organizer
-python -m pytest tests/
-
-# カバレッジ測定
-python -m pytest --cov=src tests/
-```
+- Python は ruff（`manga-organizer/pyproject.toml` の `[tool.ruff]`）に従う
+- ブランチ: `feature/issue-<番号>-...` / `fix/issue-<番号>-...`
+- コミットメッセージ: `# <Issue番号> <接頭辞>: <概要>`
+- main へのマージは squash のみ
 
 ## トラブルシューティング
 
-### ビルドエラー
+### tkinter が見つからない（Linux）
 
-#### PyInstallerが見つからない
 ```bash
-uv add pyinstaller
-# または
-pip install pyinstaller
-```
-
-#### 7za.exeが含まれない
-1. `resources/7zip/`ディレクトリを確認
-2. GitHub Actionsワークフローで自動ダウンロード
-3. 手動で配置する場合は`resources/7zip/README.md`参照
-
-### 開発環境の問題
-
-#### tkinterが見つからない
-```bash
-# Ubuntu/Debian
 sudo apt-get install python3-tk
-
-# macOS
-brew install python-tk
-
-# Windows
-# Pythonの再インストールが必要な場合あり
 ```
 
-## 貢献方法
+### Foundation doctor
 
-1. このリポジトリをフォーク
-2. 機能ブランチを作成 (`git checkout -b feature/amazing-feature`)
-3. 変更をコミット (`git commit -m 'feat: Add amazing feature'`)
-4. ブランチにプッシュ (`git push origin feature/amazing-feature`)
-5. プルリクエストを作成
+```bash
+node <foundation-root>/bin/dev-foundation.mjs doctor --project-dir .
+```
 
-### プルリクエストのガイドライン
+### Plugin の再導入
 
-- 1つのPRに1つの機能/修正
-- テストを含める
-- CHANGELOGを更新
-- コミットメッセージは規約に従う
-
-## ライセンス
-
-MIT License - 詳細は[LICENSE](LICENSE)を参照
-
-## 連絡先
-
-- Issues: [GitHub Issues](https://github.com/koupent/manga-organizer/issues)
-- Discussions: [GitHub Discussions](https://github.com/koupent/manga-organizer/discussions)
+```bash
+bash scripts/install_workflow.sh
+```

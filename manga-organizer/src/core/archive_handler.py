@@ -1,15 +1,15 @@
+import logging
 import os
-import zipfile
-import tempfile
+import re
 import shutil
 import subprocess
-import re
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
-from typing import List, Optional, Tuple
+
 import py7zr
 from PIL import Image
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class ArchiveHandler:
     @staticmethod
     def _get_bundled_7zip_path():
         """Get path to bundled 7-Zip executable when running from PyInstaller bundle"""
-        if hasattr(sys, '_MEIPASS'):
+        if hasattr(sys, "_MEIPASS"):
             # Running from PyInstaller bundle
             # First try 7za.exe (standalone version)
             bundled_7za = Path(sys._MEIPASS) / "resources" / "7zip" / "7za.exe"
@@ -46,7 +46,7 @@ class ArchiveHandler:
             if bundled_7z.exists():
                 return str(bundled_7z)
         return None
-    
+
     def __init__(self, log_callback=None):
         self.temp_dir = None
         self.progress_callback = None
@@ -68,7 +68,7 @@ class ArchiveHandler:
         """Unified logging helper method"""
         if self.log_callback:
             self.log_callback(message)
-        
+
         if level == "error":
             logger.error(message)
         elif level == "warning":
@@ -86,15 +86,17 @@ class ArchiveHandler:
             with Image.open(file_path) as img:
                 img.verify()
             return True
-        except:
+        except Exception:
             return False
 
-    def _find_7zip_executable(self) -> Optional[str]:
+    def _find_7zip_executable(self) -> str | None:
         """Find 7-Zip executable path"""
         # Check for bundled 7-Zip first (when running from PyInstaller)
         bundled_path = self._get_bundled_7zip_path()
         if bundled_path:
-            self._log(f"    Using bundled 7-Zip from executable: {Path(bundled_path).name}")
+            self._log(
+                f"    Using bundled 7-Zip from executable: {Path(bundled_path).name}"
+            )
             return bundled_path
 
         # Fall back to system 7-Zip
@@ -102,7 +104,7 @@ class ArchiveHandler:
             "C:/Program Files/7-Zip/7z.exe",
             "C:/Program Files (x86)/7-Zip/7z.exe",
             "7za",  # Try standalone 7za in PATH
-            "7z",   # Try 7z in PATH
+            "7z",  # Try 7z in PATH
         ]
 
         for path in system_paths:
@@ -120,7 +122,7 @@ class ArchiveHandler:
                 startupinfo=self.subprocess_startupinfo,
                 creationflags=self.subprocess_creationflags,
             )
-            
+
             # Parse file count from output
             lines = list_result.stdout.split("\n")
             for line in lines:
@@ -138,17 +140,17 @@ class ArchiveHandler:
         seven_zip_exe = self._find_7zip_executable()
         if not seven_zip_exe:
             return False
-            
+
         try:
-            self._log(f"    Using 7-Zip to extract archive...")
-            
+            self._log("    Using 7-Zip to extract archive...")
+
             # Get file count for progress reporting
             file_count = self._get_7zip_file_count(seven_zip_exe, archive_path)
             if file_count > 0:
                 self._log(f"    Archive contains approximately {file_count} files")
-            
+
             # Extract with 7-Zip
-            result = subprocess.run(
+            subprocess.run(
                 [
                     seven_zip_exe,
                     "x",
@@ -163,15 +165,17 @@ class ArchiveHandler:
                 startupinfo=self.subprocess_startupinfo,
                 creationflags=self.subprocess_creationflags,
             )
-            
-            self._log(f"    Extraction complete")
+
+            self._log("    Extraction complete")
             return True
-            
+
         except subprocess.CalledProcessError as e:
             self._log(f"7-Zip failed to extract {archive_path}: {e}", "error")
             return False
 
-    def _extract_zip(self, archive_path: Path, extract_to: Path, progress_callback=None) -> bool:
+    def _extract_zip(
+        self, archive_path: Path, extract_to: Path, progress_callback=None
+    ) -> bool:
         """Extract ZIP archive"""
         try:
             with zipfile.ZipFile(archive_path, "r") as zf:
@@ -205,13 +209,14 @@ class ArchiveHandler:
 
                 # Different args depending on whether it's 7z.exe or 7za.exe
                 # Both versions use the same command syntax
-                rarfile.OPEN_ARGS = ('x', '-y')
-                rarfile.EXTRACT_ARGS = ('x', '-y', '-o')
-                rarfile.TEST_ARGS = ('t',)
+                rarfile.OPEN_ARGS = ("x", "-y")
+                rarfile.EXTRACT_ARGS = ("x", "-y", "-o")
+                rarfile.TEST_ARGS = ("t",)
             else:
                 # Try to find unrar or other RAR tools
                 import shutil
-                unrar_tools = ['unrar', 'UnRAR.exe', 'WinRAR.exe']
+
+                unrar_tools = ["unrar", "UnRAR.exe", "WinRAR.exe"]
                 found_tool = None
                 for tool in unrar_tools:
                     if shutil.which(tool):
@@ -222,20 +227,25 @@ class ArchiveHandler:
                     self._log(f"    Using {found_tool} for RAR extraction")
                     rarfile.UNRAR_TOOL = found_tool
                 else:
-                    self._log(f"    WARNING: No RAR extraction tool found. Trying default configuration...")
+                    self._log(
+                        "    WARNING: No RAR extraction tool found. "
+                        "Trying default configuration..."
+                    )
 
             self._log(f"    Using rarfile module with tool: {rarfile.UNRAR_TOOL}")
             with rarfile.RarFile(archive_path, "r") as rf:
                 members = rf.namelist()
                 self._log(f"    Extracting {len(members)} files from RAR archive...")
                 rf.extractall(extract_to)
-                self._log(f"    RAR extraction complete (using rarfile)")
+                self._log("    RAR extraction complete (using rarfile)")
                 return True
 
         except ImportError:
             error_msg = (
-                "Failed to extract RAR file: Neither 7-Zip nor rarfile module is available.\n"
-                "Please install 7-Zip from https://www.7-zip.org/ for better RAR support."
+                "Failed to extract RAR file: Neither 7-Zip nor rarfile "
+                "module is available.\n"
+                "Please install 7-Zip from https://www.7-zip.org/ "
+                "for better RAR support."
             )
             self._log(f"    ERROR: {error_msg}", "error")
             return False
@@ -261,7 +271,7 @@ class ArchiveHandler:
                 all_files = szf.getnames()
                 self._log(f"    Extracting {len(all_files)} files from 7z archive...")
                 szf.extractall(extract_to)
-                self._log(f"    7z extraction complete")
+                self._log("    7z extraction complete")
                 return True
         except Exception as e:
             self._log(f"Failed to extract 7z: {e}", "error")
@@ -273,7 +283,7 @@ class ArchiveHandler:
         """Extract archive based on its type"""
         try:
             suffix = archive_path.suffix.lower()
-            
+
             if suffix in [".zip", ".cbz", ".epub"]:
                 return self._extract_zip(archive_path, extract_to, progress_callback)
             elif suffix in [".rar", ".cbr"]:
@@ -283,108 +293,114 @@ class ArchiveHandler:
             else:
                 self._log(f"Unsupported archive format: {suffix}", "error")
                 return False
-                
+
         except Exception as e:
             self._log(f"Failed to extract {archive_path}: {e}", "error")
             return False
 
     def _process_directory_for_images(
-        self, dir_path: Path, root_path: Path, image_dirs: List[Path], depth: int = 0
+        self, dir_path: Path, root_path: Path, image_dirs: list[Path], depth: int = 0
     ):
         """Process a directory to find image directories and nested archives"""
         if depth > 10:  # Prevent infinite recursion
             return
-            
+
         processed_archives = set()
-        
+
         # First pass: count directories
         if depth == 0:
             total_dirs = sum(1 for _ in os.walk(dir_path))
-            self._log(f"  Scanning {total_dirs} directories for images and nested archives...")
-        
-        for dirpath, dirnames, filenames in os.walk(dir_path):
+            self._log(
+                f"  Scanning {total_dirs} directories for images and nested archives..."
+            )
+
+        for dirpath, _dirnames, filenames in os.walk(dir_path):
             current_dir = Path(dirpath)
             rel_path = (
                 current_dir.relative_to(root_path)
                 if current_dir != root_path
                 else Path(".")
             )
-            
+
             # Check for images in this directory
             image_files = [
-                f for f in filenames
-                if Path(f).suffix.lower() in self.IMAGE_EXTENSIONS
+                f for f in filenames if Path(f).suffix.lower() in self.IMAGE_EXTENSIONS
             ]
-            
+
             if image_files:
                 image_dirs.append(current_dir)
                 self._log(f"  Found {len(image_files)} images in: {rel_path}")
-            
+
             # Check for nested archives
             archive_files = [
-                f for f in filenames
+                f
+                for f in filenames
                 if Path(f).suffix.lower() in self.SUPPORTED_ARCHIVES
             ]
-            
+
             if archive_files and depth == 0:
                 self._log(f"  Found {len(archive_files)} nested archives to process")
-            
+
             # Process nested archives
             for idx, archive_file in enumerate(archive_files, 1):
                 nested_archive = current_dir / archive_file
-                
+
                 if nested_archive in processed_archives:
                     continue
-                    
+
                 processed_archives.add(nested_archive)
-                
+
                 # Extract nested archive
                 nested_extract_dir = (
                     current_dir / f"_extracted_{archive_file.replace('.', '_')}"
                 )
                 nested_extract_dir.mkdir(parents=True, exist_ok=True)
-                
+
                 if depth == 0:
-                    self._log(f"  Extracting nested archive {idx}/{len(archive_files)}: {archive_file}")
+                    self._log(
+                        "  Extracting nested archive "
+                        f"{idx}/{len(archive_files)}: {archive_file}"
+                    )
                 else:
                     self._log(f"    Extracting: {archive_file}")
-                
+
                 if self.extract_archive(nested_archive, nested_extract_dir):
-                    self._log(f"    Extraction complete, scanning for volumes...")
+                    self._log("    Extraction complete, scanning for volumes...")
                     # Recursively process extracted content
                     self._process_directory_for_images(
                         nested_extract_dir, root_path, image_dirs, depth + 1
                     )
 
-    def find_all_image_directories(self, root_path: Path) -> List[Path]:
+    def find_all_image_directories(self, root_path: Path) -> list[Path]:
         """Find all directories containing images, including nested archives"""
         image_dirs = []
         self._process_directory_for_images(root_path, root_path, image_dirs)
         return image_dirs
 
-    def find_image_directory(self, root_path: Path) -> Optional[Path]:
+    def find_image_directory(self, root_path: Path) -> Path | None:
         """Legacy method - finds first image directory"""
         dirs = self.find_all_image_directories(root_path)
         return dirs[0] if dirs else None
 
-    def process_archive(self, archive_path: Path) -> Tuple[List[Path], Optional[str]]:
+    def process_archive(self, archive_path: Path) -> tuple[list[Path], str | None]:
         """Process archive and return all image directories found"""
         self.temp_dir = Path(tempfile.mkdtemp(prefix="manga_"))
-        
+
         # Create subdirectory named after the archive (without extension)
-        # This ensures that flat archives get a proper directory name for volume detection
+        # This ensures that flat archives get a proper directory name
+        # for volume detection
         archive_subdir = self.temp_dir / archive_path.stem
         archive_subdir.mkdir(parents=True, exist_ok=True)
 
         try:
             # Extract the main archive
-            self._log(f"  Starting extraction to temporary directory...")
+            self._log("  Starting extraction to temporary directory...")
 
             # Extract to the subdirectory instead of directly to temp_dir
             if not self.extract_archive(archive_path, archive_subdir):
                 return [], "Failed to extract archive"
 
-            self._log(f"  Main archive extracted, analyzing contents...")
+            self._log("  Main archive extracted, analyzing contents...")
 
             # Find all directories containing images (now searching from archive_subdir)
             image_dirs = self.find_all_image_directories(archive_subdir)
@@ -392,7 +408,9 @@ class ArchiveHandler:
             if not image_dirs:
                 return [], "No images found in archive"
 
-            self._log(f"  Analysis complete: found {len(image_dirs)} volume(s) to process")
+            self._log(
+                f"  Analysis complete: found {len(image_dirs)} volume(s) to process"
+            )
             return image_dirs, None
 
         except Exception as e:
@@ -406,7 +424,7 @@ class ArchiveHandler:
         try:
             # Collect all image files
             image_files = []
-            for root, dirs, files in os.walk(source_dir):
+            for root, _dirs, files in os.walk(source_dir):
                 for file in files:
                     file_path = Path(root) / file
                     if self.is_image(file_path):
@@ -415,9 +433,11 @@ class ArchiveHandler:
             # Sort files in natural order
             image_files.sort(key=lambda p: natural_sort_key(str(p)))
 
-            self._log(f"    Compressing {len(image_files)} images to {output_path.name}...")
+            self._log(
+                f"    Compressing {len(image_files)} images to {output_path.name}..."
+            )
             if rename_images:
-                self._log(f"    Renaming images to sequential numbers (001, 002, ...)")
+                self._log("    Renaming images to sequential numbers (001, 002, ...)")
 
             with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for idx, file_path in enumerate(image_files, 1):
@@ -431,11 +451,13 @@ class ArchiveHandler:
 
                     zf.write(file_path, arcname)
                     if idx % 10 == 0:  # Log every 10 files
-                        self._log(f"      Compressed {idx}/{len(image_files)} images...")
+                        self._log(
+                            f"      Compressed {idx}/{len(image_files)} images..."
+                        )
 
             self._log(f"    ✓ Created: {output_path.name}")
             return True
-            
+
         except Exception as e:
             self._log(f"Failed to create archive: {e}", "error")
             return False

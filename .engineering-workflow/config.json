@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "localCi": {
+    "command": ["bash", "scripts/run_merge_gate.sh"],
+    "statusContext": "Local Merge Gate"
+  },
+  "delivery": {
+    "buildCommand": ["bash", "scripts/build_release_artifact.sh"],
+    "artifactPath": ".artifacts/MangaOrganizer.exe",
+    "publishCommand": ["node", "scripts/publish_release_artifact.mjs"],
+    "workflow": "release.yml"
+  }
+}
