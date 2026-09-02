@@ -36,7 +36,13 @@ class ApiTestBase(unittest.TestCase):
             for name in ("002.jpg", "001.jpg", "003.jpg"):
                 archive.writestr(name, make_page())
 
-        self.app = create_app(state_dir=self.work_dir / "state", run_jobs_inline=True)
+        # allowed_roots を渡さないと任意のファイルを読めてしまう。
+        # シェルは必ず渡す前提なので、テストでも実際に制限を効かせる
+        self.app = create_app(
+            state_dir=self.work_dir / "state",
+            allowed_roots=[self.work_dir],
+            run_jobs_inline=True,
+        )
         self.token = self.app.state.token
         self.client = TestClient(self.app)
         self.addCleanup(self.client.close)
@@ -191,6 +197,45 @@ class JobTest(ApiTestBase):
         # Act / Assert
         response = self.client.get("/api/jobs/missing", params=self.auth())
         self.assertEqual(404, response.status_code)
+
+
+class SeriesEstimateTest(ApiTestBase):
+    def setUp(self):
+        super().setUp()
+        self.library = self.work_dir / "library"
+        self.library.mkdir()
+        for name in ("作品A 第01巻.zip", "作品A 第02巻.zip", "作品B 第01巻.zip"):
+            with zipfile.ZipFile(self.library / name, "w") as archive:
+                archive.writestr("001.jpg", make_page())
+
+    def test_estimates_groups_from_the_given_archives(self):
+        # Act
+        response = self.client.post(
+            "/api/series/estimate",
+            params=self.auth(),
+            json={"archives": [str(p) for p in sorted(self.library.glob("*.zip"))]},
+        )
+
+        # Assert
+        self.assertEqual(200, response.status_code)
+        groups = response.json()["groups"]
+        self.assertEqual(["作品A", "作品B"], [g["title"] for g in groups])
+        self.assertEqual([1, 2], [v["volume"] for v in groups[0]["volumes"]])
+        self.assertIn("confidence", groups[0])
+
+    def test_requires_a_token(self):
+        # Act / Assert
+        response = self.client.post("/api/series/estimate", json={"archives": []})
+        self.assertEqual(401, response.status_code)
+
+    def test_rejects_an_archive_outside_the_allowed_roots(self):
+        # Act / Assert
+        response = self.client.post(
+            "/api/series/estimate",
+            params=self.auth(),
+            json={"archives": ["/etc/passwd"]},
+        )
+        self.assertEqual(400, response.status_code)
 
 
 if __name__ == "__main__":
