@@ -5,6 +5,7 @@ Tauri シェル（#22）が子プロセスとして起動し、127.0.0.1 での�
 トークンを全経路で必須にする。
 """
 
+import io
 import logging
 import secrets
 import threading
@@ -13,10 +14,18 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import Response
+from PIL import Image
 from pydantic import BaseModel, Field
 
 from manga_api import thumbnails
 from manga_api.jobs import Job, JobNotFound, JobStore
+from manga_core.cover_editor import (
+    COVER_ASPECT_RATIO,
+    CoverEditError,
+    CoverTransform,
+    apply_to_archive,
+    is_spread,
+)
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
 from manga_core.series_grouper import estimate_series
 
@@ -71,6 +80,30 @@ class EstimateResult(BaseModel):
     """推定結果。自動推定は外れる前提で、UI で直してから確定する"""
 
     groups: list[SeriesGroupView]
+
+
+class CoverRequest(BaseModel):
+    """表紙加工の依頼。分割 → 切り抜き → 回転の順に適用される"""
+
+    archive: str = Field(description="対象アーカイブの絶対パス")
+    name: str = Field(description="加工するページ名（通常は先頭）")
+    split: str | None = Field(
+        default=None, description="見開きの残す側（left / right）"
+    )
+    crop: tuple[int, int, int, int] | None = Field(
+        default=None, description="切り抜き範囲 (left, upper, right, lower)"
+    )
+    rotate: int = Field(default=0, description="回転角。90 度単位")
+
+
+class CoverView(BaseModel):
+    """表紙の状態"""
+
+    name: str
+    width: int
+    height: int
+    is_spread: bool
+    target_aspect_ratio: float
 
 
 class JobAccepted(BaseModel):
@@ -249,6 +282,73 @@ def create_app(
                 "X-Content-Type-Options": "nosniff",
             },
         )
+
+    @app.get("/api/cover", dependencies=guarded, response_model=CoverView)
+    def cover(archive: str) -> CoverView:
+        """表紙（先頭ページ）の状態を返す。
+
+        viewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が
+        見えない。UI で加工を促せるよう、見開きかどうかを添える。
+        """
+        editor = open_editor(archive)
+        try:
+            if not editor.pages:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="ページがありません"
+                )
+            first = editor.pages[0]
+            with Image.open(io.BytesIO(editor.read_entry(first.name))) as image:
+                width, height = image.size
+        except PageReorderError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+            ) from error
+        finally:
+            editor.close()
+        return CoverView(
+            name=first.name,
+            width=width,
+            height=height,
+            is_spread=is_spread(width, height),
+            target_aspect_ratio=COVER_ASPECT_RATIO,
+        )
+
+    @app.post(
+        "/api/jobs/cover",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_cover(request: CoverRequest) -> JobAccepted:
+        """表紙の加工をジョブとして投入する"""
+        path = resolve_archive(request.archive)
+        job_id = app.state.jobs.submit(
+            "cover", {"archive": str(path), "name": request.name}
+        )
+
+        def work(report):
+            report(current=0, total=1, message="加工中")
+            try:
+                result = apply_to_archive(
+                    path,
+                    request.name,
+                    CoverTransform(
+                        split=request.split, crop=request.crop, rotate=request.rotate
+                    ),
+                )
+            except CoverEditError as error:
+                raise RuntimeError(str(error)) from error
+            app.state.thumbnails.discard(str(path))
+            report(current=1, total=1, message="完了")
+            return {
+                "name": result.name,
+                "width": result.width,
+                "height": result.height,
+                "renamed": result.renamed,
+            }
+
+        _start(app, job_id, work)
+        return JobAccepted(id=job_id)
 
     @app.post(
         "/api/series/estimate", dependencies=guarded, response_model=EstimateResult
