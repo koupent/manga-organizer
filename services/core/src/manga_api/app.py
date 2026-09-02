@@ -302,6 +302,29 @@ def create_app(
             },
         )
 
+    @app.get("/api/image", dependencies=guarded, response_class=Response)
+    def image(archive: str, name: str) -> Response:
+        """ページを原寸で返す。拡大表示に使う"""
+        editor = open_editor(archive)
+        try:
+            body = editor.read_entry(name)
+        except PageReorderError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+            ) from error
+        finally:
+            editor.close()
+        suffix = Path(name).suffix.lower().lstrip(".")
+        media_type = f"image/{'jpeg' if suffix in ('jpg', 'jpeg') else suffix}"
+        return Response(
+            content=body,
+            media_type=media_type,
+            headers={
+                "Cache-Control": "max-age=3600",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     @app.get("/api/cover", dependencies=guarded, response_model=CoverView)
     def cover(archive: str) -> CoverView:
         """表紙（先頭ページ）の状態を返す。

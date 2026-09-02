@@ -164,6 +164,60 @@
         }
       }
     },
+    "/api/image": {
+      "get": {
+        "summary": "Image",
+        "description": "ページを原寸で返す。拡大表示に使う",
+        "operationId": "image_api_image_get",
+        "parameters": [
+          {
+            "name": "archive",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Archive"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cover": {
       "get": {
         "summary": "Cover",
