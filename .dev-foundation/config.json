@@ -28,6 +28,18 @@
     "logging": {
       "maxSize": "10m",
       "maxFiles": 3
+    },
+    "playwright": {
+      "enabled": false,
+      "version": "latest",
+      "browsers": [
+        "chromium"
+      ],
+      "monitor": {
+        "provider": "none",
+        "webPort": 6080,
+        "resolution": "1920x1080"
+      }
     }
   }
 }

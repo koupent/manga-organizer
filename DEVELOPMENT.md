@@ -16,8 +16,8 @@
 
 正本は次の2つです。
 
-- Engineering Dev Foundation v0.7.0（`.dev-foundation/`）
-- Engineering Workflow Plugin v0.14.0 + 公式 ECC v2.2.0（`.engineering-workflow/`）
+- Engineering Dev Foundation v0.8.0（`.dev-foundation/`）
+- Engineering Workflow Plugin v0.15.0 + 公式 ECC v2.2.0（`.engineering-workflow/`）
 
 固定 SHA:
 

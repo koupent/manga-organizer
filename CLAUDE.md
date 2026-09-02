@@ -4,8 +4,8 @@ Windows向け漫画アーカイブ整理アプリです。アプリ本体は `ma
 
 ## 開発基盤
 
-- Engineering Dev Foundation v0.7.0（`.dev-foundation/`）
-- Engineering Workflow Plugin v0.14.0 + 公式 ECC v2.2.0（`.engineering-workflow/`）
+- Engineering Dev Foundation v0.8.0（`.dev-foundation/`）
+- Engineering Workflow Plugin v0.15.0 + 公式 ECC v2.2.0（`.engineering-workflow/`）
 
 固定 SHA は `.engineering-workflow/workflow-plugin.lock.json` と `.dev-foundation/foundation.lock.json` を正本とします。
 

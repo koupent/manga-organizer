@@ -3,7 +3,8 @@
 #
 # - checkout は Claude 設定 volume 配下へ置く（再ビルドで marketplace が切れない）
 # - Claude の install cache は git 無しコピーになるため、固定 checkout への symlink に差し替え
-#   SessionStart の provenance 検証（CLAUDE_PLUGIN_ROOT + pin）が通るようにする
+#   SessionStart の provenance 検証（git commit 解決）が通るようにする
+# - v0.15.0 以降は pin の pluginRoot と installPath の symlink 差分を同一視する
 set -Eeuo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
@@ -113,25 +114,11 @@ node "$plugin_root/scripts/install-project.mjs" \
 plugin_install_path=$(find_install_path "engineering-workflow-plugin@engineering-workflow")
 link_install_to_checkout "$plugin_install_path" "$plugin_root"
 
-pin_to_install_path() {
-  node --input-type=module -e "
-import { pathToFileURL } from 'node:url';
-const mod = await import(pathToFileURL(process.argv[1]).href);
-await mod.writePluginPin(process.argv[2], process.argv[3]);
-" "$plugin_root/scripts/plugin-provenance.mjs" "$repo_root" "$plugin_install_path"
-}
-
-# pin の pluginRoot は Claude が渡す CLAUDE_PLUGIN_ROOT（installPath）と一致させる
-pin_to_install_path
-
 node "$plugin_root/scripts/configure-project.mjs" \
   --project-dir "$repo_root" \
   --ecc-root "$ecc_root" \
   --workflow-root "$plugin_root" \
   --rule-pack python
-
-# configure が marketplace root で pin を上書きするので、installPath で再度固定する
-pin_to_install_path
 
 claude plugin enable ecc@ecc --scope project >/dev/null || true
 claude plugin enable engineering-workflow-plugin@engineering-workflow --scope project >/dev/null || true

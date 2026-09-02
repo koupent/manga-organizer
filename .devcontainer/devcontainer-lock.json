@@ -15,10 +15,10 @@
       "resolved": "ghcr.io/devcontainers/features/python@sha256:fbcad6955caeecc5ad3f7886baf652e25cba5225a6c4c2287c536de2e5607511",
       "integrity": "sha256:fbcad6955caeecc5ad3f7886baf652e25cba5225a6c4c2287c536de2e5607511"
     },
-    "ghcr.io/koupent/engineering-dev-foundation/core:0.3.0": {
-      "version": "0.3.0",
-      "resolved": "ghcr.io/koupent/engineering-dev-foundation/core@sha256:27db2ec877f1305549c2697d10a4dcd1c2b7afb2bd76e357d47014d958c40636",
-      "integrity": "sha256:27db2ec877f1305549c2697d10a4dcd1c2b7afb2bd76e357d47014d958c40636",
+    "ghcr.io/koupent/engineering-dev-foundation/core:0.3.1": {
+      "version": "0.3.1",
+      "resolved": "ghcr.io/koupent/engineering-dev-foundation/core@sha256:132e88555831df16112eeada1da7d89710d025a3344959b67e4cc3d36717a832",
+      "integrity": "sha256:132e88555831df16112eeada1da7d89710d025a3344959b67e4cc3d36717a832",
       "dependsOn": [
         "ghcr.io/devcontainers/features/common-utils:2",
         "ghcr.io/devcontainers/features/github-cli:1"
