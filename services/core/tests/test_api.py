@@ -124,7 +124,6 @@ class PagesTest(ApiTestBase):
         with Image.open(io.BytesIO(response.content)) as thumbnail:
             self.assertEqual(160, thumbnail.width)
 
-
     def test_serves_the_full_size_image(self):
         # Act - 原寸表示に使う
         response = self.client.get(
