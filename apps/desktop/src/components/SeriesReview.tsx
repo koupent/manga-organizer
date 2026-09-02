@@ -124,18 +124,36 @@ export function SeriesReview({
 
   return (
     <section>
-      <div className="toolbar">
-        <span data-testid="group-count">{groups.length} 作品</span>
+      <div className="section-head">
+        <h2 className="section-title">推定結果</h2>
+        <span className="section-note" data-testid="group-count">
+          {groups.length} 作品
+        </span>
+        <span className="header-spacer" />
+        <span className="status" data-testid="organize-status">
+          {status}
+        </span>
         <button
           type="button"
+          className="btn-primary"
           data-testid="confirm"
           disabled={running || groups.length === 0}
           onClick={confirm}
         >
           この内容で整理する
         </button>
-        <span data-testid="organize-status">{status}</span>
       </div>
+
+      {groups.length === 0 ? (
+        <div className="empty">
+          <strong>まだ推定していません</strong>
+          <p>
+            上の欄にアーカイブのパスを入れて「作品を推定する」を押すと、
+            作品ごとのまとまりが表示されます。推定は外れることがあるので、
+            ここで直してから確定してください。
+          </p>
+        </div>
+      ) : null}
 
       <div className="groups">
         {groups.map((group, index) => (
@@ -148,12 +166,15 @@ export function SeriesReview({
             <header className="group-header">
               <input
                 type="text"
+                className="group-title-input"
                 value={group.title}
+                placeholder="作品名"
                 data-testid="group-title"
                 onChange={(event) => updateGroup(index, { title: event.target.value })}
               />
               <input
                 type="text"
+                className="group-author-input"
                 placeholder="著者"
                 value={group.author ?? ""}
                 data-testid="group-author"
@@ -161,19 +182,21 @@ export function SeriesReview({
               />
               <button
                 type="button"
+                className="btn-ghost"
                 data-testid="suggest-author"
                 onClick={() => suggestAuthor(index)}
               >
                 著者を調べる
               </button>
               <span
-                className={`confidence c-${confidenceLabel(group.confidence)}`}
+                className="chip"
+                data-level={confidenceLabel(group.confidence)}
                 data-testid="confidence"
               >
                 推定 {confidenceLabel(group.confidence)}
               </span>
               {group.hasDuplicateVolumes ? (
-                <span className="warning" data-testid="duplicate-warning">
+                <span className="chip" data-level="低" data-testid="duplicate-warning">
                   巻が重複しています
                 </span>
               ) : null}
@@ -183,7 +206,7 @@ export function SeriesReview({
               {group.volumes.map((volume) => (
                 <li key={volume.path} data-testid="volume" data-path={volume.path}>
                   <span className="volume-number">
-                    {volume.volume === null ? "-" : volume.volume}
+                    {volume.volume === null ? "—" : volume.volume}
                   </span>
                   <span className="volume-name">{volume.name}</span>
                   <select

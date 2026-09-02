@@ -76,6 +76,7 @@ function PageCard({
 type PageGridProps = {
   client: SidecarClient;
   archive: string;
+  archiveName?: string;
   pages: { name: string; size: number; modified: string }[];
   cardWidth: number;
   onSaved?: (message: string) => void;
@@ -85,6 +86,7 @@ type PageGridProps = {
 export function PageGrid({
   client,
   archive,
+  archiveName,
   pages,
   cardWidth,
   onSaved,
@@ -221,29 +223,48 @@ export function PageGrid({
 
   return (
     <section>
-      <div className="toolbar">
-        <span data-testid="dirty-state">
+      <div className="section-head">
+        <h2 className="section-title">{archiveName ?? "ページ修正"}</h2>
+        <span className="section-note">{pages.length} ページ</span>
+        <span className="chip" data-testid="dirty-state">
           {dirty ? "未保存の変更があります" : "変更はありません"}
         </span>
-        <span data-testid="selection-count">{selection.length} 件選択</span>
-        <button
-          type="button"
-          data-testid="undo"
-          disabled={history.length === 0}
-          onClick={undo}
-        >
-          元に戻す
-        </button>
-        <button
-          type="button"
-          data-testid="save"
-          disabled={!dirty || saving}
-          onClick={save}
-        >
-          ZIP に保存
-        </button>
-        <span data-testid="status">{status}</span>
       </div>
+
+      <div className="panel">
+        <div className="panel-body toolbar">
+          <span className="section-note" data-testid="selection-count">
+            {selection.length} 件選択
+          </span>
+          <span className="header-spacer" />
+          <span className="status" data-testid="status">
+            {status}
+          </span>
+          <button
+            type="button"
+            className="btn-secondary"
+            data-testid="undo"
+            disabled={history.length === 0}
+            onClick={undo}
+          >
+            元に戻す
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            data-testid="save"
+            disabled={!dirty || saving}
+            onClick={save}
+          >
+            ZIP に保存
+          </button>
+        </div>
+      </div>
+
+      <p className="hint">
+        ドラッグで順番を入れ替え ・ <kbd>Ctrl</kbd>/<kbd>Shift</kbd>+クリックで複数選択
+        ・ <kbd>Ctrl</kbd>+<kbd>Z</kbd> で元に戻す ・ 🔍 で原寸表示
+      </p>
 
       <DndContext
         sensors={sensors}

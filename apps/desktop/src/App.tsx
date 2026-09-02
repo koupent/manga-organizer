@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
 import { SidecarClient } from "./api/client";
-import { PageGrid } from "./components/PageGrid";
 import { CoverEditor } from "./components/CoverEditor";
+import { PageGrid } from "./components/PageGrid";
 import { SeriesReview, type SeriesGroup } from "./components/SeriesReview";
 import { onFilesDropped, resolveConnection } from "./connection";
 
 type Page = { name: string; size: number; modified: string };
 type Mode = "organize" | "pages" | "cover";
 
-/** 整理とページ修正を切り替えて使う */
+const MODES: { id: Mode; label: string }[] = [
+  { id: "organize", label: "整理" },
+  { id: "cover", label: "表紙" },
+  { id: "pages", label: "ページ修正" },
+];
+
+/** 整理・表紙・ページ修正を切り替えて使う */
 export function App() {
   const [client, setClient] = useState<SidecarClient | null>(null);
   const [mode, setMode] = useState<Mode>("pages");
@@ -18,7 +24,6 @@ export function App() {
   const [error, setError] = useState("");
   const [health, setHealth] = useState("");
 
-  // 整理モード
   const [sources, setSources] = useState("");
   const [outputDirectory, setOutputDirectory] = useState("");
   const [groups, setGroups] = useState<SeriesGroup[]>([]);
@@ -32,8 +37,9 @@ export function App() {
           setError("サイドカーへの接続情報がありません");
           return;
         }
-        setClient(new SidecarClient(connection));
-        new SidecarClient(connection)
+        const created = new SidecarClient(connection);
+        setClient(created);
+        created
           .health()
           .then((payload) => setHealth(payload.status))
           .catch((reason) => setError(String(reason.message ?? reason)));
@@ -84,39 +90,30 @@ export function App() {
     }
   };
 
+  const archiveName = archive ? (archive.split("/").pop() ?? archive) : "";
+
   return (
     <main>
-      <header>
-        <h1>Manga Organizer</h1>
-        <nav>
-          <button
-            type="button"
-            data-testid="mode-organize"
-            aria-pressed={mode === "organize"}
-            onClick={() => setMode("organize")}
-          >
-            整理
-          </button>
-          <button
-            type="button"
-            data-testid="mode-cover"
-            aria-pressed={mode === "cover"}
-            onClick={() => setMode("cover")}
-          >
-            表紙
-          </button>
-          <button
-            type="button"
-            data-testid="mode-pages"
-            aria-pressed={mode === "pages"}
-            onClick={() => setMode("pages")}
-          >
-            ページ修正
-          </button>
-        </nav>
-        <span data-testid="connection">{health}</span>
+      <header className="app-header">
+        <h1 className="brand">Manga Organizer</h1>
+        <div className="segmented" role="group" aria-label="モード">
+          {MODES.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              data-testid={`mode-${item.id}`}
+              aria-pressed={mode === item.id}
+              onClick={() => setMode(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="header-spacer" />
+
         {mode === "pages" ? (
-          <label>
+          <label className="slider-field">
             表示サイズ
             <input
               type="range"
@@ -129,52 +126,91 @@ export function App() {
             />
           </label>
         ) : null}
+
+        <span
+          className="connection"
+          data-testid="connection"
+          data-state={health === "ok" ? "ok" : "off"}
+          title={health === "ok" ? "サイドカーに接続済み" : "未接続"}
+        >
+          {health === "ok" ? "接続済み" : "未接続"}
+        </span>
       </header>
 
-      {error ? <p data-testid="error">{error}</p> : null}
+      <div className="content">
+        {error ? (
+          <p className="banner" data-tone="error" data-testid="error">
+            {error}
+          </p>
+        ) : null}
 
-      {mode === "organize" && client ? (
-        <>
-          <div className="toolbar">
-            <textarea
-              data-testid="sources"
-              rows={3}
-              placeholder="整理するアーカイブのパスを 1 行に 1 つ"
-              value={sources}
-              onChange={(event) => setSources(event.target.value)}
+        {mode === "organize" && client ? (
+          <>
+            <div className="panel">
+              <div className="panel-body toolbar" style={{ alignItems: "flex-end" }}>
+                <div className="field" style={{ flex: "2 1 420px" }}>
+                  <span className="field-label">整理するアーカイブ（1 行に 1 つ）</span>
+                  <textarea
+                    data-testid="sources"
+                    rows={5}
+                    placeholder={"/path/to/作品 第01巻.zip\n/path/to/作品 第02巻.zip"}
+                    value={sources}
+                    onChange={(event) => setSources(event.target.value)}
+                  />
+                </div>
+                <div className="field" style={{ flex: "1 1 240px" }}>
+                  <span className="field-label">出力先</span>
+                  <input
+                    type="text"
+                    data-testid="output-directory"
+                    placeholder="/path/to/整理後"
+                    value={outputDirectory}
+                    onChange={(event) => setOutputDirectory(event.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  data-testid="estimate"
+                  onClick={estimate}
+                >
+                  作品を推定する
+                </button>
+              </div>
+            </div>
+            <SeriesReview
+              client={client}
+              groups={groups}
+              outputDirectory={outputDirectory}
+              onGroupsChange={setGroups}
             />
-            <input
-              type="text"
-              data-testid="output-directory"
-              placeholder="出力先"
-              value={outputDirectory}
-              onChange={(event) => setOutputDirectory(event.target.value)}
-            />
-            <button type="button" data-testid="estimate" onClick={estimate}>
-              作品を推定する
-            </button>
-          </div>
-          <SeriesReview
+          </>
+        ) : null}
+
+        {mode === "cover" && client && archive ? (
+          <CoverEditor client={client} archive={archive} archiveName={archiveName} />
+        ) : null}
+
+        {mode === "pages" && client && archive && pages.length > 0 ? (
+          <PageGrid
             client={client}
-            groups={groups}
-            outputDirectory={outputDirectory}
-            onGroupsChange={setGroups}
+            archive={archive}
+            archiveName={archiveName}
+            pages={pages}
+            cardWidth={cardWidth}
           />
-        </>
-      ) : null}
+        ) : null}
 
-      {mode === "cover" && client && archive ? (
-        <CoverEditor client={client} archive={archive} />
-      ) : null}
-
-      {mode === "pages" && client && archive && pages.length > 0 ? (
-        <PageGrid
-          client={client}
-          archive={archive}
-          pages={pages}
-          cardWidth={cardWidth}
-        />
-      ) : null}
+        {mode === "pages" && !archive ? (
+          <div className="empty">
+            <strong>アーカイブが選ばれていません</strong>
+            <p>
+              URL に <code>archive=</code> を付けるか、整理モードでファイルを
+              指定してください。
+            </p>
+          </div>
+        ) : null}
+      </div>
     </main>
   );
 }
