@@ -28,6 +28,7 @@ from manga_core.cover_editor import (
     is_spread,
 )
 from manga_core.manga_database import MangaDatabase
+from manga_core.naming import natural_sort_key
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
 from manga_core.series_grouper import estimate_series
 
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 TITLE = "Manga Organizer サイドカー"
 # 外部からは触らせない。Tauri シェルと同一ホスト内でのみ使う
 HOST = "127.0.0.1"
+
+# ファイル選択に出すアーカイブ形式
+ARCHIVE_SUFFIXES = frozenset({".zip", ".cbz", ".rar", ".cbr", ".7z", ".cb7", ".epub"})
 
 # Tauri の WebView と、開発・検証で使う Vite の dev server
 DEFAULT_ALLOWED_ORIGINS = (
@@ -61,6 +65,22 @@ class OrganizeRequest(BaseModel):
     title: str = Field(default="", description="作品名")
     author: str = Field(default="", description="著者名")
     keep_originals: bool = Field(default=True, description="元ファイルを残すか")
+
+
+class BrowseEntry(BaseModel):
+    """ファイル選択に出す 1 項目"""
+
+    name: str
+    path: str
+    is_directory: bool
+
+
+class BrowseResult(BaseModel):
+    """辿っている場所と、その中身"""
+
+    path: str
+    parent: str | None = None
+    entries: list[BrowseEntry]
 
 
 class LibraryEntry(BaseModel):
@@ -337,6 +357,62 @@ def create_app(
                 "Cache-Control": "max-age=3600",
                 "X-Content-Type-Options": "nosniff",
             },
+        )
+
+    @app.get("/api/browse", dependencies=guarded, response_model=BrowseResult)
+    def browse(path: str = "") -> BrowseResult:
+        """許可された場所の中を辿る。
+
+        ブラウザはドロップされたファイルの実パスを取得できないため、
+        サーバー側で辿って選んでもらう。Tauri ではネイティブのドロップも
+        使えるが、同じ画面で両方使えるようにする。
+        """
+        roots = app.state.allowed_roots
+        if not path:
+            target = roots[0] if roots else Path.home()
+        else:
+            target = Path(path).resolve()
+            if roots and not any(target.is_relative_to(root) for root in roots):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="対象外のディレクトリです",
+                )
+        if not target.is_dir():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ディレクトリが見つかりません",
+            )
+
+        try:
+            children = list(target.iterdir())
+        except OSError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+            ) from error
+
+        entries: list[BrowseEntry] = []
+        for child in children:
+            if child.name.startswith("."):
+                continue
+            if child.is_dir():
+                entries.append(
+                    BrowseEntry(name=child.name, path=str(child), is_directory=True)
+                )
+            elif child.suffix.lower() in ARCHIVE_SUFFIXES:
+                entries.append(
+                    BrowseEntry(name=child.name, path=str(child), is_directory=False)
+                )
+        # ディレクトリを先に並べる。辿る操作を優先させるため
+        entries.sort(
+            key=lambda entry: (not entry.is_directory, natural_sort_key(entry.name))
+        )
+
+        parent = target.parent
+        inside = not roots or any(parent.is_relative_to(root) for root in roots)
+        return BrowseResult(
+            path=str(target),
+            parent=str(parent) if inside and parent != target else None,
+            entries=entries,
         )
 
     @app.get(

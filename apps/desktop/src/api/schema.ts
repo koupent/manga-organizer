@@ -64,6 +64,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/browse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Browse
+         * @description 許可された場所の中を辿る。
+         *
+         *     ブラウザはドロップされたファイルの実パスを取得できないため、
+         *     サーバー側で辿って選んでもらう。Tauri ではネイティブのドロップも
+         *     使えるが、同じ画面で両方使えるようにする。
+         */
+        get: operations["browse_api_browse_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/entries": {
         parameters: {
             query?: never;
@@ -304,6 +328,30 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * BrowseEntry
+         * @description ファイル選択に出す 1 項目
+         */
+        BrowseEntry: {
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Is Directory */
+            is_directory: boolean;
+        };
+        /**
+         * BrowseResult
+         * @description 辿っている場所と、その中身
+         */
+        BrowseResult: {
+            /** Path */
+            path: string;
+            /** Parent */
+            parent?: string | null;
+            /** Entries */
+            entries: components["schemas"]["BrowseEntry"][];
+        };
         /**
          * CoverRequest
          * @description 表紙加工の依頼。分割 → 切り抜き → 回転の順に適用される
@@ -680,6 +728,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browse_api_browse_get: {
+        parameters: {
+            query?: {
+                path?: string;
+                /** @description 使い捨てトークン */
+                token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowseResult"];
+                };
             };
             /** @description Validation Error */
             422: {

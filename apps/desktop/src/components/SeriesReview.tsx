@@ -38,6 +38,8 @@ export function SeriesReview({
 }: SeriesReviewProps) {
   const [status, setStatus] = useState("");
   const [running, setRunning] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
 
   const updateGroup = (index: number, patch: Partial<SeriesGroup>) => {
     onGroupsChange(
@@ -93,9 +95,14 @@ export function SeriesReview({
   const confirm = async () => {
     setRunning(true);
     setStatus("整理しています...");
+    setLog([]);
+    setProgress({ current: 0, total: groups.length });
+    const note = (line: string) => setLog((lines) => [...lines, line].slice(-200));
     try {
       const produced: string[] = [];
-      for (const group of groups) {
+      for (const [index, group] of groups.entries()) {
+        setProgress({ current: index, total: groups.length });
+        note(`▶ ${group.title}`);
         const accepted = await client.organize({
           archives: group.volumes.map((volume) => volume.path),
           output_directory: outputDirectory,
@@ -108,15 +115,21 @@ export function SeriesReview({
           throw new Error(job.error ?? `${group.title} の整理に失敗しました`);
         }
         const result = job.result as { produced?: string[] } | null;
+        for (const path of result?.produced ?? []) {
+          note(`  ✓ ${path.split("/").pop()}`);
+        }
         produced.push(...(result?.produced ?? []));
         // 次回の推定で使えるよう、確定した組み合わせを辞書へ残す
         if (group.author) {
           await client.saveEntry(group.title, group.author).catch(() => undefined);
         }
       }
+      setProgress({ current: groups.length, total: groups.length });
       setStatus(`${produced.length} 冊を整理しました`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      note(`  ✗ ${message}`);
+      setStatus(message);
     } finally {
       setRunning(false);
     }
@@ -152,6 +165,24 @@ export function SeriesReview({
             作品ごとのまとまりが表示されます。推定は外れることがあるので、
             ここで直してから確定してください。
           </p>
+        </div>
+      ) : null}
+
+      {progress.total > 0 ? (
+        <div className="panel">
+          <div className="panel-body">
+            <div className="progress" data-testid="progress">
+              <div
+                className="progress-bar"
+                style={{
+                  width: `${(progress.current / Math.max(progress.total, 1)) * 100}%`,
+                }}
+              />
+            </div>
+            <pre className="log" data-testid="organize-log">
+              {log.join("\n")}
+            </pre>
+          </div>
         </div>
       ) : null}
 

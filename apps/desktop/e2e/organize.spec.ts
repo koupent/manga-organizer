@@ -39,6 +39,24 @@ if root.exists():
   return output.trim() ? output.trim().split("\n") : [];
 }
 
+
+/** ファイルブラウザから対象を選ぶ。実パスはサーバー側が返す */
+async function selectArchives(
+  page: import("@playwright/test").Page,
+  paths: string[],
+) {
+  await page.getByTestId("open-browser").click();
+  await expect(page.getByTestId("file-browser")).toBeVisible();
+  for (const path of paths) {
+    const name = path.split("/").pop()!;
+    await page
+      .locator(`[data-testid="browse-entry"][data-name="${name}"] .browser-name`)
+      .click();
+  }
+  await expect(page.getByTestId("selected-count")).toHaveText(`${paths.length} 件`);
+  await page.getByTestId("open-browser").click();
+}
+
 async function openOrganize(page: import("@playwright/test").Page, output: string) {
   await page.goto(
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
@@ -68,7 +86,7 @@ test.describe("整理画面", () => {
     mkdirSync(output, { recursive: true });
 
     await openOrganize(page, output);
-    await page.getByTestId("sources").fill(paths.join("\n"));
+    await selectArchives(page, paths);
     await page.getByTestId("estimate").click();
 
     // Assert - 作品ごとにまとまり、巻数と確信度が出る
@@ -105,7 +123,7 @@ test.describe("整理画面", () => {
     const output = join(sidecar.workDir, "out5");
     mkdirSync(output, { recursive: true });
     await openOrganize(page, output);
-    await page.getByTestId("sources").fill(paths.join("\n"));
+    await selectArchives(page, paths);
     await page.getByTestId("estimate").click();
 
     const group = page.getByTestId("series-group").first();
@@ -154,7 +172,7 @@ test.describe("整理画面", () => {
       ]),
     ];
     await openOrganize(page, join(sidecar.workDir, "out2"));
-    await page.getByTestId("sources").fill(paths.join("\n"));
+    await selectArchives(page, paths);
     await page.getByTestId("estimate").click();
 
     const groups = page.getByTestId("series-group");
@@ -185,7 +203,7 @@ test.describe("整理画面", () => {
       ]),
     ];
     await openOrganize(page, join(sidecar.workDir, "out3"));
-    await page.getByTestId("sources").fill(paths.join("\n"));
+    await selectArchives(page, paths);
     await page.getByTestId("estimate").click();
 
     // Assert

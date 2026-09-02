@@ -463,3 +463,101 @@ select { cursor: pointer; padding-right: 26px; }
   font-family: inherit;
   font-size: 11px;
 }
+
+/* ── 処理対象の選択 ─────────────────────────── */
+.picker { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.dropzone {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  min-height: 150px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.dropzone.over { border-color: var(--accent); background: var(--accent-soft); }
+
+.selected-list { list-style: none; margin: 0; padding: var(--space-2); }
+.selected-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+}
+.selected-list li:hover { background: var(--surface-2); }
+.selected-name { font-weight: 550; white-space: nowrap; }
+.selected-path {
+  flex: 1;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.browser-path {
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--surface-0);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50ch;
+}
+.browser-list { list-style: none; margin: 0; padding: var(--space-2); max-height: 320px; overflow-y: auto; }
+.browser-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.browser-list li:hover { background: var(--surface-2); }
+.browser-icon { width: 20px; text-align: center; }
+.browser-name {
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 4px 2px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.browser-name:hover { color: var(--accent); }
+
+/* ── 進捗とログ ─────────────────────────────── */
+.progress {
+  height: 6px;
+  background: var(--surface-0);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: var(--space-3);
+}
+.progress-bar { height: 100%; background: var(--accent); transition: width 0.2s; }
+
+.log {
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}

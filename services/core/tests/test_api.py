@@ -373,5 +373,54 @@ class LibraryTest(ApiTestBase):
         self.assertEqual(401, self.client.get("/api/library/entries").status_code)
 
 
+class BrowseTest(ApiTestBase):
+    """ファイル選択。ブラウザは実パスを扱えないのでサーバー側で辿る"""
+
+    def setUp(self):
+        super().setUp()
+        self.folder = self.work_dir / "shelf"
+        (self.folder / "sub").mkdir(parents=True)
+        for name in ("b.zip", "a.cbz", "memo.txt"):
+            (self.folder / name).write_bytes(b"x")
+
+    def test_lists_directories_and_archives(self):
+        # Act
+        listed = self.client.get(
+            "/api/browse", params=self.auth({"path": str(self.folder)})
+        ).json()
+
+        # Assert - ディレクトリが先、アーカイブ以外は出さない
+        self.assertEqual(str(self.folder), listed["path"])
+        self.assertEqual(
+            [("sub", True), ("a.cbz", False), ("b.zip", False)],
+            [(e["name"], e["is_directory"]) for e in listed["entries"]],
+        )
+
+    def test_reports_the_parent_so_the_ui_can_go_up(self):
+        # Act
+        listed = self.client.get(
+            "/api/browse", params=self.auth({"path": str(self.folder)})
+        ).json()
+
+        # Assert
+        self.assertEqual(str(self.work_dir), listed["parent"])
+
+    def test_defaults_to_the_allowed_root(self):
+        # Act - path を省くと起点を返す
+        listed = self.client.get("/api/browse", params=self.auth()).json()
+
+        # Assert
+        self.assertEqual(str(self.work_dir), listed["path"])
+        self.assertIsNone(listed["parent"])
+
+    def test_refuses_to_escape_the_allowed_roots(self):
+        # Act / Assert
+        response = self.client.get("/api/browse", params=self.auth({"path": "/etc"}))
+        self.assertEqual(400, response.status_code)
+
+    def test_requires_a_token(self):
+        self.assertEqual(401, self.client.get("/api/browse").status_code)
+
+
 if __name__ == "__main__":
     unittest.main()

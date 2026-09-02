@@ -164,6 +164,59 @@
         }
       }
     },
+    "/api/browse": {
+      "get": {
+        "summary": "Browse",
+        "description": "許可された場所の中を辿る。\n\nブラウザはドロップされたファイルの実パスを取得できないため、\nサーバー側で辿って選んでもらう。Tauri ではネイティブのドロップも\n使えるが、同じ画面で両方使えるようにする。",
+        "operationId": "browse_api_browse_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Path"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowseResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/library/entries": {
       "get": {
         "summary": "List Entries",
@@ -843,6 +896,63 @@
   },
   "components": {
     "schemas": {
+      "BrowseEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "is_directory": {
+            "type": "boolean",
+            "title": "Is Directory"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "is_directory"
+        ],
+        "title": "BrowseEntry",
+        "description": "ファイル選択に出す 1 項目"
+      },
+      "BrowseResult": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/BrowseEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "entries"
+        ],
+        "title": "BrowseResult",
+        "description": "辿っている場所と、その中身"
+      },
       "CoverRequest": {
         "properties": {
           "archive": {

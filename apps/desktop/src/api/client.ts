@@ -33,6 +33,8 @@ type LibraryEntries =
   paths["/api/library/entries"]["get"]["responses"][200]["content"]["application/json"];
 type Suggestion =
   paths["/api/library/suggest"]["post"]["responses"][200]["content"]["application/json"];
+type BrowseResult =
+  paths["/api/browse"]["get"]["responses"][200]["content"]["application/json"];
 type JobAccepted =
   paths["/api/jobs/reorder"]["post"]["responses"][202]["content"]["application/json"];
 
@@ -93,6 +95,10 @@ export class SidecarClient {
 
   reorder(archive: string, order: string[]): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/reorder", { archive, order });
+  }
+
+  browse(path = ""): Promise<BrowseResult> {
+    return this.request<BrowseResult>("/api/browse", { path });
   }
 
   knownEntries(query = ""): Promise<LibraryEntries> {

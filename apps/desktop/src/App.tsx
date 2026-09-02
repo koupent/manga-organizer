@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { SidecarClient } from "./api/client";
 import { CoverEditor } from "./components/CoverEditor";
 import { PageGrid } from "./components/PageGrid";
+import { FilePicker } from "./components/FilePicker";
 import { SeriesReview, type SeriesGroup } from "./components/SeriesReview";
 import { onFilesDropped, resolveConnection } from "./connection";
 
@@ -24,7 +25,7 @@ export function App() {
   const [error, setError] = useState("");
   const [health, setHealth] = useState("");
 
-  const [sources, setSources] = useState("");
+  const [sources, setSources] = useState<string[]>([]);
   const [outputDirectory, setOutputDirectory] = useState("");
   const [groups, setGroups] = useState<SeriesGroup[]>([]);
 
@@ -55,9 +56,7 @@ export function App() {
     // ネイティブ側で受けたドロップを整理モードの入力に流し込む
     const pending = onFilesDropped((paths) => {
       setMode("organize");
-      setSources((current) =>
-        [...new Set([...current.split("\n"), ...paths].filter(Boolean))].join("\n"),
-      );
+      setSources((current) => [...new Set([...current, ...paths])]);
     });
 
     return () => {
@@ -78,12 +77,8 @@ export function App() {
   const estimate = async () => {
     if (!client) return;
     setError("");
-    const archives = sources
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
     try {
-      const payload = await client.estimateSeries(archives);
+      const payload = await client.estimateSeries(sources);
       setGroups(payload.groups as SeriesGroup[]);
     } catch (reason) {
       setError(String((reason as Error).message ?? reason));
@@ -146,19 +141,11 @@ export function App() {
 
         {mode === "organize" && client ? (
           <>
+            <FilePicker client={client} selected={sources} onChange={setSources} />
+
             <div className="panel">
-              <div className="panel-body toolbar" style={{ alignItems: "flex-end" }}>
-                <div className="field" style={{ flex: "2 1 420px" }}>
-                  <span className="field-label">整理するアーカイブ（1 行に 1 つ）</span>
-                  <textarea
-                    data-testid="sources"
-                    rows={5}
-                    placeholder={"/path/to/作品 第01巻.zip\n/path/to/作品 第02巻.zip"}
-                    value={sources}
-                    onChange={(event) => setSources(event.target.value)}
-                  />
-                </div>
-                <div className="field" style={{ flex: "1 1 240px" }}>
+              <div className="panel-body toolbar">
+                <div className="field" style={{ flex: "1 1 320px" }}>
                   <span className="field-label">出力先</span>
                   <input
                     type="text"
@@ -168,16 +155,19 @@ export function App() {
                     onChange={(event) => setOutputDirectory(event.target.value)}
                   />
                 </div>
+                <span className="header-spacer" />
                 <button
                   type="button"
-                  className="btn-secondary"
+                  className="btn-primary"
                   data-testid="estimate"
+                  disabled={sources.length === 0}
                   onClick={estimate}
                 >
                   作品を推定する
                 </button>
               </div>
             </div>
+
             <SeriesReview
               client={client}
               groups={groups}
