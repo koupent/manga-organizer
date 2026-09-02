@@ -132,9 +132,25 @@ run_python_checks() {
     && uv run python -m unittest discover -s tests )
 }
 
+run_frontend_checks() {
+  echo "== apps/desktop"
+  command -v npm >/dev/null || {
+    echo "npm が必要です" >&2
+    exit 1
+  }
+  ( cd "$repo_root/apps/desktop" \
+    && npm ci --no-fund --no-audit \
+    && npm run lint \
+    && npm run build \
+    && npx playwright test )
+}
+
 # コアは GUI 非依存の独立パッケージ。アプリより先に検査する
 run_python_checks services/core
 run_python_checks "$(basename "$app_dir")"
+
+# フロントは Tauri の WebView が読み込むものと同じ。ブラウザで駆動して検証する
+run_frontend_checks
 
 cd "$repo_root"
 if [[ "$(project_git rev-parse HEAD)" != "$head_sha" ]]; then

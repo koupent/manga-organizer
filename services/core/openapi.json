@@ -1,0 +1,1073 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Manga Organizer サイドカー",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "description": "サイドカーが応答することの確認",
+        "operationId": "health_api_health_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages": {
+      "get": {
+        "summary": "List Pages",
+        "description": "アーカイブ内のページを viewer と同じ並びで返す",
+        "operationId": "list_pages_api_pages_get",
+        "parameters": [
+          {
+            "name": "archive",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Archive"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/thumb": {
+      "get": {
+        "summary": "Thumbnail",
+        "description": "ページのサムネイルを返す",
+        "operationId": "thumbnail_api_thumb_get",
+        "parameters": [
+          {
+            "name": "archive",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Archive"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "width",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 240,
+              "title": "Width"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cover": {
+      "get": {
+        "summary": "Cover",
+        "description": "表紙（先頭ページ）の状態を返す。\n\nviewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が\n見えない。UI で加工を促せるよう、見開きかどうかを添える。",
+        "operationId": "cover_api_cover_get",
+        "parameters": [
+          {
+            "name": "archive",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Archive"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/cover": {
+      "post": {
+        "summary": "Submit Cover",
+        "description": "表紙の加工をジョブとして投入する",
+        "operationId": "submit_cover_api_jobs_cover_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoverRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/series/estimate": {
+      "post": {
+        "summary": "Estimate",
+        "description": "アーカイブ群を作品ごとにまとめた初期案を返す。\n\n自動推定は必ず外れるので、確信度を添えて返し、UI で直してもらう。",
+        "operationId": "estimate_api_series_estimate_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EstimateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs": {
+      "get": {
+        "summary": "List Jobs",
+        "description": "新しい順にジョブを並べる",
+        "operationId": "list_jobs_api_jobs_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "summary": "Get Job",
+        "description": "ジョブ 1 件の状態を返す",
+        "operationId": "get_job_api_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/cancel": {
+      "post": {
+        "summary": "Cancel Job",
+        "description": "実行中のジョブにキャンセルを要求する",
+        "operationId": "cancel_job_api_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/reorder": {
+      "post": {
+        "summary": "Submit Reorder",
+        "description": "ページ並べ替えをジョブとして投入する",
+        "operationId": "submit_reorder_api_jobs_reorder_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/organize": {
+      "post": {
+        "summary": "Submit Organize",
+        "description": "アーカイブの整理をジョブとして投入する",
+        "operationId": "submit_organize_api_jobs_organize_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CoverRequest": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive",
+            "description": "対象アーカイブの絶対パス"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "加工するページ名（通常は先頭）"
+          },
+          "split": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Split",
+            "description": "見開きの残す側（left / right）"
+          },
+          "crop": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 4,
+                "minItems": 4
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crop",
+            "description": "切り抜き範囲 (left, upper, right, lower)"
+          },
+          "rotate": {
+            "type": "integer",
+            "title": "Rotate",
+            "description": "回転角。90 度単位",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive",
+          "name"
+        ],
+        "title": "CoverRequest",
+        "description": "表紙加工の依頼。分割 → 切り抜き → 回転の順に適用される"
+      },
+      "CoverView": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          },
+          "is_spread": {
+            "type": "boolean",
+            "title": "Is Spread"
+          },
+          "target_aspect_ratio": {
+            "type": "number",
+            "title": "Target Aspect Ratio"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "width",
+          "height",
+          "is_spread",
+          "target_aspect_ratio"
+        ],
+        "title": "CoverView",
+        "description": "表紙の状態"
+      },
+      "EstimateRequest": {
+        "properties": {
+          "archives": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Archives",
+            "description": "推定対象アーカイブの絶対パス"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archives"
+        ],
+        "title": "EstimateRequest",
+        "description": "作品グルーピングの推定依頼"
+      },
+      "EstimateResult": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SeriesGroupView"
+            },
+            "type": "array",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "groups"
+        ],
+        "title": "EstimateResult",
+        "description": "推定結果。自動推定は外れる前提で、UI で直してから確定する"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthView": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "HealthView",
+        "description": "疎通確認"
+      },
+      "JobAccepted": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "JobAccepted",
+        "description": "ジョブの受付結果"
+      },
+      "JobList": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobView"
+            },
+            "type": "array",
+            "title": "Jobs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "title": "JobList",
+        "description": "ジョブ一覧"
+      },
+      "JobView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "current": {
+            "type": "integer",
+            "title": "Current"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "result": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "current",
+          "total",
+          "message",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "JobView",
+        "description": "ジョブの状態"
+      },
+      "OrganizeRequest": {
+        "properties": {
+          "archives": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Archives",
+            "description": "整理対象アーカイブの絶対パス"
+          },
+          "output_directory": {
+            "type": "string",
+            "title": "Output Directory",
+            "description": "出力先ディレクトリ"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "作品名",
+            "default": ""
+          },
+          "author": {
+            "type": "string",
+            "title": "Author",
+            "description": "著者名",
+            "default": ""
+          },
+          "keep_originals": {
+            "type": "boolean",
+            "title": "Keep Originals",
+            "description": "元ファイルを残すか",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "archives",
+          "output_directory"
+        ],
+        "title": "OrganizeRequest",
+        "description": "アーカイブ整理の依頼"
+      },
+      "PageList": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/PageView"
+            },
+            "type": "array",
+            "title": "Pages"
+          },
+          "thumbnail_widths": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Thumbnail Widths"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive",
+          "pages",
+          "thumbnail_widths"
+        ],
+        "title": "PageList",
+        "description": "アーカイブ内のページ一覧"
+      },
+      "PageView": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "modified": {
+            "type": "string",
+            "title": "Modified"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size",
+          "modified"
+        ],
+        "title": "PageView",
+        "description": "ページ 1 枚の情報"
+      },
+      "ReorderRequest": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive",
+            "description": "対象アーカイブの絶対パス"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Order",
+            "description": "並べ替え後のページ名（先頭が 1 ページ目）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive",
+          "order"
+        ],
+        "title": "ReorderRequest",
+        "description": "ページ並べ替えの依頼"
+      },
+      "SeriesGroupView": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "hasDuplicateVolumes": {
+            "type": "boolean",
+            "title": "Hasduplicatevolumes"
+          },
+          "volumes": {
+            "items": {
+              "$ref": "#/components/schemas/SeriesVolumeView"
+            },
+            "type": "array",
+            "title": "Volumes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "confidence",
+          "hasDuplicateVolumes",
+          "volumes"
+        ],
+        "title": "SeriesGroupView",
+        "description": "同じ作品と推定した巻のまとまり"
+      },
+      "SeriesVolumeView": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "name"
+        ],
+        "title": "SeriesVolumeView",
+        "description": "まとまりを構成する 1 冊"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

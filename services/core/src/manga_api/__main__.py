@@ -39,6 +39,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--port", type=int, default=0, help="待ち受けポート（0 で自動）"
     )
+    parser.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        help="WebView のオリジン（省略時は既定の localhost / tauri）",
+    )
     parser.add_argument("--log-level", default="info")
     return parser.parse_args(argv)
 
@@ -58,7 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=args.log_level.upper())
 
-    app = create_app(state_dir=args.state_dir, allowed_roots=args.allow_root)
+    app = create_app(
+        state_dir=args.state_dir,
+        allowed_roots=args.allow_root,
+        allowed_origins=args.allow_origin or None,
+    )
     config = uvicorn.Config(
         app, host=HOST, port=args.port, log_level=args.log_level, access_log=False
     )
