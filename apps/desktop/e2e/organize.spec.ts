@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
 
-const CORE_DIR = fileURLToPath(new URL("../../../services/core", import.meta.url));
+const CORE_DIR = fileURLToPath(
+  new URL("../../../services/core", import.meta.url),
+);
 
 let sidecar: Sidecar;
 
@@ -39,7 +41,6 @@ if root.exists():
   return output.trim() ? output.trim().split("\n") : [];
 }
 
-
 /** ファイルブラウザから対象を選ぶ。実パスはサーバー側が返す */
 async function selectArchives(
   page: import("@playwright/test").Page,
@@ -50,14 +51,21 @@ async function selectArchives(
   for (const path of paths) {
     const name = path.split("/").pop()!;
     await page
-      .locator(`[data-testid="browse-entry"][data-name="${name}"] .browser-name`)
+      .locator(
+        `[data-testid="browse-entry"][data-name="${name}"] .browser-name`,
+      )
       .click();
   }
-  await expect(page.getByTestId("selected-count")).toHaveText(`${paths.length} 件`);
+  await expect(page.getByTestId("selected-count")).toHaveText(
+    `${paths.length} 件`,
+  );
   await page.getByTestId("open-browser").click();
 }
 
-async function openOrganize(page: import("@playwright/test").Page, output: string) {
+async function openOrganize(
+  page: import("@playwright/test").Page,
+  output: string,
+) {
   await page.goto(
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=organize&output=${encodeURIComponent(output)}`,
@@ -102,9 +110,12 @@ test.describe("整理画面", () => {
 
     // Act - 整理を実行
     await page.getByTestId("confirm").click();
-    await expect(page.getByTestId("organize-status")).toContainText("整理しました", {
-      timeout: 30_000,
-    });
+    await expect(page.getByTestId("organize-status")).toContainText(
+      "整理しました",
+      {
+        timeout: 30_000,
+      },
+    );
 
     // Assert - 直した名前で出力される
     const produced = producedFiles(output);
@@ -113,7 +124,9 @@ test.describe("整理画面", () => {
     expect(produced.every((path) => path.endsWith(".zip"))).toBeTruthy();
   });
 
-  test("著者を入力して整理すると、出力名に反映され辞書に残る", async ({ page }) => {
+  test("著者を入力して整理すると、出力名に反映され辞書に残る", async ({
+    page,
+  }) => {
     // Arrange
     const paths = [
       writeArchive(sidecar.workDir, "著者テスト 第01巻.zip", [
@@ -132,9 +145,12 @@ test.describe("整理画面", () => {
     // Act - 著者を入れて整理する
     await group.getByTestId("group-author").fill("テスト著者");
     await page.getByTestId("confirm").click();
-    await expect(page.getByTestId("organize-status")).toContainText("整理しました", {
-      timeout: 30_000,
-    });
+    await expect(page.getByTestId("organize-status")).toContainText(
+      "整理しました",
+      {
+        timeout: 30_000,
+      },
+    );
 
     // Assert - 出力パスに著者名が入る
     const produced = producedFiles(output);
@@ -179,8 +195,12 @@ test.describe("整理画面", () => {
     await expect(groups).toHaveCount(2);
 
     // 並び順は題名順なので、位置ではなく題名で指す
-    const mixed = page.locator('[data-testid="series-group"][data-title="混在"]');
-    const other = page.locator('[data-testid="series-group"][data-title="別作品"]');
+    const mixed = page.locator(
+      '[data-testid="series-group"][data-title="混在"]',
+    );
+    const other = page.locator(
+      '[data-testid="series-group"][data-title="別作品"]',
+    );
     await expect(mixed.getByTestId("volume")).toHaveCount(2);
     await expect(other.getByTestId("volume")).toHaveCount(1);
 
@@ -210,6 +230,38 @@ test.describe("整理画面", () => {
 
     // Assert
     await expect(page.getByTestId("duplicate-warning")).toBeVisible();
+  });
+
+  test("中断すると残りの作品を整理しない", async ({ page }) => {
+    // Arrange - 1 作品ずつ順に処理されるよう、別々の作品を並べる
+    const titles = ["中断A", "中断B", "中断C", "中断D", "中断E"];
+    const paths = titles.map((title) =>
+      writeArchive(sidecar.workDir, `${title} 第01巻.zip`, [
+        { name: "001.jpg", color: "#ff0000" },
+        { name: "002.jpg", color: "#00ff00" },
+      ]),
+    );
+    const output = join(sidecar.workDir, "out-cancel");
+    mkdirSync(output, { recursive: true });
+
+    await openOrganize(page, output);
+    await selectArchives(page, paths);
+    await page.getByTestId("estimate").click();
+    await expect(page.getByTestId("series-group")).toHaveCount(titles.length);
+
+    // Act - 走り出してすぐ中断する
+    await page.getByTestId("confirm").click();
+    await page.getByTestId("cancel").click();
+
+    // Assert - 中断がログに出て、全作品ぶんは出力されない
+    await expect(page.getByTestId("organize-log")).toContainText(
+      "中断しました",
+      {
+        timeout: 30_000,
+      },
+    );
+    await expect(page.getByTestId("cancel")).toBeHidden();
+    expect(producedFiles(output).length).toBeLessThan(titles.length);
   });
 
   test("整理とページ修正を切り替えられる", async ({ page }) => {

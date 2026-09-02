@@ -1,5 +1,5 @@
-import { Play, Search, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { Play, Search, Square, Wand2 } from "lucide-react";
+import { useRef, useState } from "react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardBody, CardHeader } from "./ui/card";
@@ -34,6 +34,8 @@ type SeriesReviewProps = {
   client: SidecarClient;
   groups: SeriesGroup[];
   outputDirectory: string;
+  keepOriginals?: boolean;
+  knownTitles?: { title: string; author: string }[];
   onGroupsChange: (groups: SeriesGroup[]) => void;
 };
 
@@ -47,12 +49,17 @@ export function SeriesReview({
   client,
   groups,
   outputDirectory,
+  keepOriginals = true,
+  knownTitles = [],
   onGroupsChange,
 }: SeriesReviewProps) {
   const [status, setStatus] = useState("");
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+  // 実行中のジョブ。中断できるよう覚えておく
+  const [runningJob, setRunningJob] = useState<string | null>(null);
+  const cancelled = useRef(false);
 
   const updateGroup = (index: number, patch: Partial<SeriesGroup>) => {
     onGroupsChange(
@@ -110,20 +117,32 @@ export function SeriesReview({
     setStatus("整理しています...");
     setLog([]);
     setProgress({ current: 0, total: groups.length });
+    cancelled.current = false;
     const note = (line: string) => setLog((lines) => [...lines, line].slice(-200));
     try {
       const produced: string[] = [];
       for (const [index, group] of groups.entries()) {
         setProgress({ current: index, total: groups.length });
         note(`▶ ${group.title}`);
+        if (cancelled.current) {
+          note("  中断しました");
+          break;
+        }
         const accepted = await client.organize({
           archives: group.volumes.map((volume) => volume.path),
           output_directory: outputDirectory,
           title: group.title,
           author: group.author ?? "",
-          keep_originals: true,
+          keep_originals: keepOriginals,
         });
+        setRunningJob(accepted.id);
         const job = await client.waitForJob(accepted.id);
+        setRunningJob(null);
+        if (job.state === "cancelled") {
+          // 利用者が止めたので、失敗としては扱わない
+          note("  中断しました");
+          break;
+        }
         if (job.state !== "succeeded") {
           throw new Error(job.error ?? `${group.title} の整理に失敗しました`);
         }
@@ -138,18 +157,46 @@ export function SeriesReview({
         }
       }
       setProgress({ current: groups.length, total: groups.length });
-      setStatus(`${produced.length} 冊を整理しました`);
+      setStatus(
+        cancelled.current
+          ? `中断しました（${produced.length} 冊まで整理済み）`
+          : `${produced.length} 冊を整理しました`,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       note(`  ✗ ${message}`);
       setStatus(message);
     } finally {
       setRunning(false);
+      setRunningJob(null);
+    }
+  };
+
+  /** 実行中のジョブを中断する。次の作品にも進まない */
+  const cancel = async () => {
+    cancelled.current = true;
+    setStatus("中断しています...");
+    if (runningJob) {
+      await client.cancelJob(runningJob).catch(() => undefined);
     }
   };
 
   return (
     <section className="flex flex-col gap-2">
+      {/* 入力欄の候補。辞書に記録済みの作品と著者を出す */}
+      <datalist id="known-titles">
+        {knownTitles.map((entry) => (
+          <option key={entry.title} value={entry.title} />
+        ))}
+      </datalist>
+      <datalist id="known-authors">
+        {[...new Set(knownTitles.map((entry) => entry.author).filter(Boolean))].map(
+          (author) => (
+            <option key={author} value={author} />
+          ),
+        )}
+      </datalist>
+
       <div className="flex items-center gap-2">
         <h2 className="text-[13px] font-semibold">推定結果</h2>
         <span className="tabular text-[12px] text-ink-faint" data-testid="group-count">
@@ -159,6 +206,12 @@ export function SeriesReview({
         <span className="text-[12px] text-ink-muted" data-testid="organize-status">
           {status}
         </span>
+        {running ? (
+          <Button variant="danger" size="sm" data-testid="cancel" onClick={cancel}>
+            <Square />
+            中断する
+          </Button>
+        ) : null}
         <Button
           variant="primary"
           size="sm"
@@ -208,13 +261,23 @@ export function SeriesReview({
                 className="min-w-0 flex-[2_1_200px] font-medium"
                 value={group.title}
                 placeholder="作品名"
+                list="known-titles"
                 data-testid="group-title"
-                onChange={(event) => updateGroup(index, { title: event.target.value })}
+                onChange={(event) => {
+                  const title = event.target.value;
+                  // 辞書に載っている作品なら著者も一緒に埋める
+                  const known = knownTitles.find((entry) => entry.title === title);
+                  updateGroup(index, {
+                    title,
+                    ...(known?.author ? { author: known.author } : {}),
+                  });
+                }}
               />
               <Input
                 className="min-w-0 flex-1 basis-40"
                 placeholder="著者"
                 value={group.author ?? ""}
+                list="known-authors"
                 data-testid="group-author"
                 onChange={(event) => updateGroup(index, { author: event.target.value })}
               />

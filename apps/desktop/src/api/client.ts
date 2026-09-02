@@ -118,6 +118,18 @@ export class SidecarClient {
     return this.post<unknown>("/api/library/entries", { title, author });
   }
 
+  deleteEntry(title: string): Promise<unknown> {
+    return this.request<unknown>(
+      "/api/library/entries",
+      { title },
+      { method: "DELETE" },
+    );
+  }
+
+  cancelJob(id: string): Promise<unknown> {
+    return this.post<unknown>(`/api/jobs/${id}/cancel`, {});
+  }
+
   suggestAuthor(title: string): Promise<Suggestion> {
     return this.post<Suggestion>("/api/library/suggest", { title });
   }

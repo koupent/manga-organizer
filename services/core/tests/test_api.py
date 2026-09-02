@@ -369,6 +369,21 @@ class LibraryTest(ApiTestBase):
         listed = self.client.get("/api/library/entries", params=self.auth()).json()
         self.assertEqual([], listed["entries"])
 
+    def test_allows_delete_from_the_webview_origin(self):
+        # Arrange - WebView は別オリジンから呼ぶ。プリフライトが通らないと
+        # 削除だけ失敗する
+        response = self.client.options(
+            "/api/library/entries",
+            headers={
+                "Origin": "http://127.0.0.1:5173",
+                "Access-Control-Request-Method": "DELETE",
+            },
+        )
+
+        # Assert
+        self.assertEqual(200, response.status_code)
+        self.assertIn("DELETE", response.headers["access-control-allow-methods"])
+
     def test_requires_a_token(self):
         self.assertEqual(401, self.client.get("/api/library/entries").status_code)
 

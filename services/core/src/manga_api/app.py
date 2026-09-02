@@ -279,7 +279,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins or DEFAULT_ALLOWED_ORIGINS,
-        allow_methods=["GET", "POST"],
+        # 削除も使うため DELETE を含める。抜けているとプリフライトで弾かれる
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Content-Type"],
     )
 
