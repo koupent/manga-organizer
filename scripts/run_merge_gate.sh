@@ -34,9 +34,9 @@ else
 fi
 cd "$repo_root"
 
-app_dir="$repo_root/manga-organizer"
-if [[ ! -f "$app_dir/pyproject.toml" ]]; then
-  echo "manga-organizer/pyproject.toml が見つかりません" >&2
+core_dir="$repo_root/services/core"
+if [[ ! -f "$core_dir/pyproject.toml" ]]; then
+  echo "services/core が見つかりません" >&2
   exit 1
 fi
 
@@ -145,9 +145,7 @@ run_frontend_checks() {
     && npx playwright test )
 }
 
-# コアは GUI 非依存の独立パッケージ。アプリより先に検査する
 run_python_checks services/core
-run_python_checks "$(basename "$app_dir")"
 
 run_shell_checks() {
   echo "== Tauri シェル"

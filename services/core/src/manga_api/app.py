@@ -27,6 +27,7 @@ from manga_core.cover_editor import (
     apply_to_archive,
     is_spread,
 )
+from manga_core.manga_database import MangaDatabase
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
 from manga_core.series_grouper import estimate_series
 
@@ -60,6 +61,32 @@ class OrganizeRequest(BaseModel):
     title: str = Field(default="", description="作品名")
     author: str = Field(default="", description="著者名")
     keep_originals: bool = Field(default=True, description="元ファイルを残すか")
+
+
+class LibraryEntry(BaseModel):
+    """タイトルと著者の対応"""
+
+    title: str
+    author: str
+
+
+class LibraryEntries(BaseModel):
+    """辞書の中身"""
+
+    entries: list[LibraryEntry]
+
+
+class SuggestRequest(BaseModel):
+    """外部サービスへの問い合わせ依頼"""
+
+    title: str = Field(description="調べたい作品名")
+
+
+class Suggestion(BaseModel):
+    """補完の結果。見つからなければ null"""
+
+    title: str | None = None
+    author: str | None = None
 
 
 class EstimateRequest(BaseModel):
@@ -203,6 +230,7 @@ def create_app(
     app.state.thumbnails = thumbnails.ThumbnailCache()
     app.state.allowed_roots = [Path(r).resolve() for r in (allowed_roots or [])]
     app.state.run_jobs_inline = run_jobs_inline
+    app.state.database_path = resolved_state / "manga.db"
 
     # WebView は別オリジンから呼ぶ。ブラウザで開発・検証する場合も同じ。
     # 待ち受けは 127.0.0.1 のみで、実際の防御はトークンが担う。
@@ -224,6 +252,15 @@ def create_app(
             )
 
     guarded = [Depends(require_token)]
+
+    def open_database() -> MangaDatabase:
+        """辞書をリクエストごとに開く。
+
+        MangaDatabase は接続を保持するが check_same_thread を既定のままに
+        しているため、スレッドをまたいで使えない。単一スレッドの Tkinter
+        では問題にならなかったが、ここでは要求ごとに開いて閉じる。
+        """
+        return MangaDatabase(app.state.database_path)
 
     def resolve_archive(raw: str) -> Path:
         """受け取ったパスを検証して解決する"""
@@ -301,6 +338,66 @@ def create_app(
                 "X-Content-Type-Options": "nosniff",
             },
         )
+
+    @app.get(
+        "/api/library/entries", dependencies=guarded, response_model=LibraryEntries
+    )
+    def list_entries(query: str = "") -> LibraryEntries:
+        """タイトルと著者の辞書。query を与えると絞り込む"""
+        database = open_database()
+        pairs = (
+            database.search_titles(query, limit=50)
+            if query
+            else database.get_recent_manga(limit=200)
+        )
+        return LibraryEntries(
+            entries=[
+                LibraryEntry(title=title, author=author) for title, author in pairs
+            ]
+        )
+
+    @app.post("/api/library/entries", dependencies=guarded, response_model=LibraryEntry)
+    def save_entry(entry: LibraryEntry) -> LibraryEntry:
+        """辞書に記録する。同じタイトルがあれば上書きする"""
+        if not entry.title.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="作品名が空です"
+            )
+        database = open_database()
+        try:
+            database.save_manga_info(entry.title, entry.author)
+        finally:
+            database.close()
+        return entry
+
+    @app.delete("/api/library/entries", dependencies=guarded)
+    def delete_entry(title: str) -> dict[str, bool]:
+        """辞書から取り除く"""
+        database = open_database()
+        try:
+            return {"deleted": bool(database.delete_manga(title))}
+        finally:
+            database.close()
+
+    @app.post("/api/library/suggest", dependencies=guarded, response_model=Suggestion)
+    def suggest(request: SuggestRequest) -> Suggestion:
+        """外部サービスから著者名を補完する。
+
+        ネットワークに出るため失敗しうる。見つからない場合と区別せず、
+        空の結果として返して画面を止めない。
+        """
+        # 取り込みが重く、ネットワークにも出るのでここで読み込む
+        from manga_core.api_client import MangaMetadataFetcher
+
+        try:
+            found = MangaMetadataFetcher().get_author_suggestion(request.title)
+        except Exception:  # noqa: BLE001 - 補完は失敗しても処理を続ける
+            logger.warning("著者の補完に失敗しました: %s", request.title)
+            return Suggestion()
+        if not found:
+            return Suggestion()
+        title, author = found
+        return Suggestion(title=title, author=author)
 
     @app.get("/api/image", dependencies=guarded, response_class=Response)
     def image(archive: str, name: str) -> Response:

@@ -95,6 +95,51 @@ test.describe("整理画面", () => {
     expect(produced.every((path) => path.endsWith(".zip"))).toBeTruthy();
   });
 
+  test("著者を入力して整理すると、出力名に反映され辞書に残る", async ({ page }) => {
+    // Arrange
+    const paths = [
+      writeArchive(sidecar.workDir, "著者テスト 第01巻.zip", [
+        { name: "001.jpg", color: "#ff0000" },
+      ]),
+    ];
+    const output = join(sidecar.workDir, "out5");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await page.getByTestId("sources").fill(paths.join("\n"));
+    await page.getByTestId("estimate").click();
+
+    const group = page.getByTestId("series-group").first();
+    await expect(group.getByTestId("volume")).toHaveCount(1);
+
+    // Act - 著者を入れて整理する
+    await group.getByTestId("group-author").fill("テスト著者");
+    await page.getByTestId("confirm").click();
+    await expect(page.getByTestId("organize-status")).toContainText("整理しました", {
+      timeout: 30_000,
+    });
+
+    // Assert - 出力パスに著者名が入る
+    const produced = producedFiles(output);
+    expect(produced.some((path) => path.includes("テスト著者"))).toBeTruthy();
+
+    // Assert - 辞書に残り、次回以降に使える
+    const entries = await page.evaluate(
+      async ([base, token]) => {
+        const response = await fetch(
+          `${base}/api/library/entries?token=${token}`,
+        );
+        return response.json();
+      },
+      [sidecar.baseUrl, sidecar.token],
+    );
+    expect(
+      entries.entries.some(
+        (entry: { title: string; author: string }) =>
+          entry.author === "テスト著者",
+      ),
+    ).toBeTruthy();
+  });
+
   test("1 冊を別の作品へ移せる", async ({ page }) => {
     // Arrange - 同じ作品として推定されるが、実際は別作品
     const paths = [
