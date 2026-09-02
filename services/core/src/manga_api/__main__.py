@@ -45,6 +45,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=[],
         help="WebView のオリジン（省略時は既定の localhost / tauri）",
     )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="使い捨てトークンを固定する（開発用。省略時は起動ごとに生成）",
+    )
     parser.add_argument("--log-level", default="info")
     return parser.parse_args(argv)
 
@@ -68,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         state_dir=args.state_dir,
         allowed_roots=args.allow_root,
         allowed_origins=args.allow_origin or None,
+        token=args.token,
     )
     config = uvicorn.Config(
         app, host=HOST, port=args.port, log_level=args.log_level, access_log=False

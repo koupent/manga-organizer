@@ -22,9 +22,12 @@ export async function resolveConnection(): Promise<SidecarConnection | null> {
   }
 
   const params = new URLSearchParams(window.location.search);
-  const baseUrl = params.get("api");
   const token = params.get("token");
-  return baseUrl && token ? { baseUrl, token } : null;
+  if (!token) return null;
+  // api を省いた場合は同一オリジン。dev server が /api をサイドカーへ
+  // 中継するので、ブラウザから見えるポートは 1 つで済む
+  const baseUrl = params.get("api") ?? window.location.origin;
+  return { baseUrl, token };
 }
 
 /**
@@ -38,8 +41,11 @@ export async function onFilesDropped(
 ): Promise<() => void> {
   if (!isTauri()) return () => undefined;
   const { listen } = await import("@tauri-apps/api/event");
-  const unlisten = await listen<{ paths: string[] }>("files-dropped", (event) => {
-    handler(event.payload.paths);
-  });
+  const unlisten = await listen<{ paths: string[] }>(
+    "files-dropped",
+    (event) => {
+      handler(event.payload.paths);
+    },
+  );
   return unlisten;
 }

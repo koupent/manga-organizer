@@ -4,1141 +4,1259 @@
  */
 
 export interface paths {
-    "/api/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Health
-         * @description サイドカーが応答することの確認
-         */
-        get: operations["health_api_health_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+  "/api/health": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/pages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Pages
-         * @description アーカイブ内のページを viewer と同じ並びで返す
-         */
-        get: operations["list_pages_api_pages_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Health
+     * @description サイドカーが応答することの確認
+     */
+    get: operations["health_api_health_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/pages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/thumb": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Thumbnail
-         * @description ページのサムネイルを返す
-         */
-        get: operations["thumbnail_api_thumb_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * List Pages
+     * @description アーカイブ内のページを viewer と同じ並びで返す
+     */
+    get: operations["list_pages_api_pages_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/thumb": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/library/entries": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Entries
-         * @description タイトルと著者の辞書。query を与えると絞り込む
-         */
-        get: operations["list_entries_api_library_entries_get"];
-        put?: never;
-        /**
-         * Save Entry
-         * @description 辞書に記録する。同じタイトルがあれば上書きする
-         */
-        post: operations["save_entry_api_library_entries_post"];
-        /**
-         * Delete Entry
-         * @description 辞書から取り除く
-         */
-        delete: operations["delete_entry_api_library_entries_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Thumbnail
+     * @description ページのサムネイルを返す
+     */
+    get: operations["thumbnail_api_thumb_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/resolve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/library/suggest": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Suggest
-         * @description 外部サービスから著者名を補完する。
-         *
-         *     ネットワークに出るため失敗しうる。見つからない場合と区別せず、
-         *     空の結果として返して画面を止めない。
-         */
-        post: operations["suggest_api_library_suggest_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Resolve
+     * @description ドロップされたファイルを実パスに結びつける。
+     *
+     *     ブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の
+     *     中から同じものを探せば、ドロップからでも対象を特定できる。同名が複数
+     *     あってサイズでも絞れない場合は、勝手に選ばず返す。
+     */
+    post: operations["resolve_api_resolve_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/browse": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/image": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Image
-         * @description ページを原寸で返す。拡大表示に使う
-         */
-        get: operations["image_api_image_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Browse
+     * @description 許可された場所の中を辿る。
+     *
+     *     ブラウザはドロップされたファイルの実パスを取得できないため、
+     *     サーバー側で辿って選んでもらう。Tauri ではネイティブのドロップも
+     *     使えるが、同じ画面で両方使えるようにする。
+     */
+    get: operations["browse_api_browse_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/library/entries": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/cover": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Cover
-         * @description 表紙（先頭ページ）の状態を返す。
-         *
-         *     viewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が
-         *     見えない。UI で加工を促せるよう、見開きかどうかを添える。
-         */
-        get: operations["cover_api_cover_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * List Entries
+     * @description タイトルと著者の辞書。query を与えると絞り込む
+     */
+    get: operations["list_entries_api_library_entries_get"];
+    put?: never;
+    /**
+     * Save Entry
+     * @description 辞書に記録する。同じタイトルがあれば上書きする
+     */
+    post: operations["save_entry_api_library_entries_post"];
+    /**
+     * Delete Entry
+     * @description 辞書から取り除く
+     */
+    delete: operations["delete_entry_api_library_entries_delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/library/suggest": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/jobs/cover": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit Cover
-         * @description 表紙の加工をジョブとして投入する
-         */
-        post: operations["submit_cover_api_jobs_cover_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Suggest
+     * @description 外部サービスから著者名を補完する。
+     *
+     *     ネットワークに出るため失敗しうる。見つからない場合と区別せず、
+     *     空の結果として返して画面を止めない。
+     */
+    post: operations["suggest_api_library_suggest_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/image": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/series/estimate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Estimate
-         * @description アーカイブ群を作品ごとにまとめた初期案を返す。
-         *
-         *     自動推定は必ず外れるので、確信度を添えて返し、UI で直してもらう。
-         */
-        post: operations["estimate_api_series_estimate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Image
+     * @description ページを原寸で返す。拡大表示に使う
+     */
+    get: operations["image_api_image_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/cover": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/jobs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Jobs
-         * @description 新しい順にジョブを並べる
-         */
-        get: operations["list_jobs_api_jobs_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Cover
+     * @description 表紙（先頭ページ）の状態を返す。
+     *
+     *     viewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が
+     *     見えない。UI で加工を促せるよう、見開きかどうかを添える。
+     */
+    get: operations["cover_api_cover_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/jobs/cover": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/jobs/{job_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Job
-         * @description ジョブ 1 件の状態を返す
-         */
-        get: operations["get_job_api_jobs__job_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Submit Cover
+     * @description 表紙の加工をジョブとして投入する
+     */
+    post: operations["submit_cover_api_jobs_cover_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/jobs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/jobs/{job_id}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Cancel Job
-         * @description 実行中のジョブにキャンセルを要求する
-         */
-        post: operations["cancel_job_api_jobs__job_id__cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * List Jobs
+     * @description 新しい順にジョブを並べる
+     */
+    get: operations["list_jobs_api_jobs_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/jobs/{job_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/jobs/reorder": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit Reorder
-         * @description ページ並べ替えをジョブとして投入する
-         */
-        post: operations["submit_reorder_api_jobs_reorder_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Get Job
+     * @description ジョブ 1 件の状態を、経過のログとともに返す
+     */
+    get: operations["get_job_api_jobs__job_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/jobs/{job_id}/cancel": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/api/jobs/organize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit Organize
-         * @description アーカイブの整理をジョブとして投入する
-         */
-        post: operations["submit_organize_api_jobs_organize_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Cancel Job
+     * @description 実行中のジョブにキャンセルを要求する
+     */
+    post: operations["cancel_job_api_jobs__job_id__cancel_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/jobs/reorder": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
+    get?: never;
+    put?: never;
+    /**
+     * Submit Reorder
+     * @description ページ並べ替えをジョブとして投入する
+     */
+    post: operations["submit_reorder_api_jobs_reorder_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/jobs/organize": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Submit Organize
+     * @description アーカイブの整理をジョブとして投入する
+     */
+    post: operations["submit_organize_api_jobs_organize_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: {
-        /**
-         * CoverRequest
-         * @description 表紙加工の依頼。分割 → 切り抜き → 回転の順に適用される
-         */
-        CoverRequest: {
-            /**
-             * Archive
-             * @description 対象アーカイブの絶対パス
-             */
-            archive: string;
-            /**
-             * Name
-             * @description 加工するページ名（通常は先頭）
-             */
-            name: string;
-            /**
-             * Split
-             * @description 見開きの残す側（left / right）
-             */
-            split?: string | null;
-            /**
-             * Crop
-             * @description 切り抜き範囲 (left, upper, right, lower)
-             */
-            crop?: [
-                number,
-                number,
-                number,
-                number
-            ] | null;
-            /**
-             * Rotate
-             * @description 回転角。90 度単位
-             * @default 0
-             */
-            rotate: number;
-        };
-        /**
-         * CoverView
-         * @description 表紙の状態
-         */
-        CoverView: {
-            /** Name */
-            name: string;
-            /** Width */
-            width: number;
-            /** Height */
-            height: number;
-            /** Is Spread */
-            is_spread: boolean;
-            /** Target Aspect Ratio */
-            target_aspect_ratio: number;
-        };
-        /**
-         * EstimateRequest
-         * @description 作品グルーピングの推定依頼
-         */
-        EstimateRequest: {
-            /**
-             * Archives
-             * @description 推定対象アーカイブの絶対パス
-             */
-            archives: string[];
-        };
-        /**
-         * EstimateResult
-         * @description 推定結果。自動推定は外れる前提で、UI で直してから確定する
-         */
-        EstimateResult: {
-            /** Groups */
-            groups: components["schemas"]["SeriesGroupView"][];
-        };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
-        };
-        /**
-         * HealthView
-         * @description 疎通確認
-         */
-        HealthView: {
-            /** Status */
-            status: string;
-            /** Version */
-            version: string;
-        };
-        /**
-         * JobAccepted
-         * @description ジョブの受付結果
-         */
-        JobAccepted: {
-            /** Id */
-            id: string;
-        };
-        /**
-         * JobList
-         * @description ジョブ一覧
-         */
-        JobList: {
-            /** Jobs */
-            jobs: components["schemas"]["JobView"][];
-        };
-        /**
-         * JobView
-         * @description ジョブの状態
-         */
-        JobView: {
-            /** Id */
-            id: string;
-            /** Kind */
-            kind: string;
-            /** State */
-            state: string;
-            /** Current */
-            current: number;
-            /** Total */
-            total: number;
-            /** Message */
-            message: string;
-            /** Result */
-            result?: unknown | null;
-            /** Error */
-            error?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Updated At */
-            updated_at: string;
-        };
-        /**
-         * LibraryEntries
-         * @description 辞書の中身
-         */
-        LibraryEntries: {
-            /** Entries */
-            entries: components["schemas"]["LibraryEntry"][];
-        };
-        /**
-         * LibraryEntry
-         * @description タイトルと著者の対応
-         */
-        LibraryEntry: {
-            /** Title */
-            title: string;
-            /** Author */
-            author: string;
-        };
-        /**
-         * OrganizeRequest
-         * @description アーカイブ整理の依頼
-         */
-        OrganizeRequest: {
-            /**
-             * Archives
-             * @description 整理対象アーカイブの絶対パス
-             */
-            archives: string[];
-            /**
-             * Output Directory
-             * @description 出力先ディレクトリ
-             */
-            output_directory: string;
-            /**
-             * Title
-             * @description 作品名
-             * @default
-             */
-            title: string;
-            /**
-             * Author
-             * @description 著者名
-             * @default
-             */
-            author: string;
-            /**
-             * Keep Originals
-             * @description 元ファイルを残すか
-             * @default true
-             */
-            keep_originals: boolean;
-        };
-        /**
-         * PageList
-         * @description アーカイブ内のページ一覧
-         */
-        PageList: {
-            /** Archive */
-            archive: string;
-            /** Pages */
-            pages: components["schemas"]["PageView"][];
-            /** Thumbnail Widths */
-            thumbnail_widths: number[];
-        };
-        /**
-         * PageView
-         * @description ページ 1 枚の情報
-         */
-        PageView: {
-            /** Name */
-            name: string;
-            /** Size */
-            size: number;
-            /** Modified */
-            modified: string;
-        };
-        /**
-         * ReorderRequest
-         * @description ページ並べ替えの依頼
-         */
-        ReorderRequest: {
-            /**
-             * Archive
-             * @description 対象アーカイブの絶対パス
-             */
-            archive: string;
-            /**
-             * Order
-             * @description 並べ替え後のページ名（先頭が 1 ページ目）
-             */
-            order: string[];
-        };
-        /**
-         * SeriesGroupView
-         * @description 同じ作品と推定した巻のまとまり
-         */
-        SeriesGroupView: {
-            /** Title */
-            title: string;
-            /** Confidence */
-            confidence: number;
-            /** Hasduplicatevolumes */
-            hasDuplicateVolumes: boolean;
-            /** Volumes */
-            volumes: components["schemas"]["SeriesVolumeView"][];
-        };
-        /**
-         * SeriesVolumeView
-         * @description まとまりを構成する 1 冊
-         */
-        SeriesVolumeView: {
-            /** Path */
-            path: string;
-            /** Name */
-            name: string;
-            /** Volume */
-            volume?: number | null;
-        };
-        /**
-         * SuggestRequest
-         * @description 外部サービスへの問い合わせ依頼
-         */
-        SuggestRequest: {
-            /**
-             * Title
-             * @description 調べたい作品名
-             */
-            title: string;
-        };
-        /**
-         * Suggestion
-         * @description 補完の結果。見つからなければ null
-         */
-        Suggestion: {
-            /** Title */
-            title?: string | null;
-            /** Author */
-            author?: string | null;
-        };
-        /** ValidationError */
-        ValidationError: {
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
-            /** Input */
-            input?: unknown;
-            /** Context */
-            ctx?: Record<string, never>;
-        };
+  schemas: {
+    /**
+     * AuthorCandidate
+     * @description 検索で見つかった作品と、その著者
+     */
+    AuthorCandidate: {
+      /** Title */
+      title: string;
+      /** Author */
+      author: string;
+      /** Source */
+      source: string;
+      /** Similarity */
+      similarity: number;
     };
-    responses: never;
-    parameters: never;
-    requestBodies: never;
-    headers: never;
-    pathItems: never;
+    /**
+     * BrowseEntry
+     * @description ファイル選択に出す 1 項目
+     */
+    BrowseEntry: {
+      /** Name */
+      name: string;
+      /** Path */
+      path: string;
+      /** Is Directory */
+      is_directory: boolean;
+    };
+    /**
+     * BrowseResult
+     * @description 辿っている場所と、その中身
+     */
+    BrowseResult: {
+      /** Path */
+      path: string;
+      /** Parent */
+      parent?: string | null;
+      /** Entries */
+      entries: components["schemas"]["BrowseEntry"][];
+    };
+    /**
+     * CoverRequest
+     * @description 表紙加工の依頼。分割 → 切り抜き → 回転の順に適用される
+     */
+    CoverRequest: {
+      /**
+       * Archive
+       * @description 対象アーカイブの絶対パス
+       */
+      archive: string;
+      /**
+       * Name
+       * @description 加工するページ名（通常は先頭）
+       */
+      name: string;
+      /**
+       * Split
+       * @description 見開きの残す側（left / right）
+       */
+      split?: string | null;
+      /**
+       * Crop
+       * @description 切り抜き範囲 (left, upper, right, lower)
+       */
+      crop?: [number, number, number, number] | null;
+      /**
+       * Rotate
+       * @description 回転角。90 度単位
+       * @default 0
+       */
+      rotate: number;
+    };
+    /**
+     * CoverView
+     * @description 表紙の状態
+     */
+    CoverView: {
+      /** Name */
+      name: string;
+      /** Width */
+      width: number;
+      /** Height */
+      height: number;
+      /** Is Spread */
+      is_spread: boolean;
+      /** Target Aspect Ratio */
+      target_aspect_ratio: number;
+    };
+    /**
+     * DroppedFile
+     * @description ドロップされたファイルの手がかり
+     */
+    DroppedFile: {
+      /** Name */
+      name: string;
+      /**
+       * Size
+       * @default 0
+       */
+      size: number;
+    };
+    /** HTTPValidationError */
+    HTTPValidationError: {
+      /** Detail */
+      detail?: components["schemas"]["ValidationError"][];
+    };
+    /**
+     * HealthView
+     * @description 疎通確認
+     */
+    HealthView: {
+      /** Status */
+      status: string;
+      /** Version */
+      version: string;
+    };
+    /**
+     * JobAccepted
+     * @description ジョブの受付結果
+     */
+    JobAccepted: {
+      /** Id */
+      id: string;
+    };
+    /**
+     * JobDetail
+     * @description ジョブ 1 件の詳細。
+     *
+     *     ログを返すのはここだけにする。一覧でも log を持つと、常に空配列が
+     *     載ってしまい「ログが無い」と「一覧では取らない」を区別できない。
+     */
+    JobDetail: {
+      /** Id */
+      id: string;
+      /** Kind */
+      kind: string;
+      /** State */
+      state: string;
+      /** Current */
+      current: number;
+      /** Total */
+      total: number;
+      /** Message */
+      message: string;
+      /** Result */
+      result?: unknown | null;
+      /** Error */
+      error?: string | null;
+      /** Created At */
+      created_at: string;
+      /** Updated At */
+      updated_at: string;
+      /** Log */
+      log: string[];
+    };
+    /**
+     * JobList
+     * @description ジョブ一覧
+     */
+    JobList: {
+      /** Jobs */
+      jobs: components["schemas"]["JobView"][];
+    };
+    /**
+     * JobView
+     * @description ジョブの状態。一覧はログを読まないので log を持たない
+     */
+    JobView: {
+      /** Id */
+      id: string;
+      /** Kind */
+      kind: string;
+      /** State */
+      state: string;
+      /** Current */
+      current: number;
+      /** Total */
+      total: number;
+      /** Message */
+      message: string;
+      /** Result */
+      result?: unknown | null;
+      /** Error */
+      error?: string | null;
+      /** Created At */
+      created_at: string;
+      /** Updated At */
+      updated_at: string;
+    };
+    /**
+     * LibraryEntries
+     * @description 辞書の中身
+     */
+    LibraryEntries: {
+      /** Entries */
+      entries: components["schemas"]["LibraryEntry"][];
+    };
+    /**
+     * LibraryEntry
+     * @description タイトルと著者の対応
+     */
+    LibraryEntry: {
+      /** Title */
+      title: string;
+      /** Author */
+      author: string;
+    };
+    /**
+     * OrganizeRequest
+     * @description アーカイブ整理の依頼
+     */
+    OrganizeRequest: {
+      /**
+       * Archives
+       * @description 整理対象アーカイブの絶対パス
+       */
+      archives: string[];
+      /**
+       * Output Directory
+       * @description 出力先ディレクトリ
+       */
+      output_directory: string;
+      /**
+       * Title
+       * @description 作品名
+       * @default
+       */
+      title: string;
+      /**
+       * Author
+       * @description 著者名
+       * @default
+       */
+      author: string;
+      /**
+       * Keep Originals
+       * @description 元ファイルを残すか
+       * @default true
+       */
+      keep_originals: boolean;
+    };
+    /**
+     * PageList
+     * @description アーカイブ内のページ一覧
+     */
+    PageList: {
+      /** Archive */
+      archive: string;
+      /** Pages */
+      pages: components["schemas"]["PageView"][];
+      /** Thumbnail Widths */
+      thumbnail_widths: number[];
+    };
+    /**
+     * PageView
+     * @description ページ 1 枚の情報
+     */
+    PageView: {
+      /** Name */
+      name: string;
+      /** Size */
+      size: number;
+      /** Modified */
+      modified: string;
+    };
+    /**
+     * ReorderRequest
+     * @description ページ並べ替えの依頼
+     */
+    ReorderRequest: {
+      /**
+       * Archive
+       * @description 対象アーカイブの絶対パス
+       */
+      archive: string;
+      /**
+       * Order
+       * @description 並べ替え後のページ名（先頭が 1 ページ目）
+       */
+      order: string[];
+    };
+    /**
+     * ResolveRequest
+     * @description ドロップされたものを実パスに結びつける依頼
+     */
+    ResolveRequest: {
+      /** Files */
+      files: components["schemas"]["DroppedFile"][];
+    };
+    /**
+     * ResolveResult
+     * @description 見つかったもの、見つからなかったもの、絞りきれなかったもの
+     */
+    ResolveResult: {
+      /** Resolved */
+      resolved: string[];
+      /** Unresolved */
+      unresolved: string[];
+      /** Ambiguous */
+      ambiguous: string[];
+      /**
+       * Searched Roots
+       * @default []
+       */
+      searched_roots: string[];
+    };
+    /**
+     * SuggestRequest
+     * @description 外部サービスへの問い合わせ依頼
+     */
+    SuggestRequest: {
+      /**
+       * Title
+       * @description 調べたい作品名。空白のみは受け付けない
+       */
+      title: string;
+    };
+    /**
+     * Suggestion
+     * @description 補完の結果。近い順に候補を並べ、先頭を既定として示す
+     */
+    Suggestion: {
+      /** Title */
+      title?: string | null;
+      /** Author */
+      author?: string | null;
+      /** Candidates */
+      candidates?: components["schemas"]["AuthorCandidate"][];
+    };
+    /** ValidationError */
+    ValidationError: {
+      /** Location */
+      loc: (string | number)[];
+      /** Message */
+      msg: string;
+      /** Error Type */
+      type: string;
+      /** Input */
+      input?: unknown;
+      /** Context */
+      ctx?: Record<string, never>;
+    };
+  };
+  responses: never;
+  parameters: never;
+  requestBodies: never;
+  headers: never;
+  pathItems: never;
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    health_api_health_get: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HealthView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+  health_api_health_get: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    list_pages_api_pages_get: {
-        parameters: {
-            query: {
-                archive: string;
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PageList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
+        content: {
+          "application/json": components["schemas"]["HealthView"];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
     };
-    thumbnail_api_thumb_get: {
-        parameters: {
-            query: {
-                archive: string;
-                name: string;
-                width?: number;
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+  };
+  list_pages_api_pages_get: {
+    parameters: {
+      query: {
+        archive: string;
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    list_entries_api_library_entries_get: {
-        parameters: {
-            query?: {
-                query?: string;
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LibraryEntries"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
+        content: {
+          "application/json": components["schemas"]["PageList"];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
     };
-    save_entry_api_library_entries_post: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LibraryEntry"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LibraryEntry"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+  };
+  thumbnail_api_thumb_get: {
+    parameters: {
+      query: {
+        archive: string;
+        name: string;
+        width?: number;
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    delete_entry_api_library_entries_delete: {
-        parameters: {
-            query: {
-                title: string;
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
         };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
     };
-    suggest_api_library_suggest_post: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SuggestRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Suggestion"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+  };
+  resolve_api_resolve_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    image_api_image_get: {
-        parameters: {
-            query: {
-                archive: string;
-                name: string;
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResolveRequest"];
+      };
     };
-    cover_api_cover_get: {
-        parameters: {
-            query: {
-                archive: string;
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CoverView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
+        content: {
+          "application/json": components["schemas"]["ResolveResult"];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
     };
-    submit_cover_api_jobs_cover_post: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CoverRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobAccepted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+  };
+  browse_api_browse_get: {
+    parameters: {
+      query?: {
+        path?: string;
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    estimate_api_series_estimate_post: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EstimateRequest"];
-            };
+        content: {
+          "application/json": components["schemas"]["BrowseResult"];
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EstimateResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
         };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
     };
-    list_jobs_api_jobs_get: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+  };
+  list_entries_api_library_entries_get: {
+    parameters: {
+      query?: {
+        query?: string;
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    get_job_api_jobs__job_id__get: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
+        content: {
+          "application/json": components["schemas"]["LibraryEntries"];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
     };
-    cancel_job_api_jobs__job_id__cancel_post: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobAccepted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+  };
+  save_entry_api_library_entries_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    submit_reorder_api_jobs_reorder_post: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReorderRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobAccepted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LibraryEntry"];
+      };
     };
-    submit_organize_api_jobs_organize_post: {
-        parameters: {
-            query?: {
-                /** @description 使い捨てトークン */
-                token?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OrganizeRequest"];
-            };
+        content: {
+          "application/json": components["schemas"]["LibraryEntry"];
         };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobAccepted"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
         };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
     };
+  };
+  delete_entry_api_library_entries_delete: {
+    parameters: {
+      query: {
+        title: string;
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: boolean;
+          };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  suggest_api_library_suggest_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SuggestRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Suggestion"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  image_api_image_get: {
+    parameters: {
+      query: {
+        archive: string;
+        name: string;
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  cover_api_cover_get: {
+    parameters: {
+      query: {
+        archive: string;
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CoverView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_cover_api_jobs_cover_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CoverRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_jobs_api_jobs_get: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobList"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_job_api_jobs__job_id__get: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path: {
+        job_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  cancel_job_api_jobs__job_id__cancel_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path: {
+        job_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_reorder_api_jobs_reorder_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReorderRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_organize_api_jobs_organize_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OrganizeRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
 }

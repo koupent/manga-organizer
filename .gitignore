@@ -141,3 +141,6 @@ Thumbs.db
 .dev-foundation/state.json
 .dev-foundation/backups/
 # dev-foundation:local:end
+
+# 動作確認用の作業場所（コミットしない）
+.sandbox/

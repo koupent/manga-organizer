@@ -3,10 +3,14 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { startSidecar, type Sidecar } from "./sidecar";
 
-const CORE_DIR = fileURLToPath(new URL("../../../services/core", import.meta.url));
+const CORE_DIR = fileURLToPath(
+  new URL("../../../services/core", import.meta.url),
+);
 
 let sidecar: Sidecar;
-test.beforeAll(async () => { sidecar = await startSidecar(); });
+test.beforeAll(async () => {
+  sidecar = await startSidecar();
+});
 test.afterAll(() => sidecar?.stop());
 
 /** 表紙が見開き（左右で色が違う）の ZIP を作る */
@@ -39,7 +43,10 @@ with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
   return target;
 }
 
-async function openCover(page: import("@playwright/test").Page, archive: string) {
+async function openCover(
+  page: import("@playwright/test").Page,
+  archive: string,
+) {
   await page.goto(
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=cover&archive=${encodeURIComponent(archive)}`,
@@ -59,9 +66,12 @@ test.describe("表紙加工", () => {
 
     // Act - 右半分を表紙にする
     await page.getByTestId("split-right").click();
-    await expect(page.getByTestId("cover-status")).toContainText("加工しました", {
-      timeout: 30_000,
-    });
+    await expect(page.getByTestId("cover-status")).toContainText(
+      "加工しました",
+      {
+        timeout: 30_000,
+      },
+    );
 
     // Assert - 見開きでなくなり、viewer の枠に収まる
     await expect(page.getByTestId("cover-size")).toHaveText("800×1200");
@@ -74,9 +84,12 @@ test.describe("表紙加工", () => {
     const archive = writeSpreadArchive(sidecar.workDir, "replace.zip");
     await openCover(page, archive);
     await page.getByTestId("split-right").click();
-    await expect(page.getByTestId("cover-status")).toContainText("加工しました", {
-      timeout: 30_000,
-    });
+    await expect(page.getByTestId("cover-status")).toContainText(
+      "加工しました",
+      {
+        timeout: 30_000,
+      },
+    );
 
     // Assert - 残ったのは右半分（青）で、他ページは無変更
     const inspected = execFileSync(
@@ -111,9 +124,12 @@ print(json.dumps({"names": names, "blue_wins": blue > red, "other": size}))
     await openCover(page, archive);
 
     await page.getByTestId("rotate").click();
-    await expect(page.getByTestId("cover-status")).toContainText("加工しました", {
-      timeout: 30_000,
-    });
+    await expect(page.getByTestId("cover-status")).toContainText(
+      "加工しました",
+      {
+        timeout: 30_000,
+      },
+    );
     await expect(page.getByTestId("cover-size")).toHaveText("1200×1600");
   });
 });

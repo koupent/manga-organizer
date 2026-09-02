@@ -6,10 +6,52 @@ import difflib
 import logging
 import time
 from abc import ABC, abstractmethod
+from typing import TypedDict
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# 唯一の提供元。応答に source が欠けたときの既定値も兼ねる
+SOURCE_ANILIST = "AniList"
+
+
+class AuthorCandidate(TypedDict):
+    """著者候補 1 件の形。
+
+    外部サービスの応答は値が欠けたり型が違ったりする。ここを通ったものは
+    4 つの値が揃っていると呼び出し側が信じてよい、という約束を型で示す。
+    """
+
+    title: str
+    author: str
+    source: str
+    similarity: float
+
+
+def _build_candidate(result: dict, author: str) -> AuthorCandidate | None:
+    """検索結果 1 件を著者候補に直す。値が欠けていれば None を返す。
+
+    1 件でも壊れていると全体を落としていたが、他の候補まで見えなくなる。
+    捨てるのは壊れた候補だけにする。
+    """
+    title = result.get("title_japanese") or result.get("title")
+    if not isinstance(title, str) or not title:
+        return None
+
+    try:
+        similarity = float(result.get("similarity", 0.0))
+    except (TypeError, ValueError):
+        # None や数値にならない文字列が入りうる
+        return None
+
+    source = result.get("source")
+    if not isinstance(source, str) or not source:
+        source = SOURCE_ANILIST
+
+    return AuthorCandidate(
+        title=title, author=author, source=source, similarity=similarity
+    )
 
 
 def calculate_similarity(query: str, candidate: str) -> float:
@@ -17,6 +59,11 @@ def calculate_similarity(query: str, candidate: str) -> float:
     # Normalize strings for comparison
     query_lower = query.lower().strip()
     candidate_lower = candidate.lower().strip()
+
+    # 空文字はどんな文字列にも含まれてしまい、後段の含有判定で 0.9 という
+    # 高い点が付く。中身が無いものは似ているとは言えないのでここで断つ
+    if not query_lower or not candidate_lower:
+        return 0.0
 
     # Check exact match first
     if query_lower == candidate_lower:
@@ -156,7 +203,7 @@ class AniListClient(MangaAPIClient):
                             "title_japanese": item_title_jp,
                             "authors": authors,
                             "anilist_id": item.get("id"),
-                            "source": "AniList",
+                            "source": SOURCE_ANILIST,
                             "similarity": similarity,
                         }
                     )
@@ -220,18 +267,23 @@ class MangaMetadataFetcher:
             logger.error(f"AniList search failed: {e}")
             return []
 
-    def get_author_suggestion(self, title: str) -> tuple[str, str] | None:
-        """Get the best author suggestion for a title
-        Returns: (author_name, source) or None
+    def get_author_candidates(self, title: str) -> list[AuthorCandidate]:
+        """作品名に近い順の著者候補を返す。
+
+        1 作品に複数の著者が載ることがあるので平らにし、同じ著者は
+        最初に出た（もっとも近い）ものだけ残す。値が欠けた候補は
+        その 1 件だけ捨て、残りは画面に出す。
         """
-        results = self.search(title)
-
-        if results:
-            # Return the first result (most popular)
-            first_result = results[0]
-            authors = first_result.get("authors", [])
-            if authors:
-                source = first_result.get("source", "Unknown")
-                return (authors[0], source)
-
-        return None
+        candidates: list[AuthorCandidate] = []
+        seen: set[str] = set()
+        for result in self.search(title):
+            for author in result.get("authors") or []:
+                if not isinstance(author, str) or not author or author in seen:
+                    continue
+                candidate = _build_candidate(result, author)
+                if candidate is None:
+                    logger.warning("著者候補の値が揃っていません: %s", author)
+                    continue
+                seen.add(author)
+                candidates.append(candidate)
+        return candidates

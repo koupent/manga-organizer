@@ -75,7 +75,17 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS jobs_created_at ON jobs (created_at DESC);
+CREATE TABLE IF NOT EXISTS job_logs (
+    job_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    PRIMARY KEY (job_id, seq)
+);
 """
+
+# 保存する行数。整理は 1 冊ごとに数行出るため、この程度あれば足りる。
+# 実行中に差し替えられるよう、参照はすべて呼び出し時に行う
+MAX_LOG_LINES = 500
 
 
 def _now() -> str:
@@ -180,9 +190,7 @@ class JobStore:
         self._update(job_id, state=JobState.RUNNING)
 
         def report(current: int = 0, total: int = 0, message: str = "") -> None:
-            if self._state_of(job_id) is JobState.CANCELLED:
-                raise JobCancelled(job_id)
-            self._update(job_id, current=current, total=total, message=message)
+            self._report(job_id, current, total, message)
 
         try:
             result = work(report)
@@ -198,17 +206,75 @@ class JobStore:
             return
         self._update(job_id, state=JobState.SUCCEEDED, result=result)
 
+    def log_of(self, job_id: str, limit: int | None = None) -> list[str]:
+        """報告された経過を古い順に返す。
+
+        進捗の message は上書きされるため、ポーリング間隔によっては行を
+        取りこぼす。原本をここに残しておく。既定の上限は呼び出し時に読む。
+        """
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT message FROM job_logs WHERE job_id = ?"
+                " ORDER BY seq DESC LIMIT ?",
+                (job_id, MAX_LOG_LINES if limit is None else limit),
+            ).fetchall()
+        return [row["message"] for row in reversed(rows)]
+
+    def _report(self, job_id: str, current: int, total: int, message: str) -> None:
+        """進捗とログを 1 度のロックとトランザクションで書く。
+
+        別々に書くと、進捗だけ進んでログが残らない状態が途中で見えてしまう。
+        キャンセルの確認も同じロックの中で行い、判定と書き込みの間に状態が
+        変わらないようにする。
+        """
+        with self._lock:
+            if self._read_state(job_id) is JobState.CANCELLED:
+                raise JobCancelled(job_id)
+            self._write_fields(job_id, current=current, total=total, message=message)
+            if message:
+                self._write_log(job_id, message)
+            self._connection.commit()
+
+    def _write_log(self, job_id: str, message: str) -> None:
+        """ログを 1 行足し、そのジョブの古い行を上限まで削る。
+
+        追加だけでは行が際限なく増える。同じトランザクションで削ることで、
+        上限を超えた状態を他の読み手に見せない。
+        """
+        self._connection.execute(
+            "INSERT INTO job_logs (job_id, seq, message)"
+            " SELECT ?, COALESCE(MAX(seq), 0) + 1, ? FROM job_logs"
+            " WHERE job_id = ?",
+            (job_id, message, job_id),
+        )
+        # 新しい行を残し、上限からあふれた古い行を落とす
+        self._connection.execute(
+            "DELETE FROM job_logs WHERE job_id = ? AND seq <="
+            " (SELECT MAX(seq) FROM job_logs WHERE job_id = ?) - ?",
+            (job_id, job_id, MAX_LOG_LINES),
+        )
+
     def _state_of(self, job_id: str) -> JobState:
         with self._lock:
-            row = self._connection.execute(
-                "SELECT state FROM jobs WHERE id = ?", (job_id,)
-            ).fetchone()
+            return self._read_state(job_id)
+
+    def _read_state(self, job_id: str) -> JobState:
+        """状態を読む。ロックは呼び出し側で取る"""
+        row = self._connection.execute(
+            "SELECT state FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
         if row is None:
             raise JobNotFound(job_id)
         return JobState(row["state"])
 
     def _update(self, job_id: str, **fields: Any) -> None:
-        """指定された列だけを書き換える"""
+        """指定された列だけを書き換えて確定する"""
+        with self._lock:
+            self._write_fields(job_id, **fields)
+            self._connection.commit()
+
+    def _write_fields(self, job_id: str, **fields: Any) -> None:
+        """指定された列だけを書き換える。ロックと確定は呼び出し側で行う"""
         assignments = ["updated_at = ?"]
         values: list[Any] = [_now()]
         for column, value in fields.items():
@@ -220,11 +286,9 @@ class JobStore:
             else:
                 values.append(value)
         values.append(job_id)
-        with self._lock:
-            self._connection.execute(
-                f"UPDATE jobs SET {', '.join(assignments)} WHERE id = ?", values
-            )
-            self._connection.commit()
+        self._connection.execute(
+            f"UPDATE jobs SET {', '.join(assignments)} WHERE id = ?", values
+        )
 
 
 def _to_job(row: sqlite3.Row) -> Job:

@@ -1,166 +1,45 @@
-:root {
-  color-scheme: dark;
-  --bg: #14161a;
-  --panel: #1c1f26;
-  --border: #2e3341;
-  --text: #e7eaf0;
-  --muted: #98a0b0;
-  --accent: #5b8cff;
-  --card-width: 220px;
+@import "tailwindcss";
+
+/* 配色。落ち着いた暗色に、アクセントは 1 色だけ置く。
+   中身（漫画のページ）が主役なので UI は後ろへ下がる。 */
+@theme {
+  --color-canvas: oklch(0.16 0.012 265);
+  --color-surface: oklch(0.20 0.013 265);
+  --color-surface-2: oklch(0.24 0.014 265);
+  --color-line: oklch(0.30 0.014 265);
+  --color-line-strong: oklch(0.38 0.016 265);
+
+  --color-ink: oklch(0.94 0.006 265);
+  --color-ink-muted: oklch(0.72 0.016 265);
+  --color-ink-faint: oklch(0.58 0.018 265);
+
+  --color-brand: oklch(0.66 0.16 262);
+  --color-brand-ink: oklch(0.17 0.03 262);
+
+  --color-warn: oklch(0.78 0.14 72);
+  --color-danger: oklch(0.68 0.17 22);
+  --color-ok: oklch(0.75 0.14 155);
+
+  --radius-card: 0.625rem;
 }
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: "Segoe UI", "Yu Gothic UI", "Hiragino Sans", system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* 数字は等幅で揃える。巻数やページ番号が並ぶため */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
 }
-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 18px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-h1 { font-size: 16px; margin: 0; }
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 18px;
-  color: var(--muted);
-  font-size: 13px;
-}
-button {
-  font: inherit;
-  color: #0b1020;
-  background: var(--accent);
-  border: none;
-  border-radius: 8px;
-  padding: 8px 14px;
-  cursor: pointer;
-}
-button:disabled { opacity: 0.45; cursor: default; }
-.grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  padding: 18px;
-  align-content: flex-start;
-}
-.card {
-  width: var(--card-width);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-}
-.card.dragging { opacity: 0.4; }
-.thumb {
-  width: 100%;
-  aspect-ratio: 2 / 3;
-  object-fit: contain;
-  background: #0f1116;
-  display: block;
-  pointer-events: none;
-}
-.meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
-  border-top: 1px solid var(--border);
-}
-.position {
-  min-width: 30px;
-  text-align: center;
-  background: #232733;
-  border-radius: 5px;
-  padding: 2px 5px;
-  font-weight: 600;
-  font-size: 12px;
-}
-.position.moved { background: var(--accent); color: #0b1020; }
-.label {
-  color: var(--muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(91,140,255,0.2); }
-.zoom {
-  background: transparent;
-  color: var(--muted);
-  border: none;
-  padding: 2px 4px;
-  font-size: 13px;
-  cursor: zoom-in;
-}
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(8, 10, 14, 0.92);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  z-index: 10;
-  color: var(--muted);
-  font-size: 12px;
-}
-.overlay img { max-width: 92vw; max-height: 84vh; border-radius: 6px; }
-nav { display: flex; gap: 6px; }
-nav button { background: #232733; color: var(--text); }
-nav button[aria-pressed="true"] { background: var(--accent); color: #0b1020; }
-textarea, input[type="text"] {
-  font: inherit;
-  background: #0f1116;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-}
-textarea { min-width: 360px; }
-.groups { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
-.group { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
-.group-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.confidence { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #232733; }
-.confidence.c-低 { background: #6b3b3b; }
-.warning { font-size: 11px; color: #ffb454; }
-.volumes { list-style: none; margin: 0; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
-.volumes li { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.volume-number {
-  min-width: 32px;
-  text-align: center;
-  background: #232733;
-  border-radius: 5px;
-  padding: 1px 6px;
-  font-variant-numeric: tabular-nums;
-}
-.volume-name { flex: 1; color: var(--muted); }
-select { font: inherit; background: #0f1116; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
-.cover-actions { display: flex; gap: 8px; align-items: center; padding: 0 18px 12px; }
-.cover-preview { display: flex; gap: 24px; padding: 0 18px 18px; }
-.cover-preview figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.cover-preview figcaption { color: var(--muted); font-size: 12px; }
-.cover-preview > figure > img { max-height: 420px; border-radius: 6px; }
-.frame {
-  width: 240px;
-  aspect-ratio: 2 / 3;
-  overflow: hidden;
-  border-radius: 6px;
-  background: #0f1116;
-}
-.frame img { width: 100%; height: 100%; object-fit: cover; }

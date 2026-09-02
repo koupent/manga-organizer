@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from manga_api import thumbnails
 from manga_api.jobs import Job, JobNotFound, JobStore
@@ -28,14 +28,20 @@ from manga_core.cover_editor import (
     is_spread,
 )
 from manga_core.manga_database import MangaDatabase
+from manga_core.naming import natural_sort_key
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
-from manga_core.series_grouper import estimate_series
 
 logger = logging.getLogger(__name__)
 
 TITLE = "Manga Organizer サイドカー"
 # 外部からは触らせない。Tauri シェルと同一ホスト内でのみ使う
 HOST = "127.0.0.1"
+
+# ファイル選択に出すアーカイブ形式
+ARCHIVE_SUFFIXES = frozenset({".zip", ".cbz", ".rar", ".cbr", ".7z", ".cb7", ".epub"})
+
+# 作品名として妥当な長さ。これを超えるものは打ち間違いか攻撃とみなす
+MAX_TITLE_LENGTH = 200
 
 # Tauri の WebView と、開発・検証で使う Vite の dev server
 DEFAULT_ALLOWED_ORIGINS = (
@@ -63,6 +69,44 @@ class OrganizeRequest(BaseModel):
     keep_originals: bool = Field(default=True, description="元ファイルを残すか")
 
 
+class BrowseEntry(BaseModel):
+    """ファイル選択に出す 1 項目"""
+
+    name: str
+    path: str
+    is_directory: bool
+
+
+class BrowseResult(BaseModel):
+    """辿っている場所と、その中身"""
+
+    path: str
+    parent: str | None = None
+    entries: list[BrowseEntry]
+
+
+class DroppedFile(BaseModel):
+    """ドロップされたファイルの手がかり"""
+
+    name: str
+    size: int = 0
+
+
+class ResolveRequest(BaseModel):
+    """ドロップされたものを実パスに結びつける依頼"""
+
+    files: list[DroppedFile]
+
+
+class ResolveResult(BaseModel):
+    """見つかったもの、見つからなかったもの、絞りきれなかったもの"""
+
+    resolved: list[str]
+    unresolved: list[str]
+    ambiguous: list[str]
+    searched_roots: list[str] = []
+
+
 class LibraryEntry(BaseModel):
     """タイトルと著者の対応"""
 
@@ -79,43 +123,40 @@ class LibraryEntries(BaseModel):
 class SuggestRequest(BaseModel):
     """外部サービスへの問い合わせ依頼"""
 
-    title: str = Field(description="調べたい作品名")
+    title: str = Field(
+        description="調べたい作品名。空白のみは受け付けない",
+        max_length=MAX_TITLE_LENGTH,
+    )
+
+    @field_validator("title")
+    @classmethod
+    def _reject_blank_title(cls, value: str) -> str:
+        """中身の無い作品名を境界で断る。
+
+        空文字はどの作品にも当たってしまい、外部サービスへの問い合わせも
+        無駄になる。前後の空白を落としたうえで空なら受け付けない。
+        """
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("作品名を入力してください")
+        return stripped
+
+
+class AuthorCandidate(BaseModel):
+    """検索で見つかった作品と、その著者"""
+
+    title: str
+    author: str
+    source: str
+    similarity: float
 
 
 class Suggestion(BaseModel):
-    """補完の結果。見つからなければ null"""
+    """補完の結果。近い順に候補を並べ、先頭を既定として示す"""
 
     title: str | None = None
     author: str | None = None
-
-
-class EstimateRequest(BaseModel):
-    """作品グルーピングの推定依頼"""
-
-    archives: list[str] = Field(description="推定対象アーカイブの絶対パス")
-
-
-class SeriesVolumeView(BaseModel):
-    """まとまりを構成する 1 冊"""
-
-    path: str
-    name: str
-    volume: int | None = None
-
-
-class SeriesGroupView(BaseModel):
-    """同じ作品と推定した巻のまとまり"""
-
-    title: str
-    confidence: float
-    has_duplicate_volumes: bool = Field(serialization_alias="hasDuplicateVolumes")
-    volumes: list[SeriesVolumeView]
-
-
-class EstimateResult(BaseModel):
-    """推定結果。自動推定は外れる前提で、UI で直してから確定する"""
-
-    groups: list[SeriesGroupView]
+    candidates: list[AuthorCandidate] = Field(default_factory=list)
 
 
 class CoverRequest(BaseModel):
@@ -149,7 +190,7 @@ class JobAccepted(BaseModel):
 
 
 class JobView(BaseModel):
-    """ジョブの状態"""
+    """ジョブの状態。一覧はログを読まないので log を持たない"""
 
     id: str
     kind: str
@@ -161,6 +202,16 @@ class JobView(BaseModel):
     error: str | None = None
     created_at: str
     updated_at: str
+
+
+class JobDetail(JobView):
+    """ジョブ 1 件の詳細。
+
+    ログを返すのはここだけにする。一覧でも log を持つと、常に空配列が
+    載ってしまい「ログが無い」と「一覧では取らない」を区別できない。
+    """
+
+    log: list[str]
 
 
 class JobList(BaseModel):
@@ -193,7 +244,7 @@ class HealthView(BaseModel):
 
 
 def _to_view(job: Job) -> JobView:
-    """ジョブを応答用の形へ直す"""
+    """ジョブを一覧用の形へ直す"""
     return JobView(
         id=job.id,
         kind=job.kind,
@@ -206,6 +257,11 @@ def _to_view(job: Job) -> JobView:
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def _to_detail(job: Job, log: list[str]) -> JobDetail:
+    """ジョブを詳細用の形へ直す"""
+    return JobDetail(**_to_view(job).model_dump(), log=log)
 
 
 def create_app(
@@ -237,7 +293,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins or DEFAULT_ALLOWED_ORIGINS,
-        allow_methods=["GET", "POST"],
+        # 削除も使うため DELETE を含める。抜けているとプリフライトで弾かれる
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Content-Type"],
     )
 
@@ -246,7 +303,10 @@ def create_app(
         token: Annotated[str, Query(description="使い捨てトークン")] = "",
     ) -> None:
         """全経路で使い捨てトークンを検証する"""
-        if not secrets.compare_digest(token, request.app.state.token):
+        # compare_digest は非 ASCII の str を受け付けない。
+        # バイト列で比べれば、どんなトークンでも安全に判定できる
+        expected = request.app.state.token
+        if not secrets.compare_digest(token.encode(), expected.encode()):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token"
             )
@@ -339,6 +399,105 @@ def create_app(
             },
         )
 
+    @app.post("/api/resolve", dependencies=guarded, response_model=ResolveResult)
+    def resolve(request: ResolveRequest) -> ResolveResult:
+        """ドロップされたファイルを実パスに結びつける。
+
+        ブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の
+        中から同じものを探せば、ドロップからでも対象を特定できる。同名が複数
+        あってサイズでも絞れない場合は、勝手に選ばず返す。
+        """
+        roots = app.state.allowed_roots or [Path.home()]
+        wanted = {file.name for file in request.files}
+
+        # 走査は 1 回で済ませる。巻数が多いと候補も増える
+        candidates: dict[str, list[Path]] = {name: [] for name in wanted}
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for found in root.rglob("*"):
+                if found.name in candidates and found.is_file():
+                    candidates[found.name].append(found)
+
+        resolved: list[str] = []
+        unresolved: list[str] = []
+        ambiguous: list[str] = []
+        for file in request.files:
+            matches = candidates.get(file.name, [])
+            if not matches:
+                unresolved.append(file.name)
+                continue
+            if len(matches) > 1 and file.size:
+                matches = [
+                    m for m in matches if m.stat().st_size == file.size
+                ] or matches
+            if len(matches) == 1:
+                resolved.append(str(matches[0]))
+            else:
+                ambiguous.append(file.name)
+        return ResolveResult(
+            resolved=resolved,
+            unresolved=unresolved,
+            ambiguous=ambiguous,
+            searched_roots=[str(root) for root in roots],
+        )
+
+    @app.get("/api/browse", dependencies=guarded, response_model=BrowseResult)
+    def browse(path: str = "") -> BrowseResult:
+        """許可された場所の中を辿る。
+
+        ブラウザはドロップされたファイルの実パスを取得できないため、
+        サーバー側で辿って選んでもらう。Tauri ではネイティブのドロップも
+        使えるが、同じ画面で両方使えるようにする。
+        """
+        roots = app.state.allowed_roots
+        if not path:
+            target = roots[0] if roots else Path.home()
+        else:
+            target = Path(path).resolve()
+            if roots and not any(target.is_relative_to(root) for root in roots):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="対象外のディレクトリです",
+                )
+        if not target.is_dir():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ディレクトリが見つかりません",
+            )
+
+        try:
+            children = list(target.iterdir())
+        except OSError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+            ) from error
+
+        entries: list[BrowseEntry] = []
+        for child in children:
+            if child.name.startswith("."):
+                continue
+            if child.is_dir():
+                entries.append(
+                    BrowseEntry(name=child.name, path=str(child), is_directory=True)
+                )
+            elif child.suffix.lower() in ARCHIVE_SUFFIXES:
+                entries.append(
+                    BrowseEntry(name=child.name, path=str(child), is_directory=False)
+                )
+        # ディレクトリを先に並べる。辿る操作を優先させるため
+        entries.sort(
+            key=lambda entry: (not entry.is_directory, natural_sort_key(entry.name))
+        )
+
+        parent = target.parent
+        inside = not roots or any(parent.is_relative_to(root) for root in roots)
+        return BrowseResult(
+            path=str(target),
+            parent=str(parent) if inside and parent != target else None,
+            entries=entries,
+        )
+
     @app.get(
         "/api/library/entries", dependencies=guarded, response_model=LibraryEntries
     )
@@ -390,14 +549,27 @@ def create_app(
         from manga_core.api_client import MangaMetadataFetcher
 
         try:
-            found = MangaMetadataFetcher().get_author_suggestion(request.title)
+            found = MangaMetadataFetcher().get_author_candidates(request.title)
         except Exception:  # noqa: BLE001 - 補完は失敗しても処理を続ける
             logger.warning("著者の補完に失敗しました: %s", request.title)
             return Suggestion()
         if not found:
             return Suggestion()
-        title, author = found
-        return Suggestion(title=title, author=author)
+        return Suggestion(
+            title=found[0]["title"],
+            author=found[0]["author"],
+            # 検索側の型に合わせて値を選び直す。辞書をそのまま展開すると
+            # 応答の形が変わったときに気づけない
+            candidates=[
+                AuthorCandidate(
+                    title=candidate["title"],
+                    author=candidate["author"],
+                    source=candidate["source"],
+                    similarity=candidate["similarity"],
+                )
+                for candidate in found
+            ],
+        )
 
     @app.get("/api/image", dependencies=guarded, response_class=Response)
     def image(archive: str, name: str) -> Response:
@@ -489,44 +661,16 @@ def create_app(
         _start(app, job_id, work)
         return JobAccepted(id=job_id)
 
-    @app.post(
-        "/api/series/estimate", dependencies=guarded, response_model=EstimateResult
-    )
-    def estimate(request: EstimateRequest) -> EstimateResult:
-        """アーカイブ群を作品ごとにまとめた初期案を返す。
-
-        自動推定は必ず外れるので、確信度を添えて返し、UI で直してもらう。
-        """
-        archives = [resolve_archive(raw) for raw in request.archives]
-        return EstimateResult(
-            groups=[
-                SeriesGroupView(
-                    title=group.title,
-                    confidence=group.confidence,
-                    has_duplicate_volumes=group.has_duplicate_volumes,
-                    volumes=[
-                        SeriesVolumeView(
-                            path=str(volume.path),
-                            name=volume.path.name,
-                            volume=volume.volume,
-                        )
-                        for volume in group.volumes
-                    ],
-                )
-                for group in estimate_series(archives)
-            ]
-        )
-
     @app.get("/api/jobs", dependencies=guarded, response_model=JobList)
     def list_jobs() -> JobList:
         """新しい順にジョブを並べる"""
         return JobList(jobs=[_to_view(job) for job in app.state.jobs.list_jobs()])
 
-    @app.get("/api/jobs/{job_id}", dependencies=guarded, response_model=JobView)
-    def get_job(job_id: str) -> JobView:
-        """ジョブ 1 件の状態を返す"""
+    @app.get("/api/jobs/{job_id}", dependencies=guarded, response_model=JobDetail)
+    def get_job(job_id: str) -> JobDetail:
+        """ジョブ 1 件の状態を、経過のログとともに返す"""
         try:
-            return _to_view(app.state.jobs.get(job_id))
+            return _to_detail(app.state.jobs.get(job_id), app.state.jobs.log_of(job_id))
         except JobNotFound as error:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="ジョブが見つかりません"

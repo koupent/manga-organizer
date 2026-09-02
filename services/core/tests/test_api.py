@@ -10,6 +10,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -17,6 +18,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from manga_api.app import create_app  # noqa: E402
+from manga_core.api_client import AniListClient  # noqa: E402
 
 
 def make_page(color: str = "navy") -> bytes:
@@ -162,6 +164,28 @@ class PagesTest(ApiTestBase):
 
 
 class JobTest(ApiTestBase):
+    def test_job_detail_carries_the_processing_log(self):
+        # Arrange - 整理を 1 件走らせる
+        accepted = self.client.post(
+            "/api/jobs/organize",
+            params=self.auth(),
+            json={
+                "archives": [str(self.archive)],
+                "output_directory": str(self.work_dir / "out"),
+                "title": "作品",
+                "author": "著者",
+                "keep_originals": True,
+            },
+        )
+        job_id = accepted.json()["id"]
+
+        # Act
+        detail = self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
+
+        # Assert - 経過が行として残る
+        self.assertIsInstance(detail["log"], list)
+        self.assertTrue(detail["log"], "ログが 1 行も残っていない")
+
     def test_submits_a_reorder_job_and_reports_completion(self):
         # Act
         submitted = self.client.post(
@@ -219,44 +243,29 @@ class JobTest(ApiTestBase):
         response = self.client.get("/api/jobs/missing", params=self.auth())
         self.assertEqual(404, response.status_code)
 
+    def test_job_list_omits_the_log_instead_of_faking_an_empty_one(self):
+        # Arrange - ログが確実に残る整理ジョブを 1 件走らせる
+        accepted = self.client.post(
+            "/api/jobs/organize",
+            params=self.auth(),
+            json={
+                "archives": [str(self.archive)],
+                "output_directory": str(self.work_dir / "out"),
+                "title": "作品",
+                "author": "著者",
+                "keep_originals": True,
+            },
+        )
+        job_id = accepted.json()["id"]
 
-class SeriesEstimateTest(ApiTestBase):
-    def setUp(self):
-        super().setUp()
-        self.library = self.work_dir / "library"
-        self.library.mkdir()
-        for name in ("作品A 第01巻.zip", "作品A 第02巻.zip", "作品B 第01巻.zip"):
-            with zipfile.ZipFile(self.library / name, "w") as archive:
-                archive.writestr("001.jpg", make_page())
-
-    def test_estimates_groups_from_the_given_archives(self):
         # Act
-        response = self.client.post(
-            "/api/series/estimate",
-            params=self.auth(),
-            json={"archives": [str(p) for p in sorted(self.library.glob("*.zip"))]},
-        )
+        listed = self.client.get("/api/jobs", params=self.auth()).json()
+        detail = self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
 
-        # Assert
-        self.assertEqual(200, response.status_code)
-        groups = response.json()["groups"]
-        self.assertEqual(["作品A", "作品B"], [g["title"] for g in groups])
-        self.assertEqual([1, 2], [v["volume"] for v in groups[0]["volumes"]])
-        self.assertIn("confidence", groups[0])
-
-    def test_requires_a_token(self):
-        # Act / Assert
-        response = self.client.post("/api/series/estimate", json={"archives": []})
-        self.assertEqual(401, response.status_code)
-
-    def test_rejects_an_archive_outside_the_allowed_roots(self):
-        # Act / Assert
-        response = self.client.post(
-            "/api/series/estimate",
-            params=self.auth(),
-            json={"archives": ["/etc/passwd"]},
-        )
-        self.assertEqual(400, response.status_code)
+        # Assert - 「ログが無い」と「一覧では取らない」を取り違えさせない
+        self.assertNotIn("log", listed["jobs"][0])
+        self.assertIn("log", detail)
+        self.assertTrue(detail["log"], "詳細にはログが残っているはず")
 
 
 class CoverEditTest(ApiTestBase):
@@ -369,8 +378,286 @@ class LibraryTest(ApiTestBase):
         listed = self.client.get("/api/library/entries", params=self.auth()).json()
         self.assertEqual([], listed["entries"])
 
+    def test_allows_delete_from_the_webview_origin(self):
+        # Arrange - WebView は別オリジンから呼ぶ。プリフライトが通らないと
+        # 削除だけ失敗する
+        response = self.client.options(
+            "/api/library/entries",
+            headers={
+                "Origin": "http://127.0.0.1:5173",
+                "Access-Control-Request-Method": "DELETE",
+            },
+        )
+
+        # Assert
+        self.assertEqual(200, response.status_code)
+        self.assertIn("DELETE", response.headers["access-control-allow-methods"])
+
     def test_requires_a_token(self):
         self.assertEqual(401, self.client.get("/api/library/entries").status_code)
+
+
+class AuthorSuggestTest(ApiTestBase):
+    """作品名から著者を引く経路。ネットワークには出さず、応答の形だけ再現する"""
+
+    def suggest(self, title: str):
+        return self.client.post(
+            "/api/library/suggest", params=self.auth(), json={"title": title}
+        )
+
+    def test_returns_the_author_name_not_the_source(self):
+        # Arrange
+        found = [
+            {
+                "title": "One Piece",
+                "title_japanese": "ワンピース",
+                "authors": ["尾田栄一郎"],
+                "source": "AniList",
+                "similarity": 1.0,
+            }
+        ]
+
+        # Act
+        with mock.patch.object(AniListClient, "search_manga", return_value=found):
+            payload = self.suggest("ワンピース").json()
+
+        # Assert - 提供元ではなく著者名が入る
+        self.assertEqual("尾田栄一郎", payload["author"])
+
+    def test_returns_close_candidates_in_order(self):
+        # Arrange - 検索は近い順に複数返る
+        found = [
+            {
+                "title": "近い作品",
+                "title_japanese": "近い作品",
+                "authors": ["著者A"],
+                "source": "AniList",
+                "similarity": 0.9,
+            },
+            {
+                "title": "やや近い作品",
+                "title_japanese": "やや近い作品",
+                "authors": ["著者B", "著者C"],
+                "source": "AniList",
+                "similarity": 0.5,
+            },
+        ]
+
+        # Act
+        with mock.patch.object(AniListClient, "search_manga", return_value=found):
+            payload = self.suggest("近い作品").json()
+
+        # Assert - 先頭を既定にしつつ、残りも候補として渡す
+        self.assertEqual("著者A", payload["author"])
+        self.assertEqual(
+            ["著者A", "著者B", "著者C"],
+            [candidate["author"] for candidate in payload["candidates"]],
+        )
+        self.assertEqual("近い作品", payload["candidates"][0]["title"])
+
+    def test_returns_nothing_when_search_finds_no_author(self):
+        # Act
+        with mock.patch.object(AniListClient, "search_manga", return_value=[]):
+            payload = self.suggest("該当しない作品").json()
+
+        # Assert
+        self.assertIsNone(payload["author"])
+        self.assertEqual([], payload["candidates"])
+
+    def test_survives_a_failing_search(self):
+        # Arrange - ネットワークは落ちうる。画面は止めない
+        with mock.patch.object(
+            AniListClient, "search_manga", side_effect=RuntimeError("圏外")
+        ):
+            payload = self.suggest("何か").json()
+
+        # Assert
+        self.assertIsNone(payload["author"])
+        self.assertEqual([], payload["candidates"])
+
+    def test_rejects_a_title_that_has_no_content(self):
+        # Arrange - 空の作品名は検索にならない
+        for title in ("", "   ", "\t\n"):
+            with self.subTest(title=repr(title)):
+                # Act
+                with mock.patch.object(
+                    AniListClient, "search_manga", return_value=[]
+                ) as searched:
+                    response = self.suggest(title)
+
+                # Assert - 入口で断り、外部サービスにも問い合わせない
+                self.assertEqual(422, response.status_code)
+                searched.assert_not_called()
+
+
+class BrowseTest(ApiTestBase):
+    """ファイル選択。ブラウザは実パスを扱えないのでサーバー側で辿る"""
+
+    def setUp(self):
+        super().setUp()
+        self.folder = self.work_dir / "shelf"
+        (self.folder / "sub").mkdir(parents=True)
+        for name in ("b.zip", "a.cbz", "memo.txt"):
+            (self.folder / name).write_bytes(b"x")
+
+    def test_lists_directories_and_archives(self):
+        # Act
+        listed = self.client.get(
+            "/api/browse", params=self.auth({"path": str(self.folder)})
+        ).json()
+
+        # Assert - ディレクトリが先、アーカイブ以外は出さない
+        self.assertEqual(str(self.folder), listed["path"])
+        self.assertEqual(
+            [("sub", True), ("a.cbz", False), ("b.zip", False)],
+            [(e["name"], e["is_directory"]) for e in listed["entries"]],
+        )
+
+    def test_reports_the_parent_so_the_ui_can_go_up(self):
+        # Act
+        listed = self.client.get(
+            "/api/browse", params=self.auth({"path": str(self.folder)})
+        ).json()
+
+        # Assert
+        self.assertEqual(str(self.work_dir), listed["parent"])
+
+    def test_defaults_to_the_allowed_root(self):
+        # Act - path を省くと起点を返す
+        listed = self.client.get("/api/browse", params=self.auth()).json()
+
+        # Assert
+        self.assertEqual(str(self.work_dir), listed["path"])
+        self.assertIsNone(listed["parent"])
+
+    def test_refuses_to_escape_the_allowed_roots(self):
+        # Act / Assert
+        response = self.client.get("/api/browse", params=self.auth({"path": "/etc"}))
+        self.assertEqual(400, response.status_code)
+
+    def test_requires_a_token(self):
+        self.assertEqual(401, self.client.get("/api/browse").status_code)
+
+
+class ResolveTest(ApiTestBase):
+    """ドロップされたファイルを実パスに結びつける。
+
+    ブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の
+    中から同じものを探せば、ドロップからでも対象を特定できる。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.shelf = self.work_dir / "shelf"
+        (self.shelf / "深い場所").mkdir(parents=True)
+        self.unique = self.shelf / "唯一.zip"
+        self.unique.write_bytes(b"a" * 100)
+        self.nested = self.shelf / "深い場所" / "奥.zip"
+        self.nested.write_bytes(b"b" * 200)
+
+    def test_resolves_by_name(self):
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "唯一.zip", "size": 100}]},
+        ).json()
+
+        # Assert
+        self.assertEqual([str(self.unique)], found["resolved"])
+        self.assertEqual([], found["unresolved"])
+
+    def test_searches_subdirectories(self):
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "奥.zip", "size": 200}]},
+        ).json()
+
+        # Assert
+        self.assertEqual([str(self.nested)], found["resolved"])
+
+    def test_reports_what_it_could_not_find(self):
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "ない.zip", "size": 1}]},
+        ).json()
+
+        # Assert
+        self.assertEqual([], found["resolved"])
+        self.assertEqual(["ない.zip"], found["unresolved"])
+
+    def test_uses_size_to_disambiguate_same_names(self):
+        # Arrange - 同名が複数ある場合はサイズで絞る
+        other = self.shelf / "深い場所" / "唯一.zip"
+        other.write_bytes(b"c" * 999)
+
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "唯一.zip", "size": 999}]},
+        ).json()
+
+        # Assert
+        self.assertEqual([str(other)], found["resolved"])
+
+    def test_reports_ambiguous_matches_instead_of_guessing(self):
+        # Arrange - 名前もサイズも同じものが 2 つ
+        twin = self.shelf / "深い場所" / "唯一.zip"
+        twin.write_bytes(b"a" * 100)
+
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "唯一.zip", "size": 100}]},
+        ).json()
+
+        # Assert - 勝手に選ばず、判断を返す
+        self.assertEqual([], found["resolved"])
+        self.assertEqual(["唯一.zip"], found["ambiguous"])
+
+    def test_requires_a_token(self):
+        self.assertEqual(
+            401, self.client.post("/api/resolve", json={"files": []}).status_code
+        )
+
+
+class FixedTokenTest(unittest.TestCase):
+    """開発中はトークンを固定できるようにする。
+
+    再起動のたびに変わると、控えた URL がすぐ使えなくなる。
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.work_dir = Path(self._temp.name)
+
+    def test_uses_the_given_token(self):
+        # Arrange
+        app = create_app(state_dir=self.work_dir / "state", token="固定トークン")
+
+        # Act / Assert
+        self.assertEqual("固定トークン", app.state.token)
+        client = TestClient(app)
+        self.addCleanup(client.close)
+        self.assertEqual(
+            200, client.get("/api/health", params={"token": "固定トークン"}).status_code
+        )
+
+    def test_generates_one_when_not_given(self):
+        # Arrange
+        first = create_app(state_dir=self.work_dir / "a").state.token
+        second = create_app(state_dir=self.work_dir / "b").state.token
+
+        # Assert - 既定では毎回異なる
+        self.assertNotEqual(first, second)
+        self.assertGreater(len(first), 20)
 
 
 if __name__ == "__main__":

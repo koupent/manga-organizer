@@ -164,6 +164,112 @@
         }
       }
     },
+    "/api/resolve": {
+      "post": {
+        "summary": "Resolve",
+        "description": "ドロップされたファイルを実パスに結びつける。\n\nブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の\n中から同じものを探せば、ドロップからでも対象を特定できる。同名が複数\nあってサイズでも絞れない場合は、勝手に選ばず返す。",
+        "operationId": "resolve_api_resolve_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/browse": {
+      "get": {
+        "summary": "Browse",
+        "description": "許可された場所の中を辿る。\n\nブラウザはドロップされたファイルの実パスを取得できないため、\nサーバー側で辿って選んでもらう。Tauri ではネイティブのドロップも\n使えるが、同じ画面で両方使えるようにする。",
+        "operationId": "browse_api_browse_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Path"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowseResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/library/entries": {
       "get": {
         "summary": "List Entries",
@@ -534,59 +640,6 @@
         }
       }
     },
-    "/api/series/estimate": {
-      "post": {
-        "summary": "Estimate",
-        "description": "アーカイブ群を作品ごとにまとめた初期案を返す。\n\n自動推定は必ず外れるので、確信度を添えて返し、UI で直してもらう。",
-        "operationId": "estimate_api_series_estimate_post",
-        "parameters": [
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "使い捨てトークン",
-              "default": "",
-              "title": "Token"
-            },
-            "description": "使い捨てトークン"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EstimateRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EstimateResult"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/jobs": {
       "get": {
         "summary": "List Jobs",
@@ -633,7 +686,7 @@
     "/api/jobs/{job_id}": {
       "get": {
         "summary": "Get Job",
-        "description": "ジョブ 1 件の状態を返す",
+        "description": "ジョブ 1 件の状態を、経過のログとともに返す",
         "operationId": "get_job_api_jobs__job_id__get",
         "parameters": [
           {
@@ -664,7 +717,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobView"
+                  "$ref": "#/components/schemas/JobDetail"
                 }
               }
             }
@@ -843,6 +896,92 @@
   },
   "components": {
     "schemas": {
+      "AuthorCandidate": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "similarity": {
+            "type": "number",
+            "title": "Similarity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "author",
+          "source",
+          "similarity"
+        ],
+        "title": "AuthorCandidate",
+        "description": "検索で見つかった作品と、その著者"
+      },
+      "BrowseEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "is_directory": {
+            "type": "boolean",
+            "title": "Is Directory"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "is_directory"
+        ],
+        "title": "BrowseEntry",
+        "description": "ファイル選択に出す 1 項目"
+      },
+      "BrowseResult": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/BrowseEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "entries"
+        ],
+        "title": "BrowseResult",
+        "description": "辿っている場所と、その中身"
+      },
       "CoverRequest": {
         "properties": {
           "archive": {
@@ -944,40 +1083,24 @@
         "title": "CoverView",
         "description": "表紙の状態"
       },
-      "EstimateRequest": {
+      "DroppedFile": {
         "properties": {
-          "archives": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Archives",
-            "description": "推定対象アーカイブの絶対パス"
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size",
+            "default": 0
           }
         },
         "type": "object",
         "required": [
-          "archives"
+          "name"
         ],
-        "title": "EstimateRequest",
-        "description": "作品グルーピングの推定依頼"
-      },
-      "EstimateResult": {
-        "properties": {
-          "groups": {
-            "items": {
-              "$ref": "#/components/schemas/SeriesGroupView"
-            },
-            "type": "array",
-            "title": "Groups"
-          }
-        },
-        "type": "object",
-        "required": [
-          "groups"
-        ],
-        "title": "EstimateResult",
-        "description": "推定結果。自動推定は外れる前提で、UI で直してから確定する"
+        "title": "DroppedFile",
+        "description": "ドロップされたファイルの手がかり"
       },
       "HTTPValidationError": {
         "properties": {
@@ -1024,6 +1147,83 @@
         ],
         "title": "JobAccepted",
         "description": "ジョブの受付結果"
+      },
+      "JobDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "current": {
+            "type": "integer",
+            "title": "Current"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "result": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "log": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Log"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "current",
+          "total",
+          "message",
+          "created_at",
+          "updated_at",
+          "log"
+        ],
+        "title": "JobDetail",
+        "description": "ジョブ 1 件の詳細。\n\nログを返すのはここだけにする。一覧でも log を持つと、常に空配列が\n載ってしまい「ログが無い」と「一覧では取らない」を区別できない。"
       },
       "JobList": {
         "properties": {
@@ -1109,7 +1309,7 @@
           "updated_at"
         ],
         "title": "JobView",
-        "description": "ジョブの状態"
+        "description": "ジョブの状態。一覧はログを読まないので log を持たない"
       },
       "LibraryEntries": {
         "properties": {
@@ -1267,74 +1467,71 @@
         "title": "ReorderRequest",
         "description": "ページ並べ替えの依頼"
       },
-      "SeriesGroupView": {
+      "ResolveRequest": {
         "properties": {
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "confidence": {
-            "type": "number",
-            "title": "Confidence"
-          },
-          "hasDuplicateVolumes": {
-            "type": "boolean",
-            "title": "Hasduplicatevolumes"
-          },
-          "volumes": {
+          "files": {
             "items": {
-              "$ref": "#/components/schemas/SeriesVolumeView"
+              "$ref": "#/components/schemas/DroppedFile"
             },
             "type": "array",
-            "title": "Volumes"
+            "title": "Files"
           }
         },
         "type": "object",
         "required": [
-          "title",
-          "confidence",
-          "hasDuplicateVolumes",
-          "volumes"
+          "files"
         ],
-        "title": "SeriesGroupView",
-        "description": "同じ作品と推定した巻のまとまり"
+        "title": "ResolveRequest",
+        "description": "ドロップされたものを実パスに結びつける依頼"
       },
-      "SeriesVolumeView": {
+      "ResolveResult": {
         "properties": {
-          "path": {
-            "type": "string",
-            "title": "Path"
+          "resolved": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Resolved"
           },
-          "name": {
-            "type": "string",
-            "title": "Name"
+          "unresolved": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unresolved"
           },
-          "volume": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Volume"
+          "ambiguous": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ambiguous"
+          },
+          "searched_roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Searched Roots",
+            "default": []
           }
         },
         "type": "object",
         "required": [
-          "path",
-          "name"
+          "resolved",
+          "unresolved",
+          "ambiguous"
         ],
-        "title": "SeriesVolumeView",
-        "description": "まとまりを構成する 1 冊"
+        "title": "ResolveResult",
+        "description": "見つかったもの、見つからなかったもの、絞りきれなかったもの"
       },
       "SuggestRequest": {
         "properties": {
           "title": {
             "type": "string",
+            "maxLength": 200,
             "title": "Title",
-            "description": "調べたい作品名"
+            "description": "調べたい作品名。空白のみは受け付けない"
           }
         },
         "type": "object",
@@ -1367,11 +1564,18 @@
               }
             ],
             "title": "Author"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorCandidate"
+            },
+            "type": "array",
+            "title": "Candidates"
           }
         },
         "type": "object",
         "title": "Suggestion",
-        "description": "補完の結果。見つからなければ null"
+        "description": "補完の結果。近い順に候補を並べ、先頭を既定として示す"
       },
       "ValidationError": {
         "properties": {
