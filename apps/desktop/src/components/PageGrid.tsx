@@ -1,4 +1,8 @@
+import { Save, Undo2, ZoomIn } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "../lib/utils";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import {
   DndContext,
   PointerSensor,
@@ -41,7 +45,12 @@ function PageCard({
   return (
     <div
       ref={setNodeRef}
-      className={`card${isDragging ? " dragging" : ""}${selected ? " selected" : ""}`}
+      className={cn(
+        "group overflow-hidden rounded-card border bg-surface transition-all",
+        "cursor-grab touch-none select-none hover:-translate-y-0.5",
+        isDragging && "opacity-30 cursor-grabbing",
+        selected ? "border-brand ring-2 ring-brand/25" : "border-line hover:border-line-strong",
+      )}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       data-testid="page-card"
       data-name={name}
@@ -51,22 +60,34 @@ function PageCard({
       {...attributes}
       {...listeners}
     >
-      <img className="thumb" src={thumbnailUrl} alt={label} loading="lazy" />
-      <div className="meta">
-        <span className={`position${moved ? " moved" : ""}`}>{position}</span>
-        <span className="label">{label}</span>
+      <img
+        className="block aspect-2/3 w-full bg-canvas object-contain pointer-events-none"
+        src={thumbnailUrl}
+        alt={label}
+        loading="lazy"
+      />
+      <div className="flex items-center gap-1.5 border-t border-line px-2 py-1.5">
+        <span
+          className={cn(
+            "tabular min-w-6 rounded px-1.5 py-0.5 text-center text-[11px] font-semibold",
+            moved ? "bg-brand text-brand-ink" : "bg-surface-2 text-ink-muted",
+          )}
+        >
+          {position}
+        </span>
+        <span className="flex-1 truncate text-[11px] text-ink-faint">{label}</span>
         <button
           type="button"
-          className="zoom"
           data-testid="zoom"
           title="原寸で表示"
+          className="rounded p-0.5 text-ink-faint opacity-0 transition-opacity hover:bg-surface-2 hover:text-ink group-hover:opacity-100"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             onZoom(name);
           }}
         >
-          🔍
+          <ZoomIn className="size-3.5" />
         </button>
       </div>
     </div>
@@ -222,48 +243,45 @@ export function PageGrid({
   };
 
   return (
-    <section>
-      <div className="section-head">
-        <h2 className="section-title">{archiveName ?? "ページ修正"}</h2>
-        <span className="section-note">{pages.length} ページ</span>
-        <span className="chip" data-testid="dirty-state">
+    <section className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[13px] font-semibold">{archiveName ?? "ページ修正"}</h2>
+        <span className="tabular text-[12px] text-ink-faint">{pages.length} ページ</span>
+        <Badge tone={dirty ? "warn" : "neutral"} data-testid="dirty-state">
           {dirty ? "未保存の変更があります" : "変更はありません"}
+        </Badge>
+        <span className="tabular text-[12px] text-ink-faint" data-testid="selection-count">
+          {selection.length} 件選択
         </span>
+        <div className="flex-1" />
+        <span className="text-[12px] text-ink-muted" data-testid="status">
+          {status}
+        </span>
+        <Button
+          variant="secondary"
+          size="sm"
+          data-testid="undo"
+          disabled={history.length === 0}
+          onClick={undo}
+        >
+          <Undo2 />
+          元に戻す
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          data-testid="save"
+          disabled={!dirty || saving}
+          onClick={save}
+        >
+          <Save />
+          ZIP に保存
+        </Button>
       </div>
 
-      <div className="panel">
-        <div className="panel-body toolbar">
-          <span className="section-note" data-testid="selection-count">
-            {selection.length} 件選択
-          </span>
-          <span className="header-spacer" />
-          <span className="status" data-testid="status">
-            {status}
-          </span>
-          <button
-            type="button"
-            className="btn-secondary"
-            data-testid="undo"
-            disabled={history.length === 0}
-            onClick={undo}
-          >
-            元に戻す
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            data-testid="save"
-            disabled={!dirty || saving}
-            onClick={save}
-          >
-            ZIP に保存
-          </button>
-        </div>
-      </div>
-
-      <p className="hint">
-        ドラッグで順番を入れ替え ・ <kbd>Ctrl</kbd>/<kbd>Shift</kbd>+クリックで複数選択
-        ・ <kbd>Ctrl</kbd>+<kbd>Z</kbd> で元に戻す ・ 🔍 で原寸表示
+      <p className="text-[11.5px] text-ink-faint">
+        ドラッグで順番を入れ替え ・ <Key>Ctrl</Key>/<Key>Shift</Key>+クリックで複数選択
+        ・ <Key>Ctrl</Key>+<Key>Z</Key> で元に戻す ・ 虫眼鏡で原寸表示
       </p>
 
       <DndContext
@@ -274,8 +292,10 @@ export function PageGrid({
       >
         <SortableContext items={order} strategy={rectSortingStrategy}>
           <div
-            className="grid"
-            style={{ ["--card-width" as string]: `${cardWidth}px` }}
+            className="grid gap-3"
+            style={{
+              gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
+            }}
           >
             {order.map((name, index) => (
               <PageCard
@@ -295,18 +315,30 @@ export function PageGrid({
 
       {zoomed ? (
         <div
-          className="overlay"
+          className="fixed inset-0 z-40 flex cursor-zoom-out flex-col items-center justify-center gap-3 bg-black/94 p-6"
           data-testid="lightbox"
           onClick={() => setZoomed(null)}
         >
           <img
             data-testid="lightbox-image"
+            className="max-h-[82vh] max-w-[92vw] rounded shadow-2xl"
             src={client.imageUrl(archive, zoomed)}
             alt={zoomed}
           />
-          <span>{zoomed}（クリックまたは Esc で閉じる）</span>
+          <span className="text-[12px] text-ink-faint">
+            {zoomed}（クリックまたは Esc で閉じる）
+          </span>
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** ヒント内のキー表記 */
+function Key({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="rounded border border-line bg-surface-2 px-1 py-px text-[10.5px] font-sans">
+      {children}
+    </kbd>
   );
 }

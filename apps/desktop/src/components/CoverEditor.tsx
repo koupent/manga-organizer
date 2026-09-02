@@ -1,4 +1,15 @@
+import {
+  Image as ImageIcon,
+  RotateCw,
+  SplitSquareHorizontal,
+  TriangleAlert,
+} from "lucide-react";
 import { useEffect, useState } from "react";
+import { Alert } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardBody } from "./ui/card";
+import { Empty } from "./ui/empty";
 import type { SidecarClient } from "../api/client";
 
 /** viewer が表紙を描く枠の縦横比 */
@@ -75,11 +86,9 @@ export function CoverEditor({ client, archive, archiveName }: CoverEditorProps) 
 
   if (!cover) {
     return (
-      <div className="empty">
-        <strong data-testid="cover-status">
-          {status || "読み込んでいます..."}
-        </strong>
-      </div>
+      <Empty icon={<ImageIcon />} title={status || "読み込んでいます..."}>
+        <span data-testid="cover-status">{status}</span>
+      </Empty>
     );
   }
 
@@ -87,76 +96,90 @@ export function CoverEditor({ client, archive, archiveName }: CoverEditorProps) 
   const fitsFrame = Math.abs(ratio - TARGET_RATIO) < 0.05;
 
   return (
-    <section>
-      <div className="section-head">
-        <h2 className="section-title">{archiveName ?? "表紙"}</h2>
-        <span className="section-note" data-testid="cover-name">
+    <section className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-[13px] font-semibold">{archiveName ?? "表紙"}</h2>
+        <span className="text-[12px] text-ink-faint" data-testid="cover-name">
           {cover.name}
         </span>
-        <span className="chip" data-testid="cover-size">
-          {cover.width}×{cover.height}
+        <Badge tone="neutral" data-testid="cover-size">
+          <span className="tabular">
+            {cover.width}×{cover.height}
+          </span>
+        </Badge>
+        <div className="flex-1" />
+        <span className="text-[12px] text-ink-muted" data-testid="cover-status">
+          {status}
         </span>
       </div>
 
       {cover.is_spread ? (
-        <p className="banner" data-tone="warn" data-testid="spread-warning">
-          見開きです。分割しないと viewer の表紙が正しく表示されません
-        </p>
+        <Alert tone="warn" data-testid="spread-warning">
+          <TriangleAlert />
+          <span>見開きです。分割しないと viewer の表紙が正しく表示されません</span>
+        </Alert>
       ) : (
-        <p className="section-note" data-testid="fits-frame">
+        <p className="text-[12px] text-ink-faint" data-testid="fits-frame">
           {fitsFrame ? "枠に合っています" : "枠と縦横比が異なります"}
         </p>
       )}
 
-      <div className="panel">
-        <div className="panel-body toolbar">
-          <button
-            type="button"
-            className="btn-primary"
+      <Card>
+        <CardBody className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            size="sm"
             data-testid="split-right"
             disabled={running}
             onClick={() => apply({ split: "right" })}
           >
+            <SplitSquareHorizontal />
             右半分を表紙にする
-          </button>
-          <button
-            type="button"
-            className="btn-secondary"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             data-testid="split-left"
             disabled={running}
             onClick={() => apply({ split: "left" })}
           >
             左半分を表紙にする
-          </button>
-          <button
-            type="button"
-            className="btn-secondary"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             data-testid="rotate"
             disabled={running}
             onClick={() => apply({ rotate: 90 })}
           >
+            <RotateCw />
             90 度回す
-          </button>
-          <span className="header-spacer" />
-          <span className="status" data-testid="cover-status">
-            {status}
-          </span>
-        </div>
-      </div>
+          </Button>
+        </CardBody>
+      </Card>
 
-      <div className="cover-preview">
-        <figure className="actual">
-          <figcaption>実際の画像</figcaption>
+      <div className="flex flex-wrap items-start gap-6">
+        <figure className="m-0 flex flex-col gap-1.5">
+          <figcaption className="text-[12px] font-medium text-ink-muted">
+            実際の画像
+          </figcaption>
           <img
             data-testid="cover-image"
+            className="max-h-96 rounded border border-line"
             src={`${client.imageUrl(archive, cover.name)}&v=${reloadKey}`}
             alt={cover.name}
           />
         </figure>
-        <figure>
-          <figcaption>viewer での見え方（2:3 中央クロップ）</figcaption>
-          <div className="frame" data-testid="cover-frame">
+        <figure className="m-0 flex flex-col gap-1.5">
+          <figcaption className="text-[12px] font-medium text-ink-muted">
+            viewer での見え方（2:3 中央クロップ）
+          </figcaption>
+          <div
+            className="aspect-2/3 w-56 overflow-hidden rounded border border-line bg-canvas"
+            data-testid="cover-frame"
+          >
             <img
+              className="size-full object-cover"
               src={`${client.imageUrl(archive, cover.name)}&v=${reloadKey}`}
               alt="viewer での見え方"
             />

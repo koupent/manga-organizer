@@ -1,4 +1,17 @@
+import { Play, Search, Wand2 } from "lucide-react";
 import { useState } from "react";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardBody, CardHeader } from "./ui/card";
+import { Empty } from "./ui/empty";
+import { Input } from "./ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import type { SidecarClient } from "../api/client";
 
 export type SeriesVolume = { path: string; name: string; volume: number | null };
@@ -136,133 +149,141 @@ export function SeriesReview({
   };
 
   return (
-    <section>
-      <div className="section-head">
-        <h2 className="section-title">推定結果</h2>
-        <span className="section-note" data-testid="group-count">
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <h2 className="text-[13px] font-semibold">推定結果</h2>
+        <span className="tabular text-[12px] text-ink-faint" data-testid="group-count">
           {groups.length} 作品
         </span>
-        <span className="header-spacer" />
-        <span className="status" data-testid="organize-status">
+        <div className="flex-1" />
+        <span className="text-[12px] text-ink-muted" data-testid="organize-status">
           {status}
         </span>
-        <button
-          type="button"
-          className="btn-primary"
+        <Button
+          variant="primary"
+          size="sm"
           data-testid="confirm"
           disabled={running || groups.length === 0}
           onClick={confirm}
         >
+          <Play />
           この内容で整理する
-        </button>
+        </Button>
       </div>
 
       {groups.length === 0 ? (
-        <div className="empty">
-          <strong>まだ推定していません</strong>
-          <p>
-            上の欄にアーカイブのパスを入れて「作品を推定する」を押すと、
-            作品ごとのまとまりが表示されます。推定は外れることがあるので、
-            ここで直してから確定してください。
-          </p>
-        </div>
+        <Empty icon={<Wand2 />} title="まだ推定していません">
+          対象を選んで「作品を推定する」を押すと、作品ごとのまとまりが出ます。
+          推定は外れることがあるので、ここで直してから確定してください。
+        </Empty>
       ) : null}
 
       {progress.total > 0 ? (
-        <div className="panel">
-          <div className="panel-body">
-            <div className="progress" data-testid="progress">
+        <Card>
+          <CardBody className="flex flex-col gap-2">
+            <div className="h-1 overflow-hidden rounded-full bg-canvas">
               <div
-                className="progress-bar"
+                className="h-full bg-brand transition-[width] duration-200"
+                data-testid="progress"
                 style={{
                   width: `${(progress.current / Math.max(progress.total, 1)) * 100}%`,
                 }}
               />
             </div>
-            <pre className="log" data-testid="organize-log">
+            <pre
+              className="max-h-40 overflow-y-auto rounded border border-line bg-canvas p-2 font-mono text-[11.5px] leading-relaxed text-ink-muted"
+              data-testid="organize-log"
+            >
               {log.join("\n")}
             </pre>
-          </div>
-        </div>
+          </CardBody>
+        </Card>
       ) : null}
 
-      <div className="groups">
+      <div className="flex flex-col gap-2">
         {groups.map((group, index) => (
-          <article
-            key={`${group.title}-${index}`}
-            className="group"
-            data-testid="series-group"
-            data-title={group.title}
-          >
-            <header className="group-header">
-              <input
-                type="text"
-                className="group-title-input"
+          <Card key={`${group.title}-${index}`} data-testid="series-group" data-title={group.title}>
+            <CardHeader>
+              <Input
+                className="min-w-0 flex-[2_1_200px] font-medium"
                 value={group.title}
                 placeholder="作品名"
                 data-testid="group-title"
                 onChange={(event) => updateGroup(index, { title: event.target.value })}
               />
-              <input
-                type="text"
-                className="group-author-input"
+              <Input
+                className="min-w-0 flex-1 basis-40"
                 placeholder="著者"
                 value={group.author ?? ""}
                 data-testid="group-author"
                 onChange={(event) => updateGroup(index, { author: event.target.value })}
               />
-              <button
-                type="button"
-                className="btn-ghost"
+              <Button
+                variant="ghost"
+                size="sm"
                 data-testid="suggest-author"
                 onClick={() => suggestAuthor(index)}
               >
+                <Search />
                 著者を調べる
-              </button>
-              <span
-                className="chip"
-                data-level={confidenceLabel(group.confidence)}
+              </Button>
+              <Badge
+                tone={
+                  confidenceLabel(group.confidence) === "高"
+                    ? "ok"
+                    : confidenceLabel(group.confidence) === "低"
+                      ? "warn"
+                      : "neutral"
+                }
                 data-testid="confidence"
               >
                 推定 {confidenceLabel(group.confidence)}
-              </span>
+              </Badge>
               {group.hasDuplicateVolumes ? (
-                <span className="chip" data-level="低" data-testid="duplicate-warning">
+                <Badge tone="warn" data-testid="duplicate-warning">
                   巻が重複しています
-                </span>
+                </Badge>
               ) : null}
-            </header>
+            </CardHeader>
 
-            <ul className="volumes">
+            <ul className="divide-y divide-line/50">
               {group.volumes.map((volume) => (
-                <li key={volume.path} data-testid="volume" data-path={volume.path}>
-                  <span className="volume-number">
+                <li
+                  key={volume.path}
+                  data-testid="volume"
+                  data-path={volume.path}
+                  className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-surface-2"
+                >
+                  <span className="tabular w-8 rounded bg-surface-2 py-0.5 text-center text-[11.5px] text-ink-muted">
                     {volume.volume === null ? "—" : volume.volume}
                   </span>
-                  <span className="volume-name">{volume.name}</span>
-                  <select
-                    data-testid="move-to"
+                  <span className="flex-1 truncate text-[12.5px]">{volume.name}</span>
+                  <Select
                     value=""
-                    onChange={(event) => {
-                      if (event.target.value) {
-                        moveVolume(index, volume.path, event.target.value);
-                      }
+                    onValueChange={(value) => {
+                      if (value) moveVolume(index, volume.path, value);
                     }}
                   >
-                    <option value="">別の作品へ移す...</option>
-                    {groups
-                      .filter((_, at) => at !== index)
-                      .map((other) => (
-                        <option key={other.title} value={other.title}>
-                          {other.title}
-                        </option>
-                      ))}
-                    <option value={`${volume.name} (単独)`}>単独の作品にする</option>
-                  </select>
+                    <SelectTrigger data-testid="move-to" className="w-40">
+                      <SelectValue placeholder="別の作品へ移す..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groups
+                        .filter((_, at) => at !== index)
+                        .map((other) => (
+                          <SelectItem key={other.title} value={other.title}>
+                            {other.title}
+                          </SelectItem>
+                        ))}
+                      <SelectItem value={`${volume.name} (単独)`}>
+                        単独の作品にする
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </li>
               ))}
             </ul>
-          </article>
+          </Card>
         ))}
       </div>
     </section>

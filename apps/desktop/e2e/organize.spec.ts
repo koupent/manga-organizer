@@ -185,7 +185,9 @@ test.describe("整理画面", () => {
     await expect(other.getByTestId("volume")).toHaveCount(1);
 
     // Act - 「混在」の 2 巻目を「別作品」へ移す
-    await mixed.getByTestId("volume").nth(1).getByTestId("move-to").selectOption("別作品");
+    // Radix の Select は listbox を開いてから選ぶ
+    await mixed.getByTestId("volume").nth(1).getByTestId("move-to").click();
+    await page.getByRole("option", { name: "別作品" }).click();
 
     // Assert
     await expect(mixed.getByTestId("volume")).toHaveCount(1);

@@ -1,10 +1,18 @@
+import { BookOpen, FileQuestion, Sparkles, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
+import { cn } from "./lib/utils";
 import { SidecarClient } from "./api/client";
 import { CoverEditor } from "./components/CoverEditor";
 import { PageGrid } from "./components/PageGrid";
 import { FilePicker } from "./components/FilePicker";
 import { SeriesReview, type SeriesGroup } from "./components/SeriesReview";
 import { onFilesDropped, resolveConnection } from "./connection";
+import { Alert } from "./components/ui/alert";
+import { Button } from "./components/ui/button";
+import { Card, CardBody } from "./components/ui/card";
+import { Empty } from "./components/ui/empty";
+import { Input } from "./components/ui/input";
+import { Segmented } from "./components/ui/segmented";
 
 type Page = { name: string; size: number; modified: string };
 type Mode = "organize" | "pages" | "cover";
@@ -89,26 +97,24 @@ export function App() {
 
   return (
     <main>
-      <header className="app-header">
-        <h1 className="brand">Manga Organizer</h1>
-        <div className="segmented" role="group" aria-label="モード">
-          {MODES.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              data-testid={`mode-${item.id}`}
-              aria-pressed={mode === item.id}
-              onClick={() => setMode(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
+      <header className="sticky top-0 z-20 flex items-center gap-4 border-b border-line bg-surface/95 px-4 py-2 backdrop-blur">
+        <div className="flex items-center gap-2">
+          <BookOpen className="size-4 text-brand" />
+          <h1 className="text-[13.5px] font-semibold tracking-tight">
+            Manga Organizer
+          </h1>
         </div>
 
-        <div className="header-spacer" />
+        <Segmented
+          items={MODES.map((m) => ({ ...m, testId: `mode-${m.id}` }))}
+          value={mode}
+          onChange={setMode}
+        />
+
+        <div className="flex-1" />
 
         {mode === "pages" ? (
-          <label className="slider-field">
+          <label className="flex items-center gap-2 text-[12px] text-ink-muted">
             表示サイズ
             <input
               type="range"
@@ -118,55 +124,62 @@ export function App() {
               value={cardWidth}
               data-testid="card-width"
               onChange={(event) => setCardWidth(Number(event.target.value))}
+              className="h-1 w-28 cursor-pointer accent-brand"
             />
           </label>
         ) : null}
 
         <span
-          className="connection"
+          className="flex items-center gap-1.5 text-[11.5px] text-ink-faint"
           data-testid="connection"
           data-state={health === "ok" ? "ok" : "off"}
-          title={health === "ok" ? "サイドカーに接続済み" : "未接続"}
         >
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              health === "ok" ? "bg-ok" : "bg-ink-faint",
+            )}
+          />
           {health === "ok" ? "接続済み" : "未接続"}
         </span>
       </header>
 
-      <div className="content">
+      <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-3 p-4">
         {error ? (
-          <p className="banner" data-tone="error" data-testid="error">
-            {error}
-          </p>
+          <Alert tone="danger" data-testid="error">
+            <TriangleAlert />
+            <span>{error}</span>
+          </Alert>
         ) : null}
 
         {mode === "organize" && client ? (
           <>
             <FilePicker client={client} selected={sources} onChange={setSources} />
 
-            <div className="panel">
-              <div className="panel-body toolbar">
-                <div className="field" style={{ flex: "1 1 320px" }}>
-                  <span className="field-label">出力先</span>
-                  <input
-                    type="text"
+            <Card>
+              <CardBody className="flex flex-wrap items-end gap-3">
+                <label className="flex min-w-[320px] flex-1 flex-col gap-1">
+                  <span className="text-[11.5px] font-medium text-ink-muted">
+                    出力先
+                  </span>
+                  <Input
                     data-testid="output-directory"
                     placeholder="/path/to/整理後"
                     value={outputDirectory}
                     onChange={(event) => setOutputDirectory(event.target.value)}
                   />
-                </div>
-                <span className="header-spacer" />
-                <button
-                  type="button"
-                  className="btn-primary"
+                </label>
+                <Button
+                  variant="primary"
                   data-testid="estimate"
                   disabled={sources.length === 0}
                   onClick={estimate}
                 >
+                  <Sparkles />
                   作品を推定する
-                </button>
-              </div>
-            </div>
+                </Button>
+              </CardBody>
+            </Card>
 
             <SeriesReview
               client={client}
@@ -192,13 +205,9 @@ export function App() {
         ) : null}
 
         {mode === "pages" && !archive ? (
-          <div className="empty">
-            <strong>アーカイブが選ばれていません</strong>
-            <p>
-              URL に <code>archive=</code> を付けるか、整理モードでファイルを
-              指定してください。
-            </p>
-          </div>
+          <Empty icon={<FileQuestion />} title="アーカイブが選ばれていません">
+            URL に archive= を付けるか、整理モードでファイルを指定してください。
+          </Empty>
         ) : null}
       </div>
     </main>

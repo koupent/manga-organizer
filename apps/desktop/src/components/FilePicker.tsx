@@ -1,4 +1,19 @@
+import {
+  ChevronUp,
+  Folder,
+  FolderOpen,
+  Package,
+  TriangleAlert,
+  Upload,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
+import { cn } from "../lib/utils";
+import { Alert } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardHeader } from "./ui/card";
+import { Empty } from "./ui/empty";
 import type { SidecarClient } from "../api/client";
 
 type Entry = { name: string; path: string; is_directory: boolean };
@@ -133,34 +148,38 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
   };
 
   return (
-    <section className="picker">
-      <div className="section-head">
-        <h2 className="section-title">処理対象</h2>
-        <span className="section-note" data-testid="selected-count">
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <h2 className="text-[13px] font-semibold">処理対象</h2>
+        <span className="tabular text-[12px] text-ink-faint" data-testid="selected-count">
           {selected.length} 件
         </span>
-        <span className="header-spacer" />
-        <button
-          type="button"
-          className="btn-secondary"
+        <div className="flex-1" />
+        <Button
+          variant={browsing ? "primary" : "secondary"}
+          size="sm"
           data-testid="open-browser"
           onClick={() => setBrowsing((open) => !open)}
         >
+          <FolderOpen />
           {browsing ? "選択を閉じる" : "ファイルを選ぶ"}
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           data-testid="clear-selection"
           disabled={selected.length === 0}
           onClick={() => onChange([])}
         >
           一覧を空にする
-        </button>
+        </Button>
       </div>
 
       <div
-        className={`dropzone${dragging ? " over" : ""}`}
+        className={cn(
+          "rounded-card border border-dashed transition-colors",
+          dragging ? "border-brand bg-brand/8" : "border-line-strong bg-surface/50",
+        )}
         data-testid="dropzone"
         onDragOver={(event) => {
           event.preventDefault();
@@ -174,27 +193,38 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
         }}
       >
         {selected.length === 0 ? (
-          <div className="empty">
-            <strong>ここにアーカイブをドラッグ&ドロップ</strong>
-            <p>
-              または「ファイルを選ぶ」から辿ってください。zip / cbz / rar /
-              7z を扱えます。
-            </p>
-          </div>
+          <Empty icon={<Upload />} title="ここにアーカイブをドラッグ&ドロップ">
+            または「ファイルを選ぶ」から辿ってください。zip / cbz / rar / 7z
+            を扱えます。
+          </Empty>
         ) : (
-          <ul className="selected-list" data-testid="selected-list">
+          <ul className="max-h-64 divide-y divide-line/60 overflow-y-auto p-1" data-testid="selected-list">
             {selected.map((path) => (
-              <li key={path} data-testid="selected-item" data-path={path}>
-                <span className="selected-name">{path.split("/").pop()}</span>
-                <span className="selected-path">{path}</span>
-                <button
-                  type="button"
-                  className="btn-ghost"
+              <li
+                key={path}
+                data-testid="selected-item"
+                data-path={path}
+                className="group flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-2"
+              >
+                <Package className="size-3.5 shrink-0 text-ink-faint" />
+                <span className="shrink-0 text-[12.5px] font-medium">
+                  {path.split("/").pop()}
+                </span>
+                <span
+                  className="min-w-0 flex-1 truncate text-right text-[11px] text-ink-faint"
+                  title={path}
+                >
+                  {path.slice(0, path.lastIndexOf("/")) || "/"}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
                   title="一覧から外す"
+                  className="opacity-0 group-hover:opacity-100"
                   onClick={() => onChange(selected.filter((item) => item !== path))}
                 >
-                  ✕
-                </button>
+                  <X />
+                </Button>
               </li>
             ))}
           </ul>
@@ -202,45 +232,56 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
       </div>
 
       {error ? (
-        <p className="banner" data-tone="error" data-testid="picker-error">
-          {error}
-        </p>
+        <Alert tone="danger" data-testid="picker-error">
+          <TriangleAlert />
+          <span>{error}</span>
+        </Alert>
       ) : null}
 
       {browsing ? (
-        <div className="panel browser" data-testid="file-browser">
-          <div className="browser-bar">
-            <button
-              type="button"
-              className="btn-ghost"
+        <Card data-testid="file-browser">
+          <CardHeader>
+            <Button
+              variant="ghost"
+              size="sm"
               data-testid="browse-up"
               disabled={!location.parent}
               onClick={() => location.parent && load(location.parent)}
             >
-              ↑ 上へ
-            </button>
-            <code className="browser-path">{location.path}</code>
-            <span className="header-spacer" />
-            <button
-              type="button"
-              className="btn-secondary"
+              <ChevronUp />
+              上へ
+            </Button>
+            <code className="max-w-[52ch] truncate rounded bg-canvas px-2 py-0.5 text-[11.5px] text-ink-muted">
+              {location.path}
+            </code>
+            <div className="flex-1" />
+            <Button
+              variant="secondary"
+              size="sm"
               data-testid="add-all-here"
               onClick={() =>
-                add(
-                  entries.filter((entry) => !entry.is_directory).map((e) => e.path),
-                )
+                add(entries.filter((entry) => !entry.is_directory).map((e) => e.path))
               }
             >
               ここのアーカイブを全部追加
-            </button>
-          </div>
-          <ul className="browser-list">
+            </Button>
+          </CardHeader>
+          <ul className="max-h-72 overflow-y-auto p-1">
             {entries.map((entry) => (
-              <li key={entry.path} data-testid="browse-entry" data-name={entry.name}>
-                <span className="browser-icon">{entry.is_directory ? "📁" : "📦"}</span>
+              <li
+                key={entry.path}
+                data-testid="browse-entry"
+                data-name={entry.name}
+                className="flex items-center gap-2 rounded px-2 py-1 hover:bg-surface-2"
+              >
+                {entry.is_directory ? (
+                  <Folder className="size-3.5 shrink-0 text-brand/80" />
+                ) : (
+                  <Package className="size-3.5 shrink-0 text-ink-faint" />
+                )}
                 <button
                   type="button"
-                  className="browser-name"
+                  className="browser-name flex-1 truncate text-left text-[12.5px] hover:text-brand"
                   onClick={() =>
                     entry.is_directory ? load(entry.path) : add([entry.path])
                   }
@@ -248,22 +289,20 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
                   {entry.name}
                 </button>
                 {entry.is_directory ? (
-                  <button
-                    type="button"
-                    className="btn-ghost"
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => addFolder(entry)}
                   >
                     中身を追加
-                  </button>
-                ) : (
-                  <span className="chip">
-                    {selected.includes(entry.path) ? "追加済み" : ""}
-                  </span>
-                )}
+                  </Button>
+                ) : selected.includes(entry.path) ? (
+                  <Badge tone="ok">追加済み</Badge>
+                ) : null}
               </li>
             ))}
           </ul>
-        </div>
+        </Card>
       ) : null}
     </section>
   );
