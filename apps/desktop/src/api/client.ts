@@ -19,8 +19,6 @@ type PagesResponse =
   paths["/api/pages"]["get"]["responses"][200]["content"]["application/json"];
 type CoverResponse =
   paths["/api/cover"]["get"]["responses"][200]["content"]["application/json"];
-type EstimateResponse =
-  paths["/api/series/estimate"]["post"]["responses"][200]["content"]["application/json"];
 type JobResponse =
   paths["/api/jobs/{job_id}"]["get"]["responses"][200]["content"]["application/json"];
 type HealthResponse =
@@ -39,6 +37,27 @@ type ResolveResult =
   paths["/api/resolve"]["post"]["responses"][200]["content"]["application/json"];
 type JobAccepted =
   paths["/api/jobs/reorder"]["post"]["responses"][202]["content"]["application/json"];
+
+/** ジョブ待ちの調整。signal で呼び出し側から打ち切れる */
+type WaitForJobOptions = {
+  intervalMs?: number;
+  signal?: AbortSignal;
+};
+
+/** 待っている途中でも中断できるようにした setTimeout */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 /** サイドカーの API を型付きで呼ぶ。トークンは全経路で必須 */
 export class SidecarClient {
@@ -91,10 +110,6 @@ export class SidecarClient {
     return this.request<CoverResponse>("/api/cover", { archive });
   }
 
-  estimateSeries(archives: string[]): Promise<EstimateResponse> {
-    return this.post<EstimateResponse>("/api/series/estimate", { archives });
-  }
-
   reorder(archive: string, order: string[]): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/reorder", { archive, order });
   }
@@ -142,8 +157,8 @@ export class SidecarClient {
     return this.post<JobAccepted>("/api/jobs/organize", request);
   }
 
-  job(id: string): Promise<JobResponse> {
-    return this.request<JobResponse>(`/api/jobs/${id}`);
+  job(id: string, signal?: AbortSignal): Promise<JobResponse> {
+    return this.request<JobResponse>(`/api/jobs/${id}`, {}, { signal });
   }
 
   /** 原寸画像の URL。img の src に直接使う */
@@ -155,17 +170,23 @@ export class SidecarClient {
     return this.url("/api/thumb", { archive, name, width });
   }
 
-  /** ジョブが終わるまで待つ。進捗は onProgress で受け取る */
+  /**
+   * ジョブが終わるまで待つ。進捗は onProgress で受け取る。
+   *
+   * 呼び出し元の画面が消えても問い合わせが続くと、戻ってきたときに
+   * 同じ対象へ二重にジョブを投入できてしまう。signal で確実に止められるようにする。
+   */
   async waitForJob(
     id: string,
     onProgress?: (job: JobResponse) => void,
-    intervalMs = 200,
+    { intervalMs = 200, signal }: WaitForJobOptions = {},
   ): Promise<JobResponse> {
     for (;;) {
-      const job = await this.job(id);
+      signal?.throwIfAborted();
+      const job = await this.job(id, signal);
       onProgress?.(job);
       if (job.state !== "queued" && job.state !== "running") return job;
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      await sleep(intervalMs, signal);
     }
   }
 }

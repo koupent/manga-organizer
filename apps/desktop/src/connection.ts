@@ -41,8 +41,11 @@ export async function onFilesDropped(
 ): Promise<() => void> {
   if (!isTauri()) return () => undefined;
   const { listen } = await import("@tauri-apps/api/event");
-  const unlisten = await listen<{ paths: string[] }>("files-dropped", (event) => {
-    handler(event.payload.paths);
-  });
+  const unlisten = await listen<{ paths: string[] }>(
+    "files-dropped",
+    (event) => {
+      handler(event.payload.paths);
+    },
+  );
   return unlisten;
 }

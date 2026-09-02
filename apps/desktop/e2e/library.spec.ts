@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
+import { startSidecar, type Sidecar } from "./sidecar";
 
 let sidecar: Sidecar;
 test.beforeAll(async () => {
@@ -40,17 +40,6 @@ const rememberEntry = async (page: Page, title: string, author: string) => {
 /** 整理画面を開く */
 const openOrganize = async (page: Page) => {
   await page.goto(url("organize", { output: join(sidecar.workDir, "out") }));
-};
-
-/** ファイルブラウザから 1 つ選ぶ */
-const pickArchive = async (page: Page, archive: string) => {
-  await page.getByTestId("open-browser").click();
-  await page
-    .locator(
-      `[data-testid="browse-entry"][data-name="${archive.split("/").pop()}"] .browser-name`,
-    )
-    .click();
-  await page.getByTestId("open-browser").click();
 };
 
 test.describe("辞書", () => {
@@ -105,48 +94,23 @@ test.describe("辞書", () => {
 });
 
 test.describe("整理のオプション", () => {
-  test("推定した作品名が辞書にあれば著者が埋まる", async ({ page }) => {
+  test("辞書にある作品名を入れると著者が埋まる", async ({ page }) => {
     // Arrange - 先に辞書へ記録しておく
     await rememberEntry(page, "既知の作品", "既知の著者");
-    const archive = writeArchive(sidecar.workDir, "既知の作品 第01巻.zip", [
-      { name: "001.jpg", color: "#ff0000" },
-    ]);
 
     // Act
     await openOrganize(page);
-    await pickArchive(page, archive);
     await expect(
       page.locator('#known-titles option[value="既知の作品"]'),
     ).toHaveCount(1);
-    await page.getByTestId("estimate").click();
+    await page.getByTestId("organize-title").fill("既知の作品");
 
-    // Assert - 著者が自動で入る
-    await expect(
-      page.getByTestId("series-group").first().getByTestId("group-author"),
-    ).toHaveValue("既知の著者");
-  });
-
-  test("作品名を辞書の値に直すと著者が埋まる", async ({ page }) => {
-    // Arrange - 辞書と違う名前のアーカイブを用意する
-    await rememberEntry(page, "既知の作品", "既知の著者");
-    const archive = writeArchive(sidecar.workDir, "別の作品 第01巻.zip", [
-      { name: "001.jpg", color: "#00ff00" },
-    ]);
-
-    // Act - 推定してから作品名を辞書の値へ打ち直す
-    await openOrganize(page);
-    await pickArchive(page, archive);
-    await expect(
-      page.locator('#known-titles option[value="既知の作品"]'),
-    ).toHaveCount(1);
-    await page.getByTestId("estimate").click();
-
-    const group = page.getByTestId("series-group").first();
-    await expect(group.getByTestId("group-title")).toHaveValue("別の作品");
-    await group.getByTestId("group-title").fill("既知の作品");
-
-    // Assert
-    await expect(group.getByTestId("group-author")).toHaveValue("既知の著者");
+    // Assert - 辞書由来として著者が入る
+    await expect(page.getByTestId("organize-author")).toHaveValue("既知の著者");
+    await expect(page.getByTestId("organize-author")).toHaveAttribute(
+      "data-source",
+      "library",
+    );
   });
 
   test("元のファイルを残すを切り替えられる", async ({ page }) => {

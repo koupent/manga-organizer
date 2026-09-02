@@ -1,18 +1,13 @@
-import { BookOpen, FileQuestion, Sparkles, TriangleAlert } from "lucide-react";
+import { BookOpen, FileQuestion, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "./lib/utils";
 import { SidecarClient } from "./api/client";
 import { CoverEditor } from "./components/CoverEditor";
-import { DirectoryPicker } from "./components/DirectoryPicker";
 import { LibraryEditor } from "./components/LibraryEditor";
 import { PageGrid } from "./components/PageGrid";
-import { FilePicker } from "./components/FilePicker";
-import { SeriesReview, type SeriesGroup } from "./components/SeriesReview";
+import { OrganizePanel } from "./components/OrganizePanel";
 import { onFilesDropped, resolveConnection } from "./connection";
 import { Alert } from "./components/ui/alert";
-import { Button } from "./components/ui/button";
-import { Card, CardBody } from "./components/ui/card";
-import { Checkbox } from "./components/ui/checkbox";
 import { Empty } from "./components/ui/empty";
 import { Segmented } from "./components/ui/segmented";
 
@@ -38,11 +33,6 @@ export function App() {
 
   const [sources, setSources] = useState<string[]>([]);
   const [outputDirectory, setOutputDirectory] = useState("");
-  const [groups, setGroups] = useState<SeriesGroup[]>([]);
-  const [keepOriginals, setKeepOriginals] = useState(true);
-  const [knownTitles, setKnownTitles] = useState<
-    { title: string; author: string }[]
-  >([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,35 +84,6 @@ export function App() {
       .then((payload) => setPages(payload.pages as Page[]))
       .catch((reason) => setError(String(reason.message ?? reason)));
   }, [client, archive, mode]);
-
-  useEffect(() => {
-    if (!client) return;
-    client
-      .knownEntries()
-      .then((payload) => setKnownTitles(payload.entries))
-      .catch(() => undefined);
-  }, [client, mode]);
-
-  const estimate = async () => {
-    if (!client) return;
-    setError("");
-    try {
-      const payload = await client.estimateSeries(sources);
-      // 辞書に載っている作品は、推定した時点で著者も埋めておく
-      const authorOf = new Map(
-        knownTitles.map((entry) => [entry.title, entry.author]),
-      );
-      setGroups(
-        (payload.groups as SeriesGroup[]).map((group) =>
-          group.author
-            ? group
-            : { ...group, author: authorOf.get(group.title) ?? group.author },
-        ),
-      );
-    } catch (reason) {
-      setError(String((reason as Error).message ?? reason));
-    }
-  };
 
   const archiveName = archive ? (archive.split("/").pop() ?? archive) : "";
 
@@ -184,54 +145,14 @@ export function App() {
         ) : null}
 
         {mode === "organize" && client ? (
-          <>
-            <FilePicker
-              client={client}
-              selected={sources}
-              onChange={setSources}
-            />
-
-            <Card>
-              <CardBody className="flex flex-col gap-3">
-                <DirectoryPicker
-                  client={client}
-                  value={outputDirectory}
-                  onChange={setOutputDirectory}
-                />
-                <div className="flex flex-wrap items-center gap-3">
-                  <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-ink-muted">
-                    <Checkbox
-                      data-testid="keep-originals"
-                      checked={keepOriginals}
-                      onCheckedChange={(checked) =>
-                        setKeepOriginals(checked === true)
-                      }
-                    />
-                    元のファイルを残す
-                  </label>
-                  <div className="flex-1" />
-                  <Button
-                    variant="primary"
-                    data-testid="estimate"
-                    disabled={sources.length === 0}
-                    onClick={estimate}
-                  >
-                    <Sparkles />
-                    作品を推定する
-                  </Button>
-                </div>
-              </CardBody>
-            </Card>
-
-            <SeriesReview
-              client={client}
-              groups={groups}
-              outputDirectory={outputDirectory}
-              keepOriginals={keepOriginals}
-              knownTitles={knownTitles}
-              onGroupsChange={setGroups}
-            />
-          </>
+          <OrganizePanel
+            client={client}
+            sources={sources}
+            onSourcesChange={setSources}
+            outputDirectory={outputDirectory}
+            onOutputDirectoryChange={setOutputDirectory}
+            onOpenLibrary={() => setMode("library")}
+          />
         ) : null}
 
         {mode === "library" && client ? (

@@ -3,7 +3,9 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
 
-const CORE_DIR = fileURLToPath(new URL("../../../services/core", import.meta.url));
+const CORE_DIR = fileURLToPath(
+  new URL("../../../services/core", import.meta.url),
+);
 
 let sidecar: Sidecar;
 
@@ -57,7 +59,9 @@ print(json.dumps(result))
 }
 
 test.describe("ページ並べ替え", () => {
-  test("サムネイルが並び、ドラッグで入れ替えて ZIP に保存できる", async ({ page }) => {
+  test("サムネイルが並び、ドラッグで入れ替えて ZIP に保存できる", async ({
+    page,
+  }) => {
     // Arrange - 3 ページの ZIP。色でどのページか見分ける
     const archive = writeArchive(sidecar.workDir, "reorder.zip", [
       { name: "001.jpg", color: "#ff0000" },
@@ -90,14 +94,18 @@ test.describe("ページ並べ替え", () => {
     await page.mouse.up();
 
     // Assert - 画面上の順序が変わり、未保存として示される
-    await expect(page.getByTestId("dirty-state")).toHaveText("未保存の変更があります");
+    await expect(page.getByTestId("dirty-state")).toHaveText(
+      "未保存の変更があります",
+    );
     await expect(cards.nth(2)).toHaveAttribute("data-name", "001.jpg");
 
     // Act - 保存する。dnd-kit はドラッグ直後の 1 クリックを抑止するので、
     // 実際の操作と同じくいったんマウスを離してから押す
     await page.mouse.move(5, 5);
     await page.getByTestId("save").click();
-    await expect(page.getByTestId("status")).toContainText("3 ページを並び替えました");
+    await expect(page.getByTestId("status")).toContainText(
+      "3 ページを並び替えました",
+    );
 
     // Assert - ZIP が実際に書き換わっている
     expect(entriesOf(archive)).toEqual(["001.jpg", "002.jpg", "003.jpg"]);
@@ -109,7 +117,9 @@ test.describe("ページ並べ替え", () => {
 
   test("接続情報が無いときは理由を示す", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTestId("error")).toContainText("接続情報がありません");
+    await expect(page.getByTestId("error")).toContainText(
+      "接続情報がありません",
+    );
   });
 
   test("読めないアーカイブを指定したときは理由を示す", async ({ page }) => {
@@ -137,7 +147,10 @@ test.describe("ページ並べ替え", () => {
 });
 
 test.describe("複数選択・Undo・原寸表示", () => {
-  async function openArchive(page: import("@playwright/test").Page, name: string) {
+  async function openArchive(
+    page: import("@playwright/test").Page,
+    name: string,
+  ) {
     const archive = writeArchive(sidecar.workDir, name, [
       { name: "001.jpg", color: "#ff0000" },
       { name: "002.jpg", color: "#00ff00" },
@@ -165,7 +178,9 @@ test.describe("複数選択・Undo・原寸表示", () => {
     await cards.nth(0).hover();
     await page.mouse.down();
     const box = (await cards.nth(3).boundingBox())!;
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 12 });
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+      steps: 12,
+    });
     await page.mouse.up();
 
     // Assert - 2 枚がまとまって末尾側へ移る
@@ -195,15 +210,21 @@ test.describe("複数選択・Undo・原寸表示", () => {
     await cards.nth(0).hover();
     await page.mouse.down();
     const box = (await cards.nth(2).boundingBox())!;
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 12 });
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+      steps: 12,
+    });
     await page.mouse.up();
-    await expect(page.getByTestId("dirty-state")).toHaveText("未保存の変更があります");
+    await expect(page.getByTestId("dirty-state")).toHaveText(
+      "未保存の変更があります",
+    );
 
     // Act - 元に戻す
     await page.keyboard.press("Control+z");
 
     // Assert
-    await expect(page.getByTestId("dirty-state")).toHaveText("変更はありません");
+    await expect(page.getByTestId("dirty-state")).toHaveText(
+      "変更はありません",
+    );
     await expect(cards.nth(0)).toHaveAttribute("data-name", "001.jpg");
   });
 

@@ -35,7 +35,11 @@ type CoverEditorProps = {
  * viewer は表紙を縦長 2:3 に中央クロップして描くため、見開きが先頭にあると
  * 表紙が見えない。分割・回転で整える。
  */
-export function CoverEditor({ client, archive, archiveName }: CoverEditorProps) {
+export function CoverEditor({
+  client,
+  archive,
+  archiveName,
+}: CoverEditorProps) {
   const [cover, setCover] = useState<Cover | null>(null);
   const [status, setStatus] = useState("");
   const [running, setRunning] = useState(false);
@@ -116,7 +120,9 @@ export function CoverEditor({ client, archive, archiveName }: CoverEditorProps) 
       {cover.is_spread ? (
         <Alert tone="warn" data-testid="spread-warning">
           <TriangleAlert />
-          <span>見開きです。分割しないと viewer の表紙が正しく表示されません</span>
+          <span>
+            見開きです。分割しないと viewer の表紙が正しく表示されません
+          </span>
         </Alert>
       ) : (
         <p className="text-[12px] text-ink-faint" data-testid="fits-frame">

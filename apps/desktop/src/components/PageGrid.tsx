@@ -12,7 +12,11 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { SortableContext, rectSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  rectSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { SidecarClient } from "../api/client";
 
@@ -38,8 +42,14 @@ function PageCard({
   onSelect,
   onZoom,
 }: PageCardProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: name });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: name });
   const label = name.split("/").pop() ?? name;
 
   return (
@@ -49,7 +59,9 @@ function PageCard({
         "group overflow-hidden rounded-card border bg-surface transition-all",
         "cursor-grab touch-none select-none hover:-translate-y-0.5",
         isDragging && "opacity-30 cursor-grabbing",
-        selected ? "border-brand ring-2 ring-brand/25" : "border-line hover:border-line-strong",
+        selected
+          ? "border-brand ring-2 ring-brand/25"
+          : "border-line hover:border-line-strong",
       )}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       data-testid="page-card"
@@ -75,7 +87,9 @@ function PageCard({
         >
           {position}
         </span>
-        <span className="flex-1 truncate text-[11px] text-ink-faint">{label}</span>
+        <span className="flex-1 truncate text-[11px] text-ink-faint">
+          {label}
+        </span>
         <button
           type="button"
           data-testid="zoom"
@@ -127,10 +141,13 @@ export function PageGrid({
 
   const dirty = order.some((name, index) => name !== original[index]);
 
-  const commit = useCallback((next: string[]) => {
-    setHistory((past) => [...past, order].slice(-MAX_HISTORY));
-    setOrder(next);
-  }, [order]);
+  const commit = useCallback(
+    (next: string[]) => {
+      setHistory((past) => [...past, order].slice(-MAX_HISTORY));
+      setOrder(next);
+    },
+    [order],
+  );
 
   /** 選択をまとめて targetIndex の位置へ移す */
   const moveNames = useCallback(
@@ -245,12 +262,19 @@ export function PageGrid({
   return (
     <section className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-[13px] font-semibold">{archiveName ?? "ページ修正"}</h2>
-        <span className="tabular text-[12px] text-ink-faint">{pages.length} ページ</span>
+        <h2 className="text-[13px] font-semibold">
+          {archiveName ?? "ページ修正"}
+        </h2>
+        <span className="tabular text-[12px] text-ink-faint">
+          {pages.length} ページ
+        </span>
         <Badge tone={dirty ? "warn" : "neutral"} data-testid="dirty-state">
           {dirty ? "未保存の変更があります" : "変更はありません"}
         </Badge>
-        <span className="tabular text-[12px] text-ink-faint" data-testid="selection-count">
+        <span
+          className="tabular text-[12px] text-ink-faint"
+          data-testid="selection-count"
+        >
           {selection.length} 件選択
         </span>
         <div className="flex-1" />
@@ -280,8 +304,9 @@ export function PageGrid({
       </div>
 
       <p className="text-[11.5px] text-ink-faint">
-        ドラッグで順番を入れ替え ・ <Key>Ctrl</Key>/<Key>Shift</Key>+クリックで複数選択
-        ・ <Key>Ctrl</Key>+<Key>Z</Key> で元に戻す ・ 虫眼鏡で原寸表示
+        ドラッグで順番を入れ替え ・ <Key>Ctrl</Key>/<Key>Shift</Key>
+        +クリックで複数選択 ・ <Key>Ctrl</Key>+<Key>Z</Key> で元に戻す ・
+        虫眼鏡で原寸表示
       </p>
 
       <DndContext

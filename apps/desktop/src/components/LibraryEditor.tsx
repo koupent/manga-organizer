@@ -78,11 +78,17 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <h2 className="text-[13px] font-semibold">辞書</h2>
-        <span className="tabular text-[12px] text-ink-faint" data-testid="entry-count">
+        <span
+          className="tabular text-[12px] text-ink-faint"
+          data-testid="entry-count"
+        >
           {entries.length} 件
         </span>
         <div className="flex-1" />
-        <span className="text-[12px] text-ink-muted" data-testid="library-status">
+        <span
+          className="text-[12px] text-ink-muted"
+          data-testid="library-status"
+        >
           {status}
         </span>
       </div>
@@ -90,7 +96,9 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
       <Card>
         <CardBody className="flex flex-wrap items-end gap-2">
           <label className="flex min-w-[200px] flex-1 flex-col gap-1">
-            <span className="text-[11.5px] font-medium text-ink-muted">作品名</span>
+            <span className="text-[11.5px] font-medium text-ink-muted">
+              作品名
+            </span>
             <Input
               data-testid="new-title"
               value={title}
@@ -98,14 +106,20 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
             />
           </label>
           <label className="flex min-w-[160px] flex-1 flex-col gap-1">
-            <span className="text-[11.5px] font-medium text-ink-muted">著者</span>
+            <span className="text-[11.5px] font-medium text-ink-muted">
+              著者
+            </span>
             <Input
               data-testid="new-author"
               value={author}
               onChange={(event) => setAuthor(event.target.value)}
             />
           </label>
-          <Button variant="ghost" data-testid="library-suggest" onClick={suggest}>
+          <Button
+            variant="ghost"
+            data-testid="library-suggest"
+            onClick={suggest}
+          >
             <Search />
             著者を調べる
           </Button>
@@ -149,7 +163,9 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
                 data-title={entry.title}
                 className="group flex items-center gap-2 px-3 py-1.5 hover:bg-surface-2"
               >
-                <span className="flex-[2] truncate text-[12.5px]">{entry.title}</span>
+                <span className="flex-[2] truncate text-[12.5px]">
+                  {entry.title}
+                </span>
                 <span className="flex-1 truncate text-[12.5px] text-ink-muted">
                   {entry.author || "—"}
                 </span>

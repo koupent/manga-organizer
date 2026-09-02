@@ -20,7 +20,9 @@ export function Empty({
         className,
       )}
     >
-      {icon ? <div className="text-ink-faint [&_svg]:size-7">{icon}</div> : null}
+      {icon ? (
+        <div className="text-ink-faint [&_svg]:size-7">{icon}</div>
+      ) : null}
       <p className="text-[13px] font-medium text-ink-muted">{title}</p>
       {children ? (
         <p className="max-w-[46ch] text-[12px] text-ink-faint">{children}</p>

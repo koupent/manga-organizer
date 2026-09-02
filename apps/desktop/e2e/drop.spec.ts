@@ -68,7 +68,9 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     const dropped = names.map((name) => ({
       name,
       size: readFileSync(
-        writeArchive(sidecar.workDir, name, [{ name: "001.jpg", color: "#00ff00" }]),
+        writeArchive(sidecar.workDir, name, [
+          { name: "001.jpg", color: "#00ff00" },
+        ]),
       ).length,
     }));
     await openOrganize(page);
@@ -80,25 +82,27 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     await expect(page.getByTestId("selected-count")).toHaveText("3 件");
   });
 
-  test("落としたものを推定まで通せる", async ({ page }) => {
+  test("落としたものがそのまま処理対象になる", async ({ page }) => {
     // Arrange
     const names = ["通し作品 第01巻.zip", "通し作品 第02巻.zip"];
     const dropped = names.map((name) => ({
       name,
       size: readFileSync(
-        writeArchive(sidecar.workDir, name, [{ name: "001.jpg", color: "#0000ff" }]),
+        writeArchive(sidecar.workDir, name, [
+          { name: "001.jpg", color: "#0000ff" },
+        ]),
       ).length,
     }));
     await openOrganize(page);
 
     // Act
     await dropFiles(page, dropped);
-    await page.getByTestId("estimate").click();
 
-    // Assert - 落としただけで推定まで進める
-    const group = page.getByTestId("series-group").first();
-    await expect(group).toHaveAttribute("data-title", "通し作品");
-    await expect(group.getByTestId("volume")).toHaveCount(2);
+    // Assert - 落とした順に一覧へ並ぶ
+    await expect(page.getByTestId("selected-count")).toHaveText("2 件");
+    const items = page.getByTestId("selected-item");
+    await expect(items.nth(0)).toHaveAttribute("data-path", /第01巻\.zip$/);
+    await expect(items.nth(1)).toHaveAttribute("data-path", /第02巻\.zip$/);
   });
 
   test("見つからないものは理由を示す", async ({ page }) => {
@@ -108,7 +112,9 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     await dropFiles(page, [{ name: "どこにもない.zip", size: 42 }]);
 
     // Assert
-    await expect(page.getByTestId("picker-error")).toContainText("見つかりません");
+    await expect(page.getByTestId("picker-error")).toContainText(
+      "見つかりません",
+    );
     await expect(page.getByTestId("selected-count")).toHaveText("0 件");
   });
 
@@ -121,11 +127,14 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
 
     // Act
     await page.dispatchEvent('[data-testid="dropzone"]', "drop", {
-      dataTransfer: await page.evaluateHandle((uri) => {
-        const transfer = new DataTransfer();
-        transfer.setData("text/uri-list", uri);
-        return transfer;
-      }, `file://${encodeURI(archive)}`),
+      dataTransfer: await page.evaluateHandle(
+        (uri) => {
+          const transfer = new DataTransfer();
+          transfer.setData("text/uri-list", uri);
+          return transfer;
+        },
+        `file://${encodeURI(archive)}`,
+      ),
     });
 
     // Assert - 名前で探さずに直接使える
@@ -140,7 +149,9 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     await openOrganize(page);
     await dropFiles(page, [{ name: "存在しない.zip", size: 7 }]);
     await expect(page.getByTestId("picker-error")).toContainText("探した場所");
-    await expect(page.getByTestId("picker-error")).toContainText(sidecar.workDir);
+    await expect(page.getByTestId("picker-error")).toContainText(
+      sidecar.workDir,
+    );
   });
 
   test("一覧から 1 件だけ外せる", async ({ page }) => {
@@ -149,15 +160,21 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     const dropped = names.map((name) => ({
       name,
       size: readFileSync(
-        writeArchive(sidecar.workDir, name, [{ name: "001.jpg", color: "#ffff00" }]),
+        writeArchive(sidecar.workDir, name, [
+          { name: "001.jpg", color: "#ffff00" },
+        ]),
       ).length,
     }));
     await openOrganize(page);
     await dropFiles(page, dropped);
     await expect(page.getByTestId("selected-count")).toHaveText("2 件");
 
-    // Act
-    await page.getByTestId("selected-item").first().getByRole("button").click();
+    // Act - 行にはドラッグハンドルもあるので、削除ボタンを直接指す
+    await page
+      .getByTestId("selected-item")
+      .first()
+      .getByTestId("selected-remove")
+      .click();
 
     // Assert
     await expect(page.getByTestId("selected-count")).toHaveText("1 件");

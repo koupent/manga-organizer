@@ -10,6 +10,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -17,6 +18,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from manga_api.app import create_app  # noqa: E402
+from manga_core.api_client import AniListClient  # noqa: E402
 
 
 def make_page(color: str = "navy") -> bytes:
@@ -162,6 +164,28 @@ class PagesTest(ApiTestBase):
 
 
 class JobTest(ApiTestBase):
+    def test_job_detail_carries_the_processing_log(self):
+        # Arrange - 整理を 1 件走らせる
+        accepted = self.client.post(
+            "/api/jobs/organize",
+            params=self.auth(),
+            json={
+                "archives": [str(self.archive)],
+                "output_directory": str(self.work_dir / "out"),
+                "title": "作品",
+                "author": "著者",
+                "keep_originals": True,
+            },
+        )
+        job_id = accepted.json()["id"]
+
+        # Act
+        detail = self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
+
+        # Assert - 経過が行として残る
+        self.assertIsInstance(detail["log"], list)
+        self.assertTrue(detail["log"], "ログが 1 行も残っていない")
+
     def test_submits_a_reorder_job_and_reports_completion(self):
         # Act
         submitted = self.client.post(
@@ -219,44 +243,29 @@ class JobTest(ApiTestBase):
         response = self.client.get("/api/jobs/missing", params=self.auth())
         self.assertEqual(404, response.status_code)
 
+    def test_job_list_omits_the_log_instead_of_faking_an_empty_one(self):
+        # Arrange - ログが確実に残る整理ジョブを 1 件走らせる
+        accepted = self.client.post(
+            "/api/jobs/organize",
+            params=self.auth(),
+            json={
+                "archives": [str(self.archive)],
+                "output_directory": str(self.work_dir / "out"),
+                "title": "作品",
+                "author": "著者",
+                "keep_originals": True,
+            },
+        )
+        job_id = accepted.json()["id"]
 
-class SeriesEstimateTest(ApiTestBase):
-    def setUp(self):
-        super().setUp()
-        self.library = self.work_dir / "library"
-        self.library.mkdir()
-        for name in ("作品A 第01巻.zip", "作品A 第02巻.zip", "作品B 第01巻.zip"):
-            with zipfile.ZipFile(self.library / name, "w") as archive:
-                archive.writestr("001.jpg", make_page())
-
-    def test_estimates_groups_from_the_given_archives(self):
         # Act
-        response = self.client.post(
-            "/api/series/estimate",
-            params=self.auth(),
-            json={"archives": [str(p) for p in sorted(self.library.glob("*.zip"))]},
-        )
+        listed = self.client.get("/api/jobs", params=self.auth()).json()
+        detail = self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
 
-        # Assert
-        self.assertEqual(200, response.status_code)
-        groups = response.json()["groups"]
-        self.assertEqual(["作品A", "作品B"], [g["title"] for g in groups])
-        self.assertEqual([1, 2], [v["volume"] for v in groups[0]["volumes"]])
-        self.assertIn("confidence", groups[0])
-
-    def test_requires_a_token(self):
-        # Act / Assert
-        response = self.client.post("/api/series/estimate", json={"archives": []})
-        self.assertEqual(401, response.status_code)
-
-    def test_rejects_an_archive_outside_the_allowed_roots(self):
-        # Act / Assert
-        response = self.client.post(
-            "/api/series/estimate",
-            params=self.auth(),
-            json={"archives": ["/etc/passwd"]},
-        )
-        self.assertEqual(400, response.status_code)
+        # Assert - 「ログが無い」と「一覧では取らない」を取り違えさせない
+        self.assertNotIn("log", listed["jobs"][0])
+        self.assertIn("log", detail)
+        self.assertTrue(detail["log"], "詳細にはログが残っているはず")
 
 
 class CoverEditTest(ApiTestBase):
@@ -386,6 +395,99 @@ class LibraryTest(ApiTestBase):
 
     def test_requires_a_token(self):
         self.assertEqual(401, self.client.get("/api/library/entries").status_code)
+
+
+class AuthorSuggestTest(ApiTestBase):
+    """作品名から著者を引く経路。ネットワークには出さず、応答の形だけ再現する"""
+
+    def suggest(self, title: str):
+        return self.client.post(
+            "/api/library/suggest", params=self.auth(), json={"title": title}
+        )
+
+    def test_returns_the_author_name_not_the_source(self):
+        # Arrange
+        found = [
+            {
+                "title": "One Piece",
+                "title_japanese": "ワンピース",
+                "authors": ["尾田栄一郎"],
+                "source": "AniList",
+                "similarity": 1.0,
+            }
+        ]
+
+        # Act
+        with mock.patch.object(AniListClient, "search_manga", return_value=found):
+            payload = self.suggest("ワンピース").json()
+
+        # Assert - 提供元ではなく著者名が入る
+        self.assertEqual("尾田栄一郎", payload["author"])
+
+    def test_returns_close_candidates_in_order(self):
+        # Arrange - 検索は近い順に複数返る
+        found = [
+            {
+                "title": "近い作品",
+                "title_japanese": "近い作品",
+                "authors": ["著者A"],
+                "source": "AniList",
+                "similarity": 0.9,
+            },
+            {
+                "title": "やや近い作品",
+                "title_japanese": "やや近い作品",
+                "authors": ["著者B", "著者C"],
+                "source": "AniList",
+                "similarity": 0.5,
+            },
+        ]
+
+        # Act
+        with mock.patch.object(AniListClient, "search_manga", return_value=found):
+            payload = self.suggest("近い作品").json()
+
+        # Assert - 先頭を既定にしつつ、残りも候補として渡す
+        self.assertEqual("著者A", payload["author"])
+        self.assertEqual(
+            ["著者A", "著者B", "著者C"],
+            [candidate["author"] for candidate in payload["candidates"]],
+        )
+        self.assertEqual("近い作品", payload["candidates"][0]["title"])
+
+    def test_returns_nothing_when_search_finds_no_author(self):
+        # Act
+        with mock.patch.object(AniListClient, "search_manga", return_value=[]):
+            payload = self.suggest("該当しない作品").json()
+
+        # Assert
+        self.assertIsNone(payload["author"])
+        self.assertEqual([], payload["candidates"])
+
+    def test_survives_a_failing_search(self):
+        # Arrange - ネットワークは落ちうる。画面は止めない
+        with mock.patch.object(
+            AniListClient, "search_manga", side_effect=RuntimeError("圏外")
+        ):
+            payload = self.suggest("何か").json()
+
+        # Assert
+        self.assertIsNone(payload["author"])
+        self.assertEqual([], payload["candidates"])
+
+    def test_rejects_a_title_that_has_no_content(self):
+        # Arrange - 空の作品名は検索にならない
+        for title in ("", "   ", "\t\n"):
+            with self.subTest(title=repr(title)):
+                # Act
+                with mock.patch.object(
+                    AniListClient, "search_manga", return_value=[]
+                ) as searched:
+                    response = self.suggest(title)
+
+                # Assert - 入口で断り、外部サービスにも問い合わせない
+                self.assertEqual(422, response.status_code)
+                searched.assert_not_called()
 
 
 class BrowseTest(ApiTestBase):

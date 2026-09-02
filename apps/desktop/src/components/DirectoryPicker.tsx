@@ -18,7 +18,10 @@ export function DirectoryPicker({
   onChange: (path: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [location, setLocation] = useState<{ path: string; parent: string | null }>({
+  const [location, setLocation] = useState<{
+    path: string;
+    parent: string | null;
+  }>({
     path: "",
     parent: null,
   });
@@ -27,7 +30,9 @@ export function DirectoryPicker({
   const load = (path = "") => {
     client.browse(path).then((result) => {
       setLocation({ path: result.path, parent: result.parent ?? null });
-      setEntries((result.entries as Entry[]).filter((entry) => entry.is_directory));
+      setEntries(
+        (result.entries as Entry[]).filter((entry) => entry.is_directory),
+      );
     });
   };
 
@@ -39,7 +44,9 @@ export function DirectoryPicker({
     <div className="flex flex-col gap-1.5">
       <div className="flex items-end gap-2">
         <label className="flex min-w-[280px] flex-1 flex-col gap-1">
-          <span className="text-[11.5px] font-medium text-ink-muted">出力先</span>
+          <span className="text-[11.5px] font-medium text-ink-muted">
+            出力先
+          </span>
           <Input
             data-testid="output-directory"
             placeholder="/path/to/整理後"

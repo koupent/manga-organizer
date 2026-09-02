@@ -4,15 +4,18 @@
 投入して即座に受付を返し、進捗を別途取得できることを保証する。
 """
 
+import sqlite3
 import sys
 import threading
 import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from manga_api import jobs  # noqa: E402
 from manga_api.jobs import (  # noqa: E402
     JobCancelled,
     JobNotFound,
@@ -38,6 +41,14 @@ class JobStoreTest(unittest.TestCase):
         self.store = JobStore(Path(self._temp.name) / "jobs.db")
         self.addCleanup(self.store.close)
 
+    def stored_log_count(self, job_id: str) -> int:
+        """実際に SQLite へ保存されているログ行数を数える"""
+        connection = sqlite3.connect(self.store.path)
+        self.addCleanup(connection.close)
+        return connection.execute(
+            "SELECT COUNT(*) FROM job_logs WHERE job_id = ?", (job_id,)
+        ).fetchone()[0]
+
     def test_submitted_job_starts_queued_and_reaches_succeeded(self):
         # Arrange
         job_id = self.store.submit("organize", {"note": "テスト"})
@@ -53,6 +64,69 @@ class JobStoreTest(unittest.TestCase):
         self.assertEqual(JobState.SUCCEEDED, job.state)
         self.assertEqual("done", job.result)
         self.assertIsNone(job.error)
+
+    def test_keeps_every_reported_message_in_order(self):
+        # Arrange - 進捗は上書きされるため、取りこぼさない履歴が要る
+        job_id = self.store.submit("organize", {})
+
+        def work(report):
+            report(current=1, total=2, message="1 冊目")
+            report(current=2, total=2, message="2 冊目")
+            return "ok"
+
+        # Act
+        self.store.run(job_id, work)
+
+        # Assert
+        self.assertEqual(["1 冊目", "2 冊目"], self.store.log_of(job_id))
+
+    def test_does_not_record_empty_messages(self):
+        # Arrange
+        job_id = self.store.submit("organize", {})
+
+        # Act - 件数だけ更新する報告はログに残さない
+        self.store.run(job_id, lambda report: report(current=1, total=1))
+
+        # Assert
+        self.assertEqual([], self.store.log_of(job_id))
+
+    def test_stored_log_does_not_grow_without_a_limit(self):
+        # Arrange - 実際の上限は大きいので、テスト中だけ小さくする
+        job_id = self.store.submit("organize", {})
+        limit = 5
+        reported = limit * 3
+
+        def work(report):
+            for index in range(reported):
+                report(current=index + 1, total=reported, message=f"{index + 1} 冊目")
+            return "ok"
+
+        # Act
+        with mock.patch.object(jobs, "MAX_LOG_LINES", limit):
+            self.store.run(job_id, work)
+
+        # Assert - 保存行そのものが上限で頭打ちになる
+        stored = self.stored_log_count(job_id)
+        self.assertGreater(stored, 0, "ログが 1 行も残っていない")
+        self.assertLessEqual(stored, limit)
+
+    def test_keeps_the_newest_lines_when_the_log_is_trimmed(self):
+        # Arrange
+        job_id = self.store.submit("organize", {})
+        limit = 3
+        reported = limit * 4
+
+        def work(report):
+            for index in range(reported):
+                report(current=index + 1, total=reported, message=f"{index + 1} 冊目")
+            return "ok"
+
+        # Act
+        with mock.patch.object(jobs, "MAX_LOG_LINES", limit):
+            self.store.run(job_id, work)
+
+        # Assert - 捨てるのは古い行のほう
+        self.assertEqual(["10 冊目", "11 冊目", "12 冊目"], self.store.log_of(job_id))
 
     def test_progress_is_visible_while_running(self):
         # Arrange
