@@ -26,7 +26,7 @@ bash scripts/run_merge_gate.sh
 bash scripts/run_merge_gate.sh --publish-status
 ```
 
-対象は `services/core/` と `manga-organizer/` の `uv lock --check`、`ruff`、`compileall`、`unittest` です。
+対象は `services/core/` と `manga-organizer/` の `uv lock --check`、`ruff`、`compileall`、`unittest`、および `apps/desktop/` の型検査・ビルド・Playwright です。
 
 ## 成果物配信
 
@@ -42,7 +42,8 @@ node <plugin-root>/scripts/local-delivery.mjs dispatch --project-dir .
 
 ## 主な場所
 
-- `services/core/` — GUI 非依存のコアロジック（`manga_core` パッケージ）
+- `services/core/` — GUI 非依存のコアロジック（`manga_core`）とサイドカー API（`manga_api`）
+- `apps/desktop/` — React + TypeScript のフロントエンド（Playwright で検証）
 - `manga-organizer/src/gui/` — 現行 Tkinter アプリ
 - `manga-organizer/pyproject.toml` — uv / ruff（コアをパス依存で参照）
 - `scripts/run_merge_gate.sh` — Local Merge Gate

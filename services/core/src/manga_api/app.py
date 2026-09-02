@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -34,6 +35,14 @@ logger = logging.getLogger(__name__)
 TITLE = "Manga Organizer サイドカー"
 # 外部からは触らせない。Tauri シェルと同一ホスト内でのみ使う
 HOST = "127.0.0.1"
+
+# Tauri の WebView と、開発・検証で使う Vite の dev server
+DEFAULT_ALLOWED_ORIGINS = (
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "tauri://localhost",
+    "http://tauri.localhost",
+)
 
 
 class ReorderRequest(BaseModel):
@@ -176,6 +185,7 @@ def create_app(
     state_dir: Path | None = None,
     token: str | None = None,
     allowed_roots: list[Path] | None = None,
+    allowed_origins: list[str] | None = None,
     run_jobs_inline: bool = False,
 ) -> FastAPI:
     """サイドカーのアプリを組み立てる。
@@ -193,6 +203,15 @@ def create_app(
     app.state.thumbnails = thumbnails.ThumbnailCache()
     app.state.allowed_roots = [Path(r).resolve() for r in (allowed_roots or [])]
     app.state.run_jobs_inline = run_jobs_inline
+
+    # WebView は別オリジンから呼ぶ。ブラウザで開発・検証する場合も同じ。
+    # 待ち受けは 127.0.0.1 のみで、実際の防御はトークンが担う。
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins or DEFAULT_ALLOWED_ORIGINS,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
 
     def require_token(
         request: Request,
