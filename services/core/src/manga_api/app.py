@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from manga_api import thumbnails
 from manga_api.jobs import Job, JobNotFound, JobStore
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
+from manga_core.series_grouper import estimate_series
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,35 @@ class OrganizeRequest(BaseModel):
     title: str = Field(default="", description="作品名")
     author: str = Field(default="", description="著者名")
     keep_originals: bool = Field(default=True, description="元ファイルを残すか")
+
+
+class EstimateRequest(BaseModel):
+    """作品グルーピングの推定依頼"""
+
+    archives: list[str] = Field(description="推定対象アーカイブの絶対パス")
+
+
+class SeriesVolumeView(BaseModel):
+    """まとまりを構成する 1 冊"""
+
+    path: str
+    name: str
+    volume: int | None = None
+
+
+class SeriesGroupView(BaseModel):
+    """同じ作品と推定した巻のまとまり"""
+
+    title: str
+    confidence: float
+    has_duplicate_volumes: bool = Field(serialization_alias="hasDuplicateVolumes")
+    volumes: list[SeriesVolumeView]
+
+
+class EstimateResult(BaseModel):
+    """推定結果。自動推定は外れる前提で、UI で直してから確定する"""
+
+    groups: list[SeriesGroupView]
 
 
 class JobAccepted(BaseModel):
@@ -218,6 +248,34 @@ def create_app(
                 "Cache-Control": "max-age=3600",
                 "X-Content-Type-Options": "nosniff",
             },
+        )
+
+    @app.post(
+        "/api/series/estimate", dependencies=guarded, response_model=EstimateResult
+    )
+    def estimate(request: EstimateRequest) -> EstimateResult:
+        """アーカイブ群を作品ごとにまとめた初期案を返す。
+
+        自動推定は必ず外れるので、確信度を添えて返し、UI で直してもらう。
+        """
+        archives = [resolve_archive(raw) for raw in request.archives]
+        return EstimateResult(
+            groups=[
+                SeriesGroupView(
+                    title=group.title,
+                    confidence=group.confidence,
+                    has_duplicate_volumes=group.has_duplicate_volumes,
+                    volumes=[
+                        SeriesVolumeView(
+                            path=str(volume.path),
+                            name=volume.path.name,
+                            volume=volume.volume,
+                        )
+                        for volume in group.volumes
+                    ],
+                )
+                for group in estimate_series(archives)
+            ]
         )
 
     @app.get("/api/jobs", dependencies=guarded, response_model=JobList)
