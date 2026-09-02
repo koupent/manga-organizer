@@ -287,7 +287,10 @@ def create_app(
         token: Annotated[str, Query(description="使い捨てトークン")] = "",
     ) -> None:
         """全経路で使い捨てトークンを検証する"""
-        if not secrets.compare_digest(token, request.app.state.token):
+        # compare_digest は非 ASCII の str を受け付けない。
+        # バイト列で比べれば、どんなトークンでも安全に判定できる
+        expected = request.app.state.token
+        if not secrets.compare_digest(token.encode(), expected.encode()):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token"
             )

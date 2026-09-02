@@ -510,5 +510,38 @@ class ResolveTest(ApiTestBase):
         )
 
 
+class FixedTokenTest(unittest.TestCase):
+    """開発中はトークンを固定できるようにする。
+
+    再起動のたびに変わると、控えた URL がすぐ使えなくなる。
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.work_dir = Path(self._temp.name)
+
+    def test_uses_the_given_token(self):
+        # Arrange
+        app = create_app(state_dir=self.work_dir / "state", token="固定トークン")
+
+        # Act / Assert
+        self.assertEqual("固定トークン", app.state.token)
+        client = TestClient(app)
+        self.addCleanup(client.close)
+        self.assertEqual(
+            200, client.get("/api/health", params={"token": "固定トークン"}).status_code
+        )
+
+    def test_generates_one_when_not_given(self):
+        # Arrange
+        first = create_app(state_dir=self.work_dir / "a").state.token
+        second = create_app(state_dir=self.work_dir / "b").state.token
+
+        # Assert - 既定では毎回異なる
+        self.assertNotEqual(first, second)
+        self.assertGreater(len(first), 20)
+
+
 if __name__ == "__main__":
     unittest.main()
