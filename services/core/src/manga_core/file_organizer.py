@@ -2,8 +2,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.archive_handler import ArchiveHandler
-from core.volume_detector import VolumeDetector
+from manga_core.archive_handler import ArchiveHandler
+from manga_core.volume_detector import VolumeDetector
 
 logger = logging.getLogger(__name__)
 

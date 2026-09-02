@@ -31,13 +31,14 @@ else:
 
 a = Analysis(
     ['src/main.py'],
-    pathex=['src'],
+    # コアは services/core の editable install。解決を確実にするため明示する
+    pathex=['src', '../services/core/src'],
     binaries=binaries,
     datas=[
         # ページ修正 UI のテンプレート (utils.resources.resource_path が参照)
         ('src/web', 'web'),
     ],
-    hiddenimports=['rarfile'],
+    hiddenimports=['rarfile', 'manga_core'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

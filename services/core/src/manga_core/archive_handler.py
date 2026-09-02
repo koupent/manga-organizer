@@ -11,14 +11,14 @@ from pathlib import Path
 import py7zr
 from PIL import Image
 
-from core.viewer_contract import (
+from manga_core.naming import natural_sort_key
+from manga_core.viewer_contract import (
     is_page_source,
     needs_conversion,
     output_suffix,
     relative_entry_name,
     sequential_name,
 )
-from utils.naming import natural_sort_key
 
 logger = logging.getLogger(__name__)
 

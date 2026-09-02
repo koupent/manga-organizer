@@ -12,7 +12,12 @@ dependencies = [
     "nuitka>=2.7.12",
     "pyinstaller>=6.15.0",
     "rarfile>=4.0",
+    "manga-core",
 ]
+
+[tool.uv.sources]
+# コアは services/core に切り出した。撤去までは現行アプリもここを参照する
+manga-core = { path = "../services/core", editable = true }
 
 [dependency-groups]
 dev = [

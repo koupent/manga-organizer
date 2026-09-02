@@ -9,9 +9,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from core.page_reorder import is_editable_archive
+from manga_core.naming import natural_sort_key
+from manga_core.page_reorder import is_editable_archive
+
 from gui.page_editor_window import open_page_editor
-from utils.naming import natural_sort_key
 
 logger = logging.getLogger(__name__)
 

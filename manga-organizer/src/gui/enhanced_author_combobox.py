@@ -3,7 +3,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from core.api_client import MangaMetadataFetcher
+from manga_core.api_client import MangaMetadataFetcher
 
 logger = logging.getLogger(__name__)
 

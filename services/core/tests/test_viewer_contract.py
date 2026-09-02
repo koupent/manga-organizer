@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from core.viewer_contract import (  # noqa: E402
+from manga_core.viewer_contract import (  # noqa: E402
     UNSUPPORTED_IMAGE_EXTENSIONS,
     VIEWER_IMAGE_EXTENSIONS,
     is_viewer_page,
