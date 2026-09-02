@@ -25,3 +25,21 @@
 ```bash
 uv run python -m unittest discover -s tests
 ```
+
+## サイドカー API
+
+Tauri シェル（[#22](https://github.com/koupent/manga-organizer/issues/22)）が子プロセスとして起動する。
+
+```bash
+uv run python -m manga_api --state-dir ~/.manga-organizer --allow-root /path/to/library
+```
+
+起動して**接続を受け付けられる状態になってから**、待ち受け先を stdout へ 1 行で出す。
+
+```
+MANGA_API_READY {"host": "127.0.0.1", "port": 45619, "token": "..."}
+```
+
+`127.0.0.1` でのみ待ち受け、全経路で使い捨てトークンを必須にする。`--allow-root`
+を与えると、その配下のアーカイブしか読み書きしない。OpenAPI は `/openapi.json`
+で取得でき、フロントエンドの型生成に使う。
