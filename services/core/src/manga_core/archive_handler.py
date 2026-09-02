@@ -12,6 +12,15 @@ import py7zr
 from PIL import Image
 
 from manga_core.naming import natural_sort_key
+from manga_core.safe_extract import (
+    DEFAULT_LIMITS,
+    ExtractionBudget,
+    ExtractionLimitExceeded,
+    ExtractionLimits,
+    UnsafeEntryName,
+    declared_size,
+    safe_destination,
+)
 from manga_core.viewer_contract import (
     is_page_source,
     needs_conversion,
@@ -43,7 +52,14 @@ class ArchiveHandler:
                 return str(bundled_7z)
         return None
 
-    def __init__(self, log_callback=None):
+    def __init__(
+        self,
+        log_callback=None,
+        limits: ExtractionLimits = DEFAULT_LIMITS,
+        budget: ExtractionBudget | None = None,
+    ):
+        # 入れ子は合計で数える。1 段ごとの上限では多段の展開爆弾を止められない
+        self.budget = budget or ExtractionBudget(limits)
         self.temp_dir = None
         self.progress_callback = None
         self.log_callback = log_callback  # For detailed logging to GUI
@@ -180,13 +196,28 @@ class ArchiveHandler:
         """Extract ZIP archive"""
         try:
             with zipfile.ZipFile(archive_path, "r") as zf:
-                members = zf.namelist()
-                total = len(members)
-                for i, member in enumerate(members):
+                infos = zf.infolist()
+                total = len(infos)
+                for i, info in enumerate(infos):
                     if progress_callback:
-                        progress_callback(f"Extracting: {member}", i, total)
-                    zf.extract(member, extract_to)
+                        progress_callback(f"Extracting: {info.filename}", i, total)
+                    if info.is_dir():
+                        continue
+                    # zipfile は名前を正規化するが、拒否したことを記録に残す
+                    try:
+                        safe_destination(info.filename, extract_to)
+                    except UnsafeEntryName:
+                        self._log(
+                            f"    危険なエントリを飛ばしました: {info.filename}",
+                            "warning",
+                        )
+                        continue
+                    self.budget.consume_entry()
+                    self.budget.consume_bytes(info.file_size)
+                    zf.extract(info, extract_to)
                 return True
+        except ExtractionLimitExceeded:
+            raise
         except Exception as e:
             self._log(f"Failed to extract ZIP: {e}", "error")
             return False
@@ -274,6 +305,8 @@ class ArchiveHandler:
                 szf.extractall(extract_to)
                 self._log("    7z extraction complete")
                 return True
+        except ExtractionLimitExceeded:
+            raise
         except Exception as e:
             self._log(f"Failed to extract 7z: {e}", "error")
             return False
@@ -282,6 +315,16 @@ class ArchiveHandler:
         self, archive_path: Path, extract_to: Path, progress_callback=None
     ) -> bool:
         """Extract archive based on its type"""
+        # 書き出しを始める前に、中央ディレクトリの申告で膨張を見抜く
+        declared = declared_size(archive_path)
+        if declared is not None:
+            total_bytes, entry_count = declared
+            if total_bytes > self.budget.remaining_bytes:
+                raise ExtractionLimitExceeded(
+                    f"{archive_path.name} の展開後サイズ {total_bytes} バイトが "
+                    f"残量 {self.budget.remaining_bytes} バイトを超えます"
+                )
+
         try:
             suffix = archive_path.suffix.lower()
 
@@ -295,6 +338,8 @@ class ArchiveHandler:
                 self._log(f"Unsupported archive format: {suffix}", "error")
                 return False
 
+        except ExtractionLimitExceeded:
+            raise
         except Exception as e:
             self._log(f"Failed to extract {archive_path}: {e}", "error")
             return False
@@ -303,7 +348,8 @@ class ArchiveHandler:
         self, dir_path: Path, root_path: Path, image_dirs: list[Path], depth: int = 0
     ):
         """Process a directory to find image directories and nested archives"""
-        if depth > 10:  # Prevent infinite recursion
+        if not self.budget.may_descend(depth):
+            self._log(f"  入れ子の深さが上限に達しました (depth={depth})", "warning")
             return
 
         processed_archives = set()
@@ -416,6 +462,9 @@ class ArchiveHandler:
             )
             return image_dirs, None
 
+        except ExtractionLimitExceeded:
+            # 上限超過は呼び出し側が判断すべき中断であって、失敗として畳まない
+            raise
         except Exception as e:
             self._log(f"Error processing archive: {e}", "error")
             return [], str(e)
