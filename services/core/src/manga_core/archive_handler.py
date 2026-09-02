@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 class ArchiveHandler:
     # Class-level constants
     SUPPORTED_ARCHIVES = {".zip", ".rar", ".7z", ".cbz", ".cbr", ".cb7", ".epub"}
-    IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".avif"}
 
     @staticmethod
     def _get_bundled_7zip_path():
