@@ -12,7 +12,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from core.page_reorder import (  # noqa: E402
+from manga_core.page_reorder import (  # noqa: E402
     PageReorderError,
     ZipPageEditor,
 )

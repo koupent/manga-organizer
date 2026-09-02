@@ -14,7 +14,8 @@ import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from core.page_reorder import PageReorderError, is_editable_archive
+from manga_core.page_reorder import PageReorderError, is_editable_archive
+
 from gui.page_editor_server import STATE_CANCELLED, STATE_EDITING, PageEditorServer
 
 logger = logging.getLogger(__name__)

@@ -18,9 +18,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from manga_core.page_reorder import PageReorderError, ZipPageEditor
 from PIL import Image, ImageOps
 
-from core.page_reorder import PageReorderError, ZipPageEditor
 from utils.resources import resource_path
 
 logger = logging.getLogger(__name__)

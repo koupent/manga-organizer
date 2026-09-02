@@ -116,17 +116,25 @@ if [[ "$publish_status" == true ]]; then
   status_pending=true
 fi
 
-cd "$app_dir"
 command -v uv >/dev/null || {
   echo "uv が必要です" >&2
   exit 1
 }
 
-uv lock --check
-uv run ruff check src tests
-uv run ruff format --check src tests
-uv run python -m compileall -q src
-uv run python -m unittest discover -s tests
+run_python_checks() {
+  local target=$1
+  echo "== $target"
+  ( cd "$repo_root/$target" \
+    && uv lock --check \
+    && uv run ruff check src tests \
+    && uv run ruff format --check src tests \
+    && uv run python -m compileall -q src \
+    && uv run python -m unittest discover -s tests )
+}
+
+# コアは GUI 非依存の独立パッケージ。アプリより先に検査する
+run_python_checks services/core
+run_python_checks "$(basename "$app_dir")"
 
 cd "$repo_root"
 if [[ "$(project_git rev-parse HEAD)" != "$head_sha" ]]; then

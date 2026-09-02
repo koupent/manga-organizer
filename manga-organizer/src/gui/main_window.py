@@ -4,12 +4,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from manga_core.file_organizer import FileOrganizer
+from manga_core.manga_database import MangaDatabase
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 # Import version from the src directory
 from __version__ import __version__ as VERSION
-from core.file_organizer import FileOrganizer
-from core.manga_database import MangaDatabase
 from gui.database_editor import DatabaseEditorWindow
 from gui.page_editor_panel import PageEditorPanel
 from gui.sortable_listbox import SortableListbox

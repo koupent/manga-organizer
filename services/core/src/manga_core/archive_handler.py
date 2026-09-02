@@ -11,14 +11,14 @@ from pathlib import Path
 import py7zr
 from PIL import Image
 
-from core.viewer_contract import (
+from manga_core.naming import natural_sort_key
+from manga_core.viewer_contract import (
     is_page_source,
     needs_conversion,
     output_suffix,
     relative_entry_name,
     sequential_name,
 )
-from utils.naming import natural_sort_key
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 class ArchiveHandler:
     # Class-level constants
     SUPPORTED_ARCHIVES = {".zip", ".rar", ".7z", ".cbz", ".cbr", ".cb7", ".epub"}
-    IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".avif"}
 
     @staticmethod
     def _get_bundled_7zip_path():

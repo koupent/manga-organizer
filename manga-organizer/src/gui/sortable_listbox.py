@@ -3,7 +3,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
-from utils.naming import natural_sort_key
+from manga_core.naming import natural_sort_key
 
 logger = logging.getLogger(__name__)
 

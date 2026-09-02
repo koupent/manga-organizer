@@ -18,13 +18,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-from core.viewer_contract import (
+from PIL import Image
+
+from manga_core.file_times import capture_file_times, restore_file_times
+from manga_core.naming import natural_sort_key
+from manga_core.viewer_contract import (
     is_page_source,
     needs_conversion,
     sequential_name,
 )
-from utils.file_times import capture_file_times, restore_file_times
-from utils.naming import natural_sort_key
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +110,6 @@ def _convert_to_png(data: bytes) -> bytes:
 
     BMP は無圧縮なだけで、PNG は可逆圧縮なので画質は落ちない。
     """
-    from PIL import Image
-
     with Image.open(io.BytesIO(data)) as image:
         loaded = image.convert("RGBA" if "A" in image.getbands() else "RGB")
         buffer = io.BytesIO()
