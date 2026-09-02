@@ -47,25 +47,66 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
   };
 
   /**
+   * ドロップから実パスを取り出す。
+   *
+   * VS Code のエクスプローラーや Linux のファイルマネージャは
+   * text/uri-list に file:// の URI を載せてくる。取れる場合はそれが確実。
+   */
+  const pathsFromTransfer = (transfer: DataTransfer): string[] => {
+    const raw =
+      transfer.getData("text/uri-list") || transfer.getData("text/plain") || "";
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))
+      .map((line) => {
+        if (!line.startsWith("file://")) return line.startsWith("/") ? line : "";
+        try {
+          return decodeURIComponent(new URL(line).pathname);
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean);
+  };
+
+  /**
    * ドロップを受ける。
    *
-   * ブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の
-   * 中から同じものを探して結びつける。Tauri のネイティブなドロップは実パスが
-   * 直接届くので、そちらは App が処理してこの一覧へ入れる。
+   * まず実パスが載っていればそれを使う。載っていない場合（多くのブラウザ）は
+   * 名前とサイズを手がかりに、許可された場所の中から探して結びつける。
+   * Tauri のネイティブなドロップは実パスが直接届くので、App が処理する。
    */
-  const handleDrop = async (files: FileList) => {
-    const dropped = Array.from(files).map((file) => ({
+  const handleDrop = async (transfer: DataTransfer) => {
+    const direct = pathsFromTransfer(transfer);
+    if (direct.length > 0) {
+      add(direct);
+      setError("");
+      return;
+    }
+
+    const dropped = Array.from(transfer.files).map((file) => ({
       name: file.name,
       size: file.size,
     }));
-    if (dropped.length === 0) return;
+    if (dropped.length === 0) {
+      setError(
+        "ドロップされた内容からファイルを取り出せませんでした。" +
+          "「ファイルを選ぶ」から辿ってください",
+      );
+      return;
+    }
     setError("");
     try {
       const result = await client.resolveDropped(dropped);
       if (result.resolved.length > 0) add(result.resolved);
       const problems: string[] = [];
       if (result.unresolved.length > 0) {
-        problems.push(`見つかりません: ${result.unresolved.join(", ")}`);
+        const roots = (result.searched_roots ?? []).join(" / ") || "(制限なし)";
+        problems.push(
+          `見つかりません: ${result.unresolved.join(", ")}` +
+            `（探した場所: ${roots}。この中に無いファイルは扱えません）`,
+        );
       }
       if (result.ambiguous.length > 0) {
         problems.push(
@@ -129,7 +170,7 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
-          void handleDrop(event.dataTransfer.files);
+          void handleDrop(event.dataTransfer);
         }}
       >
         {selected.length === 0 ? (

@@ -112,6 +112,37 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     await expect(page.getByTestId("selected-count")).toHaveText("0 件");
   });
 
+  test("file:// の URI が載っていればそのまま使う", async ({ page }) => {
+    // Arrange - VS Code やファイルマネージャは text/uri-list に実パスを載せる
+    const archive = writeArchive(sidecar.workDir, "URI 経由.zip", [
+      { name: "001.jpg", color: "#00ffff" },
+    ]);
+    await openOrganize(page);
+
+    // Act
+    await page.dispatchEvent('[data-testid="dropzone"]', "drop", {
+      dataTransfer: await page.evaluateHandle((uri) => {
+        const transfer = new DataTransfer();
+        transfer.setData("text/uri-list", uri);
+        return transfer;
+      }, `file://${encodeURI(archive)}`),
+    });
+
+    // Assert - 名前で探さずに直接使える
+    await expect(page.getByTestId("selected-count")).toHaveText("1 件");
+    await expect(page.getByTestId("selected-item")).toHaveAttribute(
+      "data-path",
+      archive,
+    );
+  });
+
+  test("見つからないときは探した場所を示す", async ({ page }) => {
+    await openOrganize(page);
+    await dropFiles(page, [{ name: "存在しない.zip", size: 7 }]);
+    await expect(page.getByTestId("picker-error")).toContainText("探した場所");
+    await expect(page.getByTestId("picker-error")).toContainText(sidecar.workDir);
+  });
+
   test("一覧から 1 件だけ外せる", async ({ page }) => {
     // Arrange
     const names = ["外す A.zip", "外す B.zip"];

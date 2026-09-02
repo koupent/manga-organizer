@@ -102,6 +102,7 @@ class ResolveResult(BaseModel):
     resolved: list[str]
     unresolved: list[str]
     ambiguous: list[str]
+    searched_roots: list[str] = []
 
 
 class LibraryEntry(BaseModel):
@@ -420,7 +421,10 @@ def create_app(
             else:
                 ambiguous.append(file.name)
         return ResolveResult(
-            resolved=resolved, unresolved=unresolved, ambiguous=ambiguous
+            resolved=resolved,
+            unresolved=unresolved,
+            ambiguous=ambiguous,
+            searched_roots=[str(root) for root in roots],
         )
 
     @app.get("/api/browse", dependencies=guarded, response_model=BrowseResult)

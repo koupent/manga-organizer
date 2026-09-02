@@ -629,6 +629,11 @@ export interface components {
             unresolved: string[];
             /** Ambiguous */
             ambiguous: string[];
+            /**
+             * Searched Roots
+             * @default []
+             */
+            searched_roots: string[];
         };
         /**
          * SeriesGroupView
