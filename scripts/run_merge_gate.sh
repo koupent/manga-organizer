@@ -149,8 +149,21 @@ run_frontend_checks() {
 run_python_checks services/core
 run_python_checks "$(basename "$app_dir")"
 
+run_shell_checks() {
+  echo "== Tauri シェル"
+  if ! command -v cargo >/dev/null; then
+    echo "  cargo が無いため Rust の検査を飛ばします" >&2
+    return 0
+  fi
+  ( cd "$repo_root/apps/desktop/src-tauri" \
+    && cargo fmt --check \
+    && cargo clippy --all-targets -- -D warnings \
+    && cargo test )
+}
+
 # フロントは Tauri の WebView が読み込むものと同じ。ブラウザで駆動して検証する
 run_frontend_checks
+run_shell_checks
 
 cd "$repo_root"
 if [[ "$(project_git rev-parse HEAD)" != "$head_sha" ]]; then

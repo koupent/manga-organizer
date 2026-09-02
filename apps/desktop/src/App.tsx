@@ -3,7 +3,7 @@ import { SidecarClient } from "./api/client";
 import { PageGrid } from "./components/PageGrid";
 import { CoverEditor } from "./components/CoverEditor";
 import { SeriesReview, type SeriesGroup } from "./components/SeriesReview";
-import { resolveConnection } from "./connection";
+import { onFilesDropped, resolveConnection } from "./connection";
 
 type Page = { name: string; size: number; modified: string };
 type Mode = "organize" | "pages" | "cover";
@@ -24,13 +24,21 @@ export function App() {
   const [groups, setGroups] = useState<SeriesGroup[]>([]);
 
   useEffect(() => {
-    const connection = resolveConnection();
-    if (!connection) {
-      setError("サイドカーへの接続情報がありません");
-      return;
-    }
-    const created = new SidecarClient(connection);
-    setClient(created);
+    let cancelled = false;
+    resolveConnection()
+      .then((connection) => {
+        if (cancelled) return;
+        if (!connection) {
+          setError("サイドカーへの接続情報がありません");
+          return;
+        }
+        setClient(new SidecarClient(connection));
+        new SidecarClient(connection)
+          .health()
+          .then((payload) => setHealth(payload.status))
+          .catch((reason) => setError(String(reason.message ?? reason)));
+      })
+      .catch((reason) => setError(String(reason.message ?? reason)));
 
     const params = new URLSearchParams(window.location.search);
     setArchive(params.get("archive") ?? "");
@@ -38,10 +46,18 @@ export function App() {
     const requested = params.get("mode");
     if (requested === "organize" || requested === "cover") setMode(requested);
 
-    created
-      .health()
-      .then((payload) => setHealth(payload.status))
-      .catch((reason) => setError(String(reason.message ?? reason)));
+    // ネイティブ側で受けたドロップを整理モードの入力に流し込む
+    const pending = onFilesDropped((paths) => {
+      setMode("organize");
+      setSources((current) =>
+        [...new Set([...current.split("\n"), ...paths].filter(Boolean))].join("\n"),
+      );
+    });
+
+    return () => {
+      cancelled = true;
+      pending.then((unlisten) => unlisten());
+    };
   }, []);
 
   useEffect(() => {
