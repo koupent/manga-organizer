@@ -6,6 +6,7 @@
 自身のタイムスタンプを保ったまま連番を振り直す。
 """
 
+import io
 import logging
 import os
 import struct
@@ -17,14 +18,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
+from core.viewer_contract import (
+    is_page_source,
+    needs_conversion,
+    sequential_name,
+)
 from utils.file_times import capture_file_times, restore_file_times
 from utils.naming import natural_sort_key
 
 logger = logging.getLogger(__name__)
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".avif"}
 EDITABLE_SUFFIXES = {".zip", ".cbz"}
-MIN_NAME_DIGITS = 3
 # 画像は既に圧縮済みなので、高い圧縮レベルは時間を使うだけで容量は減らない
 DEFLATE_LEVEL = 1
 TEMP_PREFIX = ".reorder-"
@@ -58,8 +62,13 @@ class ReorderResult:
 
 
 def is_image_name(name: str) -> bool:
-    """アーカイブ内のエントリ名が画像かどうかを判定する"""
-    return Path(name).suffix.lower() in IMAGE_EXTENSIONS
+    """ページとして扱うエントリかどうかを判定する。
+
+    suzume-viewer が読み飛ばすもの（`__MACOSX/`、ドット始まり、ディレクトリ）は
+    ページに含めない。含めてしまうと連番に組み込まれ、リネーム後は viewer 側で
+    壊れたページとして表示されてしまう。
+    """
+    return is_page_source(name)
 
 
 def is_editable_archive(path: Path) -> bool:
@@ -94,14 +103,35 @@ def _portable_extra(extra: bytes) -> bytes:
     return bytes(kept)
 
 
+def _convert_to_png(data: bytes) -> bytes:
+    """viewer が読めない画像を PNG へ変換する。
+
+    BMP は無圧縮なだけで、PNG は可逆圧縮なので画質は落ちない。
+    """
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as image:
+        loaded = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+        buffer = io.BytesIO()
+        loaded.save(buffer, "PNG", optimize=True)
+    return buffer.getvalue()
+
+
 def _copy_entry(
     source: zipfile.ZipFile,
     destination: zipfile.ZipFile,
     info: zipfile.ZipInfo,
     arcname: str,
+    convert: bool = False,
 ) -> None:
-    """エントリを新しい名前でコピーする(中身のバイト列は変えない)"""
+    """エントリを新しい名前でコピーする。
+
+    viewer が読めない形式のときだけ変換し、それ以外はバイト列を変えない。
+    """
     data = source.read(info)
+    converted = convert and needs_conversion(info.filename)
+    if converted:
+        data = _convert_to_png(data)
     copied = zipfile.ZipInfo(arcname, date_time=info.date_time)
     copied.compress_type = info.compress_type
     copied.external_attr = info.external_attr
@@ -109,7 +139,10 @@ def _copy_entry(
     copied.create_system = info.create_system
     copied.comment = info.comment
     copied.extra = _portable_extra(info.extra)
-    level = DEFLATE_LEVEL if info.compress_type == zipfile.ZIP_DEFLATED else None
+    if converted:
+        # 元の圧縮方式は変換後のバイト列に対しては意味を持たない
+        copied.compress_type = zipfile.ZIP_DEFLATED
+    level = DEFLATE_LEVEL if copied.compress_type == zipfile.ZIP_DEFLATED else None
     destination.writestr(copied, data, compresslevel=level)
 
 
@@ -238,6 +271,18 @@ class ZipPageEditor:
         if len(written_names) != len(set(written_names)):
             raise PageReorderError("書き出した ZIP に同名エントリが含まれています")
 
+        # 名前が揃っていても中身が壊れていることはある。元を捨てる前に
+        # 全メンバーを読み、CRC まで突き合わせる
+        try:
+            with zipfile.ZipFile(temp_path, "r") as written:
+                damaged = written.testzip()
+        except (OSError, zipfile.BadZipFile) as error:
+            raise PageReorderError(
+                f"書き出した ZIP を検証できませんでした: {error}"
+            ) from error
+        if damaged is not None:
+            raise PageReorderError(f"書き出した ZIP の内容が壊れています: {damaged}")
+
         # OS のキャッシュ上だけで完了したことにしない
         with open(temp_path, "rb") as stream:
             os.fsync(stream.fileno())
@@ -299,9 +344,9 @@ class ZipPageEditor:
 
     def _build_renames(self, ordered: tuple[str, ...]) -> dict[str, str]:
         """旧エントリ名から新しい連番名への対応表を作る"""
-        digits = max(MIN_NAME_DIGITS, len(str(len(ordered))))
+        total = len(ordered)
         renames = {
-            name: f"{position:0{digits}d}{Path(name).suffix.lower()}"
+            name: sequential_name(position, total, Path(name).suffix)
             for position, name in enumerate(ordered, 1)
         }
         self._reject_name_collisions(renames)
@@ -345,6 +390,12 @@ class ZipPageEditor:
 
             total = len(ordered)
             for position, name in enumerate(ordered, 1):
-                _copy_entry(source, destination, source.getinfo(name), renames[name])
+                _copy_entry(
+                    source,
+                    destination,
+                    source.getinfo(name),
+                    renames[name],
+                    convert=True,
+                )
                 if progress is not None:
                     progress(position, total)

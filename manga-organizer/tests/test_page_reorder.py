@@ -1,11 +1,14 @@
 """ZIP のページ並び替えが中身とメタ情報を壊さないことを検証する"""
 
+import io
 import os
 import sys
 import unittest
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -281,6 +284,34 @@ class ArchiveIntegrityTest(unittest.TestCase):
         images = [n for n in names if n.endswith(".jpg")]
         self.assertEqual(["001.jpg", "002.jpg"], images)
 
+    def test_detects_corrupted_member_data_before_replacing(self):
+        # Arrange - 書き出した ZIP の中身が壊れていたら、元を捨てる前に気づく
+        with zipfile.ZipFile(self.archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name in ("a.jpg", "b.jpg"):
+                info = zipfile.ZipInfo(name, date_time=PAGE_DATE_TIME)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, bytes(range(256)) * 40)
+        editor = ZipPageEditor(self.archive_path)
+        before = self.archive_path.read_bytes()
+        original_verify = editor._verify_written
+
+        def corrupt_then_verify(temp_path, ordered, renames):
+            with zipfile.ZipFile(temp_path) as written:
+                first = written.infolist()[0]
+            data = bytearray(temp_path.read_bytes())
+            # ローカルヘッダ(30 バイト + 名前 + extra)の直後が圧縮データ
+            offset = first.header_offset + 30 + len(first.filename) + 64
+            data[offset] ^= 0xFF
+            temp_path.write_bytes(bytes(data))
+            return original_verify(temp_path, ordered, renames)
+
+        editor._verify_written = corrupt_then_verify
+
+        # Act / Assert - 壊れた ZIP で元を置き換えない
+        with self.assertRaises(PageReorderError):
+            editor.apply_order(["b.jpg", "a.jpg"])
+        self.assertEqual(before, self.archive_path.read_bytes())
+
     def test_does_not_leave_temporary_files_behind(self):
         # Arrange
         build_archive(self.archive_path, ["a.jpg", "b.jpg"])
@@ -305,6 +336,82 @@ class ArchiveIntegrityTest(unittest.TestCase):
 
         # Assert
         self.assertEqual(b"important", squatter.read_bytes())
+
+
+class ViewerContractTest(unittest.TestCase):
+    """出力が suzume-viewer の解釈と一致することを検証する"""
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.work_dir = Path(self._temp.name)
+        self.archive_path = self.work_dir / "volume.zip"
+
+    def test_excludes_macos_metadata_from_pages(self):
+        # Arrange - AppleDouble は拡張子が .jpg でも画像ではない
+        build_archive(self.archive_path, ["001.jpg", "002.jpg"])
+        with zipfile.ZipFile(self.archive_path, "a") as archive:
+            archive.writestr("__MACOSX/._001.jpg", b"\x00\x05\x16\x07")
+            archive.writestr(".DS_Store", b"junk")
+        editor = ZipPageEditor(self.archive_path)
+
+        # Act / Assert
+        self.assertEqual(["001.jpg", "002.jpg"], [p.name for p in editor.pages])
+
+    def test_keeps_excluded_entries_without_renaming_them(self):
+        # Arrange
+        build_archive(self.archive_path, ["b.jpg", "a.jpg"])
+        with zipfile.ZipFile(self.archive_path, "a") as archive:
+            archive.writestr("__MACOSX/._a.jpg", b"\x00\x05\x16\x07")
+        editor = ZipPageEditor(self.archive_path)
+
+        # Act
+        editor.apply_order(["b.jpg", "a.jpg"])
+
+        # Assert - 連番に組み込まれず、そのまま残る
+        with zipfile.ZipFile(self.archive_path) as archive:
+            names = archive.namelist()
+        self.assertIn("__MACOSX/._a.jpg", names)
+        pages = sorted(n for n in names if "/" not in n)
+        self.assertEqual(["001.jpg", "002.jpg"], pages)
+
+    def test_output_order_matches_lexicographic_sort(self):
+        # Arrange - viewer は辞書順で並べる
+        names = [f"p{i}.jpg" for i in range(1, 1002)]
+        build_archive(self.archive_path, names)
+        editor = ZipPageEditor(self.archive_path)
+        ordered = [f"p{i}.jpg" for i in range(1, 1002)]
+
+        # Act
+        editor.apply_order(ordered)
+
+        # Assert
+        with zipfile.ZipFile(self.archive_path) as archive:
+            written = archive.namelist()
+        self.assertEqual(written, sorted(written))
+        self.assertEqual("0001.jpg", written[0])
+        self.assertEqual("1001.jpg", written[-1])
+
+    def test_converts_bmp_pages_to_png(self):
+        # Arrange
+        with zipfile.ZipFile(self.archive_path, "w") as archive:
+            for name in ("b.bmp", "a.jpg"):
+                buffer = io.BytesIO()
+                fmt = "BMP" if name.endswith(".bmp") else "JPEG"
+                Image.new("RGB", (40, 60), "navy").save(buffer, fmt)
+                archive.writestr(name, buffer.getvalue())
+        editor = ZipPageEditor(self.archive_path)
+
+        # Act
+        editor.apply_order(["a.jpg", "b.bmp"])
+
+        # Assert - viewer の対応形式だけになる
+        with zipfile.ZipFile(self.archive_path) as archive:
+            names = archive.namelist()
+            self.assertEqual(["001.jpg", "002.png"], names)
+            with Image.open(io.BytesIO(archive.read("002.png"))) as converted:
+                self.assertEqual("PNG", converted.format)
+                self.assertEqual((40, 60), converted.size)
 
 
 if __name__ == "__main__":
