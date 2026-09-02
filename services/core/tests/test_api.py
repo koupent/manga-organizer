@@ -238,5 +238,64 @@ class SeriesEstimateTest(ApiTestBase):
         self.assertEqual(400, response.status_code)
 
 
+class CoverEditTest(ApiTestBase):
+    def setUp(self):
+        super().setUp()
+        self.spread = self.work_dir / "spread.zip"
+        canvas = Image.new("RGB", (1600, 1200), "red")
+        canvas.paste(Image.new("RGB", (800, 1200), "blue"), (800, 0))
+        buffer = io.BytesIO()
+        canvas.save(buffer, "JPEG", quality=95)
+        with zipfile.ZipFile(self.spread, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("001.jpg", buffer.getvalue())
+            archive.writestr("002.jpg", make_page())
+
+    def test_reports_that_the_cover_is_a_spread(self):
+        # Act
+        response = self.client.get(
+            "/api/cover", params=self.auth({"archive": str(self.spread)})
+        )
+
+        # Assert
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertEqual("001.jpg", payload["name"])
+        self.assertTrue(payload["is_spread"])
+        self.assertEqual(1600, payload["width"])
+
+    def test_splits_the_cover_through_a_job(self):
+        # Act
+        submitted = self.client.post(
+            "/api/jobs/cover",
+            params=self.auth(),
+            json={"archive": str(self.spread), "name": "001.jpg", "split": "right"},
+        )
+
+        # Assert
+        self.assertEqual(202, submitted.status_code)
+        job = self.client.get(
+            f"/api/jobs/{submitted.json()['id']}", params=self.auth()
+        ).json()
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        with zipfile.ZipFile(self.spread) as archive:
+            with Image.open(io.BytesIO(archive.read("001.jpg"))) as cover:
+                self.assertEqual((800, 1200), cover.size)
+
+    def test_reports_a_rejected_transform(self):
+        # Act - 90 度単位でない回転
+        submitted = self.client.post(
+            "/api/jobs/cover",
+            params=self.auth(),
+            json={"archive": str(self.spread), "name": "001.jpg", "rotate": 45},
+        )
+        job = self.client.get(
+            f"/api/jobs/{submitted.json()['id']}", params=self.auth()
+        ).json()
+
+        # Assert
+        self.assertEqual("failed", job["state"])
+        self.assertIn("90", job["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
