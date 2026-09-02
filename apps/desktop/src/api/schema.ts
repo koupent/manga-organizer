@@ -64,6 +64,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Entries
+         * @description タイトルと著者の辞書。query を与えると絞り込む
+         */
+        get: operations["list_entries_api_library_entries_get"];
+        put?: never;
+        /**
+         * Save Entry
+         * @description 辞書に記録する。同じタイトルがあれば上書きする
+         */
+        post: operations["save_entry_api_library_entries_post"];
+        /**
+         * Delete Entry
+         * @description 辞書から取り除く
+         */
+        delete: operations["delete_entry_api_library_entries_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/library/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Suggest
+         * @description 外部サービスから著者名を補完する。
+         *
+         *     ネットワークに出るため失敗しうる。見つからない場合と区別せず、
+         *     空の結果として返して画面を止めない。
+         */
+        post: operations["suggest_api_library_suggest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/image": {
         parameters: {
             query?: never;
@@ -383,6 +434,24 @@ export interface components {
             updated_at: string;
         };
         /**
+         * LibraryEntries
+         * @description 辞書の中身
+         */
+        LibraryEntries: {
+            /** Entries */
+            entries: components["schemas"]["LibraryEntry"][];
+        };
+        /**
+         * LibraryEntry
+         * @description タイトルと著者の対応
+         */
+        LibraryEntry: {
+            /** Title */
+            title: string;
+            /** Author */
+            author: string;
+        };
+        /**
          * OrganizeRequest
          * @description アーカイブ整理の依頼
          */
@@ -481,6 +550,27 @@ export interface components {
             name: string;
             /** Volume */
             volume?: number | null;
+        };
+        /**
+         * SuggestRequest
+         * @description 外部サービスへの問い合わせ依頼
+         */
+        SuggestRequest: {
+            /**
+             * Title
+             * @description 調べたい作品名
+             */
+            title: string;
+        };
+        /**
+         * Suggestion
+         * @description 補完の結果。見つからなければ null
+         */
+        Suggestion: {
+            /** Title */
+            title?: string | null;
+            /** Author */
+            author?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -590,6 +680,146 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_entries_api_library_entries_get: {
+        parameters: {
+            query?: {
+                query?: string;
+                /** @description 使い捨てトークン */
+                token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryEntries"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_entry_api_library_entries_post: {
+        parameters: {
+            query?: {
+                /** @description 使い捨てトークン */
+                token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryEntry"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_entry_api_library_entries_delete: {
+        parameters: {
+            query: {
+                title: string;
+                /** @description 使い捨てトークン */
+                token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_api_library_suggest_post: {
+        parameters: {
+            query?: {
+                /** @description 使い捨てトークン */
+                token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Suggestion"];
+                };
             };
             /** @description Validation Error */
             422: {

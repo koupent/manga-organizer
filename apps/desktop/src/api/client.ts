@@ -29,6 +29,10 @@ type OrganizeRequest =
   paths["/api/jobs/organize"]["post"]["requestBody"]["content"]["application/json"];
 type CoverRequest =
   paths["/api/jobs/cover"]["post"]["requestBody"]["content"]["application/json"];
+type LibraryEntries =
+  paths["/api/library/entries"]["get"]["responses"][200]["content"]["application/json"];
+type Suggestion =
+  paths["/api/library/suggest"]["post"]["responses"][200]["content"]["application/json"];
 type JobAccepted =
   paths["/api/jobs/reorder"]["post"]["responses"][202]["content"]["application/json"];
 
@@ -89,6 +93,18 @@ export class SidecarClient {
 
   reorder(archive: string, order: string[]): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/reorder", { archive, order });
+  }
+
+  knownEntries(query = ""): Promise<LibraryEntries> {
+    return this.request<LibraryEntries>("/api/library/entries", { query });
+  }
+
+  saveEntry(title: string, author: string): Promise<unknown> {
+    return this.post<unknown>("/api/library/entries", { title, author });
+  }
+
+  suggestAuthor(title: string): Promise<Suggestion> {
+    return this.post<Suggestion>("/api/library/suggest", { title });
   }
 
   editCover(request: CoverRequest): Promise<JobAccepted> {

@@ -318,5 +318,60 @@ class CoverEditTest(ApiTestBase):
         self.assertIn("90", job["error"])
 
 
+class LibraryTest(ApiTestBase):
+    """タイトル・著者の辞書。現行 Tkinter アプリの DB 編集画面の置き換え"""
+
+    def test_starts_empty_and_records_a_pair(self):
+        # Act
+        created = self.client.post(
+            "/api/library/entries",
+            params=self.auth(),
+            json={"title": "ワンピース", "author": "尾田栄一郎"},
+        )
+
+        # Assert
+        self.assertEqual(200, created.status_code)
+        listed = self.client.get("/api/library/entries", params=self.auth()).json()
+        self.assertEqual(1, len(listed["entries"]))
+        self.assertEqual("尾田栄一郎", listed["entries"][0]["author"])
+
+    def test_looks_up_a_known_author_by_title(self):
+        # Arrange
+        self.client.post(
+            "/api/library/entries",
+            params=self.auth(),
+            json={"title": "ワンピース", "author": "尾田栄一郎"},
+        )
+
+        # Act
+        found = self.client.get(
+            "/api/library/entries", params=self.auth({"query": "ワン"})
+        ).json()
+
+        # Assert
+        self.assertEqual("ワンピース", found["entries"][0]["title"])
+
+    def test_removes_an_entry(self):
+        # Arrange
+        self.client.post(
+            "/api/library/entries",
+            params=self.auth(),
+            json={"title": "消す作品", "author": "著者"},
+        )
+
+        # Act
+        removed = self.client.request(
+            "DELETE", "/api/library/entries", params=self.auth({"title": "消す作品"})
+        )
+
+        # Assert
+        self.assertEqual(200, removed.status_code)
+        listed = self.client.get("/api/library/entries", params=self.auth()).json()
+        self.assertEqual([], listed["entries"])
+
+    def test_requires_a_token(self):
+        self.assertEqual(401, self.client.get("/api/library/entries").status_code)
+
+
 if __name__ == "__main__":
     unittest.main()

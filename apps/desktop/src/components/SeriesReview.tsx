@@ -4,6 +4,7 @@ import type { SidecarClient } from "../api/client";
 export type SeriesVolume = { path: string; name: string; volume: number | null };
 export type SeriesGroup = {
   title: string;
+  author?: string;
   confidence: number;
   hasDuplicateVolumes: boolean;
   volumes: SeriesVolume[];
@@ -38,8 +39,27 @@ export function SeriesReview({
   const [status, setStatus] = useState("");
   const [running, setRunning] = useState(false);
 
-  const renameGroup = (index: number, title: string) => {
-    onGroupsChange(groups.map((group, at) => (at === index ? { ...group, title } : group)));
+  const updateGroup = (index: number, patch: Partial<SeriesGroup>) => {
+    onGroupsChange(
+      groups.map((group, at) => (at === index ? { ...group, ...patch } : group)),
+    );
+  };
+
+  /** 外部サービスから著者名を補う。見つからなければ何もしない */
+  const suggestAuthor = async (index: number) => {
+    const group = groups[index];
+    setStatus(`${group.title} の著者を調べています...`);
+    try {
+      const found = await client.suggestAuthor(group.title);
+      if (found.author) {
+        updateGroup(index, { author: found.author });
+        setStatus(`著者を補完しました: ${found.author}`);
+      } else {
+        setStatus("著者が見つかりませんでした");
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
   };
 
   /** 1 冊を別のグループへ移す。移動先が無ければ新しく作る */
@@ -80,7 +100,7 @@ export function SeriesReview({
           archives: group.volumes.map((volume) => volume.path),
           output_directory: outputDirectory,
           title: group.title,
-          author: "",
+          author: group.author ?? "",
           keep_originals: true,
         });
         const job = await client.waitForJob(accepted.id);
@@ -89,6 +109,10 @@ export function SeriesReview({
         }
         const result = job.result as { produced?: string[] } | null;
         produced.push(...(result?.produced ?? []));
+        // 次回の推定で使えるよう、確定した組み合わせを辞書へ残す
+        if (group.author) {
+          await client.saveEntry(group.title, group.author).catch(() => undefined);
+        }
       }
       setStatus(`${produced.length} 冊を整理しました`);
     } catch (error) {
@@ -126,8 +150,22 @@ export function SeriesReview({
                 type="text"
                 value={group.title}
                 data-testid="group-title"
-                onChange={(event) => renameGroup(index, event.target.value)}
+                onChange={(event) => updateGroup(index, { title: event.target.value })}
               />
+              <input
+                type="text"
+                placeholder="著者"
+                value={group.author ?? ""}
+                data-testid="group-author"
+                onChange={(event) => updateGroup(index, { author: event.target.value })}
+              />
+              <button
+                type="button"
+                data-testid="suggest-author"
+                onClick={() => suggestAuthor(index)}
+              >
+                著者を調べる
+              </button>
               <span
                 className={`confidence c-${confidenceLabel(group.confidence)}`}
                 data-testid="confidence"
