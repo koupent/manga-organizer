@@ -35,6 +35,8 @@ type Suggestion =
   paths["/api/library/suggest"]["post"]["responses"][200]["content"]["application/json"];
 type BrowseResult =
   paths["/api/browse"]["get"]["responses"][200]["content"]["application/json"];
+type ResolveResult =
+  paths["/api/resolve"]["post"]["responses"][200]["content"]["application/json"];
 type JobAccepted =
   paths["/api/jobs/reorder"]["post"]["responses"][202]["content"]["application/json"];
 
@@ -95,6 +97,13 @@ export class SidecarClient {
 
   reorder(archive: string, order: string[]): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/reorder", { archive, order });
+  }
+
+  /** ドロップされたファイルを実パスに結びつける */
+  resolveDropped(
+    files: { name: string; size: number }[],
+  ): Promise<ResolveResult> {
+    return this.post<ResolveResult>("/api/resolve", { files });
   }
 
   browse(path = ""): Promise<BrowseResult> {

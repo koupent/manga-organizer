@@ -164,6 +164,59 @@
         }
       }
     },
+    "/api/resolve": {
+      "post": {
+        "summary": "Resolve",
+        "description": "ドロップされたファイルを実パスに結びつける。\n\nブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の\n中から同じものを探せば、ドロップからでも対象を特定できる。同名が複数\nあってサイズでも絞れない場合は、勝手に選ばず返す。",
+        "operationId": "resolve_api_resolve_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/browse": {
       "get": {
         "summary": "Browse",
@@ -1054,6 +1107,25 @@
         "title": "CoverView",
         "description": "表紙の状態"
       },
+      "DroppedFile": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "DroppedFile",
+        "description": "ドロップされたファイルの手がかり"
+      },
       "EstimateRequest": {
         "properties": {
           "archives": {
@@ -1376,6 +1448,56 @@
         ],
         "title": "ReorderRequest",
         "description": "ページ並べ替えの依頼"
+      },
+      "ResolveRequest": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/DroppedFile"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "ResolveRequest",
+        "description": "ドロップされたものを実パスに結びつける依頼"
+      },
+      "ResolveResult": {
+        "properties": {
+          "resolved": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Resolved"
+          },
+          "unresolved": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unresolved"
+          },
+          "ambiguous": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ambiguous"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resolved",
+          "unresolved",
+          "ambiguous"
+        ],
+        "title": "ResolveResult",
+        "description": "見つかったもの、見つからなかったもの、絞りきれなかったもの"
       },
       "SeriesGroupView": {
         "properties": {

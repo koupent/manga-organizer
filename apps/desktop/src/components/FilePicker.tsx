@@ -46,6 +46,38 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
     onChange([...new Set([...selected, ...paths])]);
   };
 
+  /**
+   * ドロップを受ける。
+   *
+   * ブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の
+   * 中から同じものを探して結びつける。Tauri のネイティブなドロップは実パスが
+   * 直接届くので、そちらは App が処理してこの一覧へ入れる。
+   */
+  const handleDrop = async (files: FileList) => {
+    const dropped = Array.from(files).map((file) => ({
+      name: file.name,
+      size: file.size,
+    }));
+    if (dropped.length === 0) return;
+    setError("");
+    try {
+      const result = await client.resolveDropped(dropped);
+      if (result.resolved.length > 0) add(result.resolved);
+      const problems: string[] = [];
+      if (result.unresolved.length > 0) {
+        problems.push(`見つかりません: ${result.unresolved.join(", ")}`);
+      }
+      if (result.ambiguous.length > 0) {
+        problems.push(
+          `同名が複数あるため特定できません: ${result.ambiguous.join(", ")}`,
+        );
+      }
+      setError(problems.join(" / "));
+    } catch (reason) {
+      setError(String((reason as Error).message ?? reason));
+    }
+  };
+
   const addFolder = (folder: Entry) => {
     client
       .browse(folder.path)
@@ -97,12 +129,7 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
-          // ブラウザでは実パスが取れない。Tauri のネイティブ側から届く
-          // ドロップは App が受けてここへ渡す
-          setError(
-            "ブラウザではドロップされたファイルの場所を取得できません。" +
-              "「ファイルを選ぶ」から辿ってください",
-          );
+          void handleDrop(event.dataTransfer.files);
         }}
       >
         {selected.length === 0 ? (
@@ -133,6 +160,12 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
         )}
       </div>
 
+      {error ? (
+        <p className="banner" data-tone="error" data-testid="picker-error">
+          {error}
+        </p>
+      ) : null}
+
       {browsing ? (
         <div className="panel browser" data-testid="file-browser">
           <div className="browser-bar">
@@ -160,11 +193,6 @@ export function FilePicker({ client, selected, onChange }: FilePickerProps) {
               ここのアーカイブを全部追加
             </button>
           </div>
-          {error ? (
-            <p className="banner" data-tone="error">
-              {error}
-            </p>
-          ) : null}
           <ul className="browser-list">
             {entries.map((entry) => (
               <li key={entry.path} data-testid="browse-entry" data-name={entry.name}>

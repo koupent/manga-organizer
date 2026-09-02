@@ -83,6 +83,27 @@ class BrowseResult(BaseModel):
     entries: list[BrowseEntry]
 
 
+class DroppedFile(BaseModel):
+    """ドロップされたファイルの手がかり"""
+
+    name: str
+    size: int = 0
+
+
+class ResolveRequest(BaseModel):
+    """ドロップされたものを実パスに結びつける依頼"""
+
+    files: list[DroppedFile]
+
+
+class ResolveResult(BaseModel):
+    """見つかったもの、見つからなかったもの、絞りきれなかったもの"""
+
+    resolved: list[str]
+    unresolved: list[str]
+    ambiguous: list[str]
+
+
 class LibraryEntry(BaseModel):
     """タイトルと著者の対応"""
 
@@ -357,6 +378,46 @@ def create_app(
                 "Cache-Control": "max-age=3600",
                 "X-Content-Type-Options": "nosniff",
             },
+        )
+
+    @app.post("/api/resolve", dependencies=guarded, response_model=ResolveResult)
+    def resolve(request: ResolveRequest) -> ResolveResult:
+        """ドロップされたファイルを実パスに結びつける。
+
+        ブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の
+        中から同じものを探せば、ドロップからでも対象を特定できる。同名が複数
+        あってサイズでも絞れない場合は、勝手に選ばず返す。
+        """
+        roots = app.state.allowed_roots or [Path.home()]
+        wanted = {file.name for file in request.files}
+
+        # 走査は 1 回で済ませる。巻数が多いと候補も増える
+        candidates: dict[str, list[Path]] = {name: [] for name in wanted}
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for found in root.rglob("*"):
+                if found.name in candidates and found.is_file():
+                    candidates[found.name].append(found)
+
+        resolved: list[str] = []
+        unresolved: list[str] = []
+        ambiguous: list[str] = []
+        for file in request.files:
+            matches = candidates.get(file.name, [])
+            if not matches:
+                unresolved.append(file.name)
+                continue
+            if len(matches) > 1 and file.size:
+                matches = [
+                    m for m in matches if m.stat().st_size == file.size
+                ] or matches
+            if len(matches) == 1:
+                resolved.append(str(matches[0]))
+            else:
+                ambiguous.append(file.name)
+        return ResolveResult(
+            resolved=resolved, unresolved=unresolved, ambiguous=ambiguous
         )
 
     @app.get("/api/browse", dependencies=guarded, response_model=BrowseResult)

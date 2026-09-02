@@ -64,6 +64,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve
+         * @description ドロップされたファイルを実パスに結びつける。
+         *
+         *     ブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の
+         *     中から同じものを探せば、ドロップからでも対象を特定できる。同名が複数
+         *     あってサイズでも絞れない場合は、勝手に選ばず返す。
+         */
+        post: operations["resolve_api_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/browse": {
         parameters: {
             query?: never;
@@ -406,6 +430,19 @@ export interface components {
             target_aspect_ratio: number;
         };
         /**
+         * DroppedFile
+         * @description ドロップされたファイルの手がかり
+         */
+        DroppedFile: {
+            /** Name */
+            name: string;
+            /**
+             * Size
+             * @default 0
+             */
+            size: number;
+        };
+        /**
          * EstimateRequest
          * @description 作品グルーピングの推定依頼
          */
@@ -574,6 +611,26 @@ export interface components {
             order: string[];
         };
         /**
+         * ResolveRequest
+         * @description ドロップされたものを実パスに結びつける依頼
+         */
+        ResolveRequest: {
+            /** Files */
+            files: components["schemas"]["DroppedFile"][];
+        };
+        /**
+         * ResolveResult
+         * @description 見つかったもの、見つからなかったもの、絞りきれなかったもの
+         */
+        ResolveResult: {
+            /** Resolved */
+            resolved: string[];
+            /** Unresolved */
+            unresolved: string[];
+            /** Ambiguous */
+            ambiguous: string[];
+        };
+        /**
          * SeriesGroupView
          * @description 同じ作品と推定した巻のまとまり
          */
@@ -728,6 +785,42 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_api_resolve_post: {
+        parameters: {
+            query?: {
+                /** @description 使い捨てトークン */
+                token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolveResult"];
+                };
             };
             /** @description Validation Error */
             422: {

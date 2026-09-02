@@ -422,5 +422,93 @@ class BrowseTest(ApiTestBase):
         self.assertEqual(401, self.client.get("/api/browse").status_code)
 
 
+class ResolveTest(ApiTestBase):
+    """ドロップされたファイルを実パスに結びつける。
+
+    ブラウザは実パスを渡さないが、名前とサイズは分かる。許可された場所の
+    中から同じものを探せば、ドロップからでも対象を特定できる。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.shelf = self.work_dir / "shelf"
+        (self.shelf / "深い場所").mkdir(parents=True)
+        self.unique = self.shelf / "唯一.zip"
+        self.unique.write_bytes(b"a" * 100)
+        self.nested = self.shelf / "深い場所" / "奥.zip"
+        self.nested.write_bytes(b"b" * 200)
+
+    def test_resolves_by_name(self):
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "唯一.zip", "size": 100}]},
+        ).json()
+
+        # Assert
+        self.assertEqual([str(self.unique)], found["resolved"])
+        self.assertEqual([], found["unresolved"])
+
+    def test_searches_subdirectories(self):
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "奥.zip", "size": 200}]},
+        ).json()
+
+        # Assert
+        self.assertEqual([str(self.nested)], found["resolved"])
+
+    def test_reports_what_it_could_not_find(self):
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "ない.zip", "size": 1}]},
+        ).json()
+
+        # Assert
+        self.assertEqual([], found["resolved"])
+        self.assertEqual(["ない.zip"], found["unresolved"])
+
+    def test_uses_size_to_disambiguate_same_names(self):
+        # Arrange - 同名が複数ある場合はサイズで絞る
+        other = self.shelf / "深い場所" / "唯一.zip"
+        other.write_bytes(b"c" * 999)
+
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "唯一.zip", "size": 999}]},
+        ).json()
+
+        # Assert
+        self.assertEqual([str(other)], found["resolved"])
+
+    def test_reports_ambiguous_matches_instead_of_guessing(self):
+        # Arrange - 名前もサイズも同じものが 2 つ
+        twin = self.shelf / "深い場所" / "唯一.zip"
+        twin.write_bytes(b"a" * 100)
+
+        # Act
+        found = self.client.post(
+            "/api/resolve",
+            params=self.auth(),
+            json={"files": [{"name": "唯一.zip", "size": 100}]},
+        ).json()
+
+        # Assert - 勝手に選ばず、判断を返す
+        self.assertEqual([], found["resolved"])
+        self.assertEqual(["唯一.zip"], found["ambiguous"])
+
+    def test_requires_a_token(self):
+        self.assertEqual(
+            401, self.client.post("/api/resolve", json={"files": []}).status_code
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
