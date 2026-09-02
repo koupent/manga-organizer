@@ -11,6 +11,7 @@ from __version__ import __version__ as VERSION
 from core.file_organizer import FileOrganizer
 from core.manga_database import MangaDatabase
 from gui.database_editor import DatabaseEditorWindow
+from gui.page_editor_panel import PageEditorPanel
 from gui.sortable_listbox import SortableListbox
 from gui.title_author_combo import TitleAuthorCombo
 
@@ -35,13 +36,23 @@ class MainWindow:
         self.setup_drag_drop()
 
     def setup_ui(self):
-        # Main container
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+
+        # 整理 / ページ修正 は独立した機能なので、タブで切り替えて使う
+        self.mode_notebook = ttk.Notebook(self.root)
+        self.mode_notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        organize_tab = ttk.Frame(self.mode_notebook)
+        organize_tab.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        organize_tab.columnconfigure(0, weight=1)
+        organize_tab.rowconfigure(0, weight=1)
+        self.mode_notebook.add(organize_tab, text="整理")
+
+        # Main container
+        main_frame = ttk.Frame(organize_tab, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(2, weight=1)
 
@@ -157,14 +168,28 @@ class MainWindow:
         log_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
         self.log_text.config(yscrollcommand=log_scrollbar.set)
 
+        # ページ修正モード（対象ファイルの選択も含めて独立している）
+        self.page_editor_panel = PageEditorPanel(
+            self.mode_notebook, log_callback=self.log_message
+        )
+        self.mode_notebook.add(self.page_editor_panel, text="ページ修正")
+
     def setup_drag_drop(self):
         # Register drag and drop on the sortable listbox
         self.sortable_listbox.listbox.drop_target_register(DND_FILES)
         self.sortable_listbox.listbox.dnd_bind("<<Drop>>", self.on_drop)
 
+        # ページ修正モードは自前の一覧を持つので別に登録する
+        self.page_editor_panel.listbox.drop_target_register(DND_FILES)
+        self.page_editor_panel.listbox.dnd_bind("<<Drop>>", self.on_page_editor_drop)
+
     def on_drop(self, event):
         files = self.root.tk.splitlist(event.data)
         self.add_files(files)
+
+    def on_page_editor_drop(self, event):
+        files = self.root.tk.splitlist(event.data)
+        self.page_editor_panel.add_paths(files)
 
     def add_files(self, file_paths):
         first_file_added = len(self.sortable_listbox.get_items()) == 0
