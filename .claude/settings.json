@@ -1,0 +1,25 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/bin/engineering-workflow-statusline.sh\""
+  },
+  "enabledPlugins": {
+    "ecc@ecc": true,
+    "engineering-workflow-plugin@engineering-workflow": true
+  },
+  "extraKnownMarketplaces": {
+    "ecc": {
+      "source": {
+        "source": "directory",
+        "path": "/home/vscode/.claude/engineering-workflow/ecc/5eddf1a3ffd311423be2d4ba7d26f7209c91b033"
+      }
+    },
+    "engineering-workflow": {
+      "source": {
+        "source": "directory",
+        "path": "/home/vscode/.claude/engineering-workflow/workflow-plugin/9c772807b0217142ad4e8c5f975767d3168f32bb"
+      }
+    }
+  },
+  "agent": "engineering-workflow-plugin:workflow-coordinator"
+}

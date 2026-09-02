@@ -51,9 +51,9 @@ output/
 logs/
 *.log
 
-# Test files
-test_*.py
-*_test.py
+# Test files (アプリ直下に置く使い捨てスクリプトのみ。tests/ 配下は追跡する)
+/test_*.py
+/*_test.py
 
 # Temporary files
 *.tmp

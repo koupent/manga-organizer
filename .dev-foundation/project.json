@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/koupent/engineering-dev-foundation/main/schema/project.schema.json",
+  "version": 1,
+  "name": "manga-organizer",
+  "source": ".devcontainer/devcontainer.project.json",
+  "adapters": [
+    {
+      "id": "python",
+      "version": "3.11",
+      "source": "manga-organizer/.python-version"
+    }
+  ]
+}

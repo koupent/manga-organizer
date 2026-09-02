@@ -1,12 +1,6 @@
-import os
-import shutil
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from dataclasses import dataclass
 import logging
-
-import zipfile
-import py7zr
+from dataclasses import dataclass
+from pathlib import Path
 
 from core.archive_handler import ArchiveHandler
 from core.volume_detector import VolumeDetector
@@ -17,10 +11,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ProcessResult:
     original_path: Path
-    output_path: Optional[Path]
+    output_path: Path | None
     success: bool
-    error_message: Optional[str] = None
-    volume_number: Optional[int] = None
+    error_message: str | None = None
+    volume_number: int | None = None
 
 
 class FileOrganizer:
@@ -32,7 +26,7 @@ class FileOrganizer:
         self.log_callback = log_callback
         self.archive_handler = ArchiveHandler(log_callback=log_callback)
         self.volume_detector = VolumeDetector()
-        self.results: List[ProcessResult] = []
+        self.results: list[ProcessResult] = []
         self.author = ""
         self.title = ""
 
@@ -52,7 +46,7 @@ class FileOrganizer:
         self.author = author
         self.title = title
 
-    def collect_archives(self, paths: List[Path]) -> List[Path]:
+    def collect_archives(self, paths: list[Path]) -> list[Path]:
         """Collect all archive files from given paths"""
         archives = []
 
@@ -71,9 +65,9 @@ class FileOrganizer:
 
     def _validate_and_extract_archive(
         self, archive_path: Path
-    ) -> Tuple[List[Path], Optional[str]]:
+    ) -> tuple[list[Path], str | None]:
         """Validate and extract archive, returning image directories and any error"""
-        self._log(f"  Processing archive structure...")
+        self._log("  Processing archive structure...")
         image_dirs, error = self.archive_handler.process_archive(archive_path)
 
         if error or not image_dirs:
@@ -84,14 +78,14 @@ class FileOrganizer:
 
     def _create_manga_directory(self) -> Path:
         """Create output directory for manga series"""
-        self._log(f"  Creating output directory for manga series...")
+        self._log("  Creating output directory for manga series...")
         manga_dir = self.output_directory / f"[{self.author}] {self.title}"
         manga_dir.mkdir(parents=True, exist_ok=True)
         return manga_dir
 
     def _detect_volume_number(
         self, image_dir: Path, archive_path: Path, vol_idx: int, total_dirs: int
-    ) -> Optional[int]:
+    ) -> int | None:
         """Detect volume number using priority-based detection"""
         # Priority 1: Try to get volume from the image directory name first
         volume = self.volume_detector.detect_volume(image_dir)
@@ -114,7 +108,7 @@ class FileOrganizer:
         image_dir: Path,
         archive_path: Path,
         manga_dir: Path,
-        volume: Optional[int],
+        volume: int | None,
     ) -> ProcessResult:
         """Process a single volume and create output archive"""
         # Generate output filename
@@ -145,7 +139,7 @@ class FileOrganizer:
             )
 
     def _handle_original_deletion(
-        self, archive_path: Path, results: List[ProcessResult]
+        self, archive_path: Path, results: list[ProcessResult]
     ):
         """Delete original archive if requested and all volumes were successful"""
         if not self.keep_originals and all(r.success for r in results):
@@ -155,7 +149,7 @@ class FileOrganizer:
             except Exception as e:
                 self._log(f"Failed to delete original: {e}", "error")
 
-    def process_single_archive(self, archive_path: Path) -> List[ProcessResult]:
+    def process_single_archive(self, archive_path: Path) -> list[ProcessResult]:
         """Process a single archive file"""
         self._log(f"Processing: {archive_path}")
         results = []
@@ -226,8 +220,8 @@ class FileOrganizer:
             self.archive_handler.cleanup()
 
     def process_archives(
-        self, archives: List[Path], progress_callback=None
-    ) -> List[ProcessResult]:
+        self, archives: list[Path], progress_callback=None
+    ) -> list[ProcessResult]:
         """Process multiple archive files"""
         self.results = []
 
@@ -241,7 +235,7 @@ class FileOrganizer:
 
         return self.results
 
-    def get_summary(self) -> Dict:
+    def get_summary(self) -> dict:
         """Get processing summary"""
         successful = sum(1 for r in self.results if r.success)
         failed = sum(1 for r in self.results if not r.success)

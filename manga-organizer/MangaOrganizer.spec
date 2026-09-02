@@ -33,7 +33,10 @@ a = Analysis(
     ['src/main.py'],
     pathex=['src'],
     binaries=binaries,
-    datas=[],
+    datas=[
+        # ページ修正 UI のテンプレート (utils.resources.resource_path が参照)
+        ('src/web', 'web'),
+    ],
     hiddenimports=['rarfile'],
     hookspath=[],
     hooksconfig={},

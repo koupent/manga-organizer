@@ -1,0 +1,38 @@
+{
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "version": "2.5.9",
+      "resolved": "ghcr.io/devcontainers/features/common-utils@sha256:cb0c4d3c276f157eed17935747e364178d75fee17f55c4e129966f64633deb3a",
+      "integrity": "sha256:cb0c4d3c276f157eed17935747e364178d75fee17f55c4e129966f64633deb3a"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "version": "1.1.2",
+      "resolved": "ghcr.io/devcontainers/features/github-cli@sha256:7c409bf6316ffd85f04fd92fba85a744282639e603417dd4796409866bdb6805",
+      "integrity": "sha256:7c409bf6316ffd85f04fd92fba85a744282639e603417dd4796409866bdb6805"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "1.8.0",
+      "resolved": "ghcr.io/devcontainers/features/python@sha256:fbcad6955caeecc5ad3f7886baf652e25cba5225a6c4c2287c536de2e5607511",
+      "integrity": "sha256:fbcad6955caeecc5ad3f7886baf652e25cba5225a6c4c2287c536de2e5607511"
+    },
+    "ghcr.io/koupent/engineering-dev-foundation/core:0.3.1": {
+      "version": "0.3.1",
+      "resolved": "ghcr.io/koupent/engineering-dev-foundation/core@sha256:132e88555831df16112eeada1da7d89710d025a3344959b67e4cc3d36717a832",
+      "integrity": "sha256:132e88555831df16112eeada1da7d89710d025a3344959b67e4cc3d36717a832",
+      "dependsOn": [
+        "ghcr.io/devcontainers/features/common-utils:2",
+        "ghcr.io/devcontainers/features/github-cli:1"
+      ]
+    },
+    "ghcr.io/koupent/engineering-dev-foundation/voice:0.2.0": {
+      "version": "0.2.0",
+      "resolved": "ghcr.io/koupent/engineering-dev-foundation/voice@sha256:739b783ba6014a97aacf765e330489b04dc6ccb06be3f35719e6a7cf004b93d6",
+      "integrity": "sha256:739b783ba6014a97aacf765e330489b04dc6ccb06be3f35719e6a7cf004b93d6"
+    },
+    "ghcr.io/koupent/engineering-dev-foundation/zsh:0.2.1": {
+      "version": "0.2.1",
+      "resolved": "ghcr.io/koupent/engineering-dev-foundation/zsh@sha256:d2e73943c939c77b1a2ba8e22742ce6bc48941ee1e0153c3f30354fb598370ee",
+      "integrity": "sha256:d2e73943c939c77b1a2ba8e22742ce6bc48941ee1e0153c3f30354fb598370ee"
+    }
+  }
+}

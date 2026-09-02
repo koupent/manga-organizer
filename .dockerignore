@@ -1,0 +1,8 @@
+# dev-foundation:start
+**/node_modules
+**/.next
+**/.venv
+**/.dart_tool
+**/build
+**/.git
+# dev-foundation:end

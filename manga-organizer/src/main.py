@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-import sys
 import logging
-from pathlib import Path
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from __version__ import __version__, __release_date__
+from __version__ import __release_date__, __version__
 from gui.main_window import MainWindow
 
 
@@ -49,8 +49,8 @@ def setup_logging():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler()
+            logging.FileHandler(log_file, encoding="utf-8"),
+            logging.StreamHandler(),
         ],
     )
 
@@ -67,7 +67,9 @@ def main():
     logger = logging.getLogger(__name__)
 
     try:
-        logger.info(f"Starting Manga Organizer v{__version__} (Released: {__release_date__})")
+        logger.info(
+            f"Starting Manga Organizer v{__version__} (Released: {__release_date__})"
+        )
         app = MainWindow()
         app.run()
     except Exception as e:
