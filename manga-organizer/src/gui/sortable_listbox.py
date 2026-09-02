@@ -1,22 +1,11 @@
 import logging
-import re
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from utils.naming import natural_sort_key
+
 logger = logging.getLogger(__name__)
-
-
-def natural_sort_key(text: str):
-    """Generate a key for natural sorting (1, 2, 10 instead of 1, 10, 2)"""
-
-    def convert(part):
-        return int(part) if part.isdigit() else part
-
-    # Split text into numeric and non-numeric parts
-    parts = re.split(r"(\d+)", text.lower())
-    # Convert numeric parts to integers for proper sorting
-    return [convert(part) for part in parts if part]
 
 
 class SortableListbox(tk.Frame):
