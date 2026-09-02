@@ -91,6 +91,11 @@ export class SidecarClient {
     return this.request<JobResponse>(`/api/jobs/${id}`);
   }
 
+  /** 原寸画像の URL。img の src に直接使う */
+  imageUrl(archive: string, name: string): string {
+    return this.url("/api/image", { archive, name });
+  }
+
   thumbnailUrl(archive: string, name: string, width: number): string {
     return this.url("/api/thumb", { archive, name, width });
   }

@@ -64,6 +64,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Image
+         * @description ページを原寸で返す。拡大表示に使う
+         */
+        get: operations["image_api_image_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cover": {
         parameters: {
             query?: never;
@@ -555,6 +575,38 @@ export interface operations {
                 archive: string;
                 name: string;
                 width?: number;
+                /** @description 使い捨てトークン */
+                token?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    image_api_image_get: {
+        parameters: {
+            query: {
+                archive: string;
+                name: string;
                 /** @description 使い捨てトークン */
                 token?: string;
             };

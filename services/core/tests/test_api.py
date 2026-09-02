@@ -124,6 +124,28 @@ class PagesTest(ApiTestBase):
         with Image.open(io.BytesIO(response.content)) as thumbnail:
             self.assertEqual(160, thumbnail.width)
 
+
+    def test_serves_the_full_size_image(self):
+        # Act - 原寸表示に使う
+        response = self.client.get(
+            "/api/image",
+            params=self.auth({"archive": str(self.archive), "name": "001.jpg"}),
+        )
+
+        # Assert
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("image/jpeg", response.headers["content-type"])
+        with Image.open(io.BytesIO(response.content)) as image:
+            self.assertEqual((800, 1200), image.size)
+
+    def test_rejects_a_full_size_request_for_an_unknown_page(self):
+        # Act / Assert
+        response = self.client.get(
+            "/api/image",
+            params=self.auth({"archive": str(self.archive), "name": "../secret.jpg"}),
+        )
+        self.assertEqual(404, response.status_code)
+
     def test_rejects_an_archive_outside_the_allowed_roots(self):
         # Act / Assert - 任意のファイルを読ませない
         response = self.client.get(
