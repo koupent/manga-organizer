@@ -123,9 +123,10 @@ command -v uv >/dev/null || {
 }
 
 uv lock --check
-uv run ruff check src
-uv run ruff format --check src
+uv run ruff check src tests
+uv run ruff format --check src tests
 uv run python -m compileall -q src
+uv run python -m unittest discover -s tests
 
 cd "$repo_root"
 if [[ "$(project_git rev-parse HEAD)" != "$head_sha" ]]; then

@@ -1,5 +1,6 @@
 import logging
 import tkinter as tk
+from collections.abc import Callable
 from tkinter import ttk
 
 from gui.enhanced_author_combobox import EnhancedAuthorCombobox
@@ -11,7 +12,11 @@ class SimpleTitleCombobox(ttk.Combobox):
     """Simple combobox for title selection from database"""
 
     def __init__(
-        self, parent, database, on_change_func: callable | None = None, **kwargs
+        self,
+        parent,
+        database,
+        on_change_func: Callable[[str], None] | None = None,
+        **kwargs,
     ):
         super().__init__(parent, **kwargs)
 
@@ -156,7 +161,7 @@ class TitleAuthorCombo:
             logger.info(f"Saved to DB: {title} by {author}")
 
             # Update UI to reflect DB save
-            self.title_combo.refresh()  # Refresh title dropdown
+            self.refresh()  # Refresh title dropdown
 
             # Change author color to blue (DB registered)
             if hasattr(self.author_combo, "combobox"):

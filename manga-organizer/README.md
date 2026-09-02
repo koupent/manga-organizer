@@ -143,7 +143,7 @@ graph LR
 
 ## 必要環境
 
-- Python 3.8 以上
+- Python 3.11 以上
 - Windows/macOS/Linux 対応
 
 ## インストール

@@ -3,7 +3,7 @@ name = "manga-organizer"
 version = "3.8.2"
 description = "Automatic manga archive organizer with intelligent volume detection"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "pillow>=11.3.0",
     "py7zr>=0.20.0",
