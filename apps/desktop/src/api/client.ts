@@ -27,6 +27,8 @@ type HealthResponse =
   paths["/api/health"]["get"]["responses"][200]["content"]["application/json"];
 type OrganizeRequest =
   paths["/api/jobs/organize"]["post"]["requestBody"]["content"]["application/json"];
+type CoverRequest =
+  paths["/api/jobs/cover"]["post"]["requestBody"]["content"]["application/json"];
 type JobAccepted =
   paths["/api/jobs/reorder"]["post"]["responses"][202]["content"]["application/json"];
 
@@ -87,6 +89,10 @@ export class SidecarClient {
 
   reorder(archive: string, order: string[]): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/reorder", { archive, order });
+  }
+
+  editCover(request: CoverRequest): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/cover", request);
   }
 
   organize(request: OrganizeRequest): Promise<JobAccepted> {

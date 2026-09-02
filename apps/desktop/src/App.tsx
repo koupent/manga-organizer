@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { SidecarClient } from "./api/client";
 import { PageGrid } from "./components/PageGrid";
+import { CoverEditor } from "./components/CoverEditor";
 import { SeriesReview, type SeriesGroup } from "./components/SeriesReview";
 import { resolveConnection } from "./connection";
 
 type Page = { name: string; size: number; modified: string };
-type Mode = "organize" | "pages";
+type Mode = "organize" | "pages" | "cover";
 
 /** 整理とページ修正を切り替えて使う */
 export function App() {
@@ -34,7 +35,8 @@ export function App() {
     const params = new URLSearchParams(window.location.search);
     setArchive(params.get("archive") ?? "");
     setOutputDirectory(params.get("output") ?? "");
-    if (params.get("mode") === "organize") setMode("organize");
+    const requested = params.get("mode");
+    if (requested === "organize" || requested === "cover") setMode(requested);
 
     created
       .health()
@@ -78,6 +80,14 @@ export function App() {
             onClick={() => setMode("organize")}
           >
             整理
+          </button>
+          <button
+            type="button"
+            data-testid="mode-cover"
+            aria-pressed={mode === "cover"}
+            onClick={() => setMode("cover")}
+          >
+            表紙
           </button>
           <button
             type="button"
@@ -135,6 +145,10 @@ export function App() {
             onGroupsChange={setGroups}
           />
         </>
+      ) : null}
+
+      {mode === "cover" && client && archive ? (
+        <CoverEditor client={client} archive={archive} />
       ) : null}
 
       {mode === "pages" && client && archive && pages.length > 0 ? (
