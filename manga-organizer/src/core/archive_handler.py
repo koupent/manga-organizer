@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import shutil
@@ -10,6 +11,13 @@ from pathlib import Path
 import py7zr
 from PIL import Image
 
+from core.viewer_contract import (
+    is_page_source,
+    needs_conversion,
+    output_suffix,
+    relative_entry_name,
+    sequential_name,
+)
 from utils.naming import natural_sort_key
 
 logger = logging.getLogger(__name__)
@@ -68,8 +76,13 @@ class ArchiveHandler:
     def is_archive(self, file_path: Path) -> bool:
         return file_path.suffix.lower() in self.SUPPORTED_ARCHIVES
 
-    def is_image(self, file_path: Path) -> bool:
-        if file_path.suffix.lower() not in self.IMAGE_EXTENSIONS:
+    def is_image(self, file_path: Path, root: Path | None = None) -> bool:
+        # suzume-viewer が読み飛ばすもの（__MACOSX/、ドット始まり）は
+        # ページに含めない。含めると連番に組み込まれ、リネーム後に
+        # viewer 側で壊れたページとして表示されてしまう。
+        # 先頭一致で見るため、判定は展開ルートからの相対名で行う
+        name = relative_entry_name(file_path, root) if root else file_path.name
+        if not is_page_source(name):
             return False
         try:
             with Image.open(file_path) as img:
@@ -313,7 +326,9 @@ class ArchiveHandler:
 
             # Check for images in this directory
             image_files = [
-                f for f in filenames if Path(f).suffix.lower() in self.IMAGE_EXTENSIONS
+                f
+                for f in filenames
+                if is_page_source(relative_entry_name(current_dir / f, root_path))
             ]
 
             if image_files:
@@ -416,7 +431,7 @@ class ArchiveHandler:
             for root, _dirs, files in os.walk(source_dir):
                 for file in files:
                     file_path = Path(root) / file
-                    if self.is_image(file_path):
+                    if self.is_image(file_path, source_dir):
                         image_files.append(file_path)
 
             # Sort files in natural order
@@ -429,16 +444,30 @@ class ArchiveHandler:
                 self._log("    Renaming images to sequential numbers (001, 002, ...)")
 
             with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                total = len(image_files)
+                written_names: set[str] = set()
                 for idx, file_path in enumerate(image_files, 1):
                     if rename_images:
-                        # Rename to sequential number, preserving extension
-                        ext = file_path.suffix.lower()
-                        arcname = f"{idx:03d}{ext}"  # 001.jpg, 002.png, etc.
+                        # 辞書順と数値順が一致するよう、総数に応じて桁を広げる
+                        arcname = sequential_name(idx, total, file_path.suffix)
                     else:
-                        # Keep original structure
-                        arcname = str(file_path.relative_to(source_dir))
+                        # Keep original structure。変換する場合は拡張子も
+                        # 合わせないと viewer が読み飛ばしてしまう
+                        relative = file_path.relative_to(source_dir)
+                        arcname = str(
+                            relative.with_suffix(output_suffix(relative.suffix))
+                        )
 
-                    zf.write(file_path, arcname)
+                    if arcname in written_names:
+                        raise ValueError(
+                            f"出力名が衝突します: {arcname} ({file_path.name})"
+                        )
+                    written_names.add(arcname)
+
+                    if needs_conversion(relative_entry_name(file_path, source_dir)):
+                        self._write_converted(zf, file_path, arcname)
+                    else:
+                        zf.write(file_path, arcname)
                     if idx % 10 == 0:  # Log every 10 files
                         self._log(
                             f"      Compressed {idx}/{len(image_files)} images..."
@@ -450,6 +479,18 @@ class ArchiveHandler:
         except Exception as e:
             self._log(f"Failed to create archive: {e}", "error")
             return False
+
+    def _write_converted(self, zf, file_path: Path, arcname: str) -> None:
+        """viewer が読めない画像を PNG へ変換して書き込む。
+
+        BMP は無圧縮なだけで、PNG は可逆圧縮なので画質は落ちない。
+        """
+        with Image.open(file_path) as image:
+            mode = "RGBA" if "A" in image.getbands() else "RGB"
+            buffer = io.BytesIO()
+            image.convert(mode).save(buffer, "PNG", optimize=True)
+        zf.writestr(arcname, buffer.getvalue())
+        self._log(f"    Converted to PNG for viewer support: {file_path.name}")
 
     def cleanup(self):
         """Clean up temporary directory"""
