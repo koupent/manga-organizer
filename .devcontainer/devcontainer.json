@@ -47,7 +47,7 @@
       }
     }
   },
-  "postCreateCommand": "bash -lc 'cd services/core && uv sync --group dev'",
+  "postCreateCommand": "bash -lc 'cd services/core && uv sync --group dev && cd ../../apps/desktop && npm ci && npx playwright install --with-deps chromium'",
   "mounts": [
     "source=manga-organizer-foundation-claude,target=/home/vscode/.claude,type=volume",
     "source=manga-organizer-foundation-codex,target=/home/vscode/.codex,type=volume",
