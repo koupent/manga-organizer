@@ -1,12 +1,20 @@
-import { BookMarked, Loader2, Play, Square } from "lucide-react";
+import { BookMarked, Loader2, Play, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import { cn } from "../lib/utils";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FilePicker } from "./FilePicker";
+import { LibraryEditor } from "./LibraryEditor";
 import { Button } from "./ui/button";
 import { Card, CardBody, CardHeader } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Progress } from "./ui/progress";
 
@@ -35,11 +43,10 @@ type OrganizePanelProps = {
   onSourcesChange: (paths: string[]) => void;
   outputDirectory: string;
   onOutputDirectoryChange: (path: string) => void;
-  onOpenLibrary: () => void;
 };
 
 /**
- * 整理モード。
+ * ファイル整理。
  *
  * 作品名と著者を先に決め、処理対象のアーカイブを並べ、まとめて整理する。
  * 1 回の実行で扱う作品はひとつ。元の Tkinter 版と同じ流れにしてある。
@@ -50,9 +57,9 @@ export function OrganizePanel({
   onSourcesChange,
   outputDirectory,
   onOutputDirectoryChange,
-  onOpenLibrary,
 }: OrganizePanelProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [authorSource, setAuthorSource] = useState<AuthorSource>("");
@@ -102,6 +109,17 @@ export function OrganizePanel({
   }, [client]);
 
   useEffect(loadEntries, [loadEntries]);
+
+  /**
+   * 辞書を開け閉めする。
+   *
+   * 閉じるときに読み直すのは、辞書で足した作品名や著者をそのまま入力欄の
+   * 候補として使えるようにするため。
+   */
+  const changeLibraryOpen = (open: boolean) => {
+    setLibraryOpen(open);
+    if (!open) loadEntries();
+  };
 
   /**
    * 作品名が変わったら著者を引き直す。
@@ -276,7 +294,11 @@ export function OrganizePanel({
         <CardHeader>
           <h2 className="text-[13px] font-semibold">作品情報</h2>
           <div className="flex-1" />
-          <Button size="sm" data-testid="open-library" onClick={onOpenLibrary}>
+          <Button
+            size="sm"
+            data-testid="open-library"
+            onClick={() => changeLibraryOpen(true)}
+          >
             <BookMarked />
             辞書
           </Button>
@@ -435,6 +457,34 @@ export function OrganizePanel({
           </pre>
         </CardBody>
       </Card>
+
+      {/*
+        辞書は整理の途中で覗きに行くものなので、画面を切り替えず重ねて出す。
+        ここに置いておけば入力途中の作品情報や処理対象の一覧が消えない。
+      */}
+      <Dialog open={libraryOpen} onOpenChange={changeLibraryOpen}>
+        <DialogContent data-testid="library-dialog">
+          {/* 見出しと説明は LibraryEditor 側にあるので、読み上げ用にだけ置く */}
+          <DialogTitle className="sr-only">辞書</DialogTitle>
+          <DialogDescription className="sr-only">
+            記録済みの作品名と著者を確認し、追加や削除ができます。
+          </DialogDescription>
+          <div className="flex justify-end">
+            <DialogClose asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                data-testid="library-close"
+                aria-label="辞書を閉じる"
+                title="辞書を閉じる"
+              >
+                <X />
+              </Button>
+            </DialogClose>
+          </div>
+          <LibraryEditor client={client} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

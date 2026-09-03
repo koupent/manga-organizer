@@ -23,6 +23,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { parentDirectory } from "../path";
 import { cn } from "../lib/utils";
 import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
@@ -83,7 +84,7 @@ function SelectedItem({
     transition,
     isDragging,
   } = useSortable({ id: path, disabled });
-  const directory = path.slice(0, path.lastIndexOf("/")) || "/";
+  const directory = parentDirectory(path);
   const gripRef = useRef<HTMLButtonElement>(null);
 
   // 並べ替えで行ごと DOM が動くと焦点が外れる。掴んだまま続けて送れるようにする

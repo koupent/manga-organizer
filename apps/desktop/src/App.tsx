@@ -1,9 +1,9 @@
 import { BookOpen, FileQuestion, TriangleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "./lib/utils";
+import { parentDirectory } from "./path";
 import { SidecarClient } from "./api/client";
 import { CoverEditor } from "./components/CoverEditor";
-import { LibraryEditor } from "./components/LibraryEditor";
 import { PageGrid } from "./components/PageGrid";
 import { OrganizePanel } from "./components/OrganizePanel";
 import { onFilesDropped, resolveConnection } from "./connection";
@@ -12,19 +12,22 @@ import { Empty } from "./components/ui/empty";
 import { Segmented } from "./components/ui/segmented";
 
 type Page = { name: string; size: number; modified: string };
-type Mode = "organize" | "pages" | "cover" | "library";
+type Mode = "organize" | "reorder" | "thumbnail";
 
+// 対象物ではなく、そこで何ができるかでタブを名付ける
 const MODES: { id: Mode; label: string }[] = [
-  { id: "organize", label: "整理" },
-  { id: "cover", label: "表紙" },
-  { id: "pages", label: "ページ修正" },
-  { id: "library", label: "辞書" },
+  { id: "organize", label: "ファイル整理" },
+  { id: "reorder", label: "ページ並べ替え" },
+  { id: "thumbnail", label: "サムネイル作成" },
 ];
 
-/** 整理・表紙・ページ修正を切り替えて使う */
+const isMode = (value: string | null): value is Mode =>
+  MODES.some((item) => item.id === value);
+
+/** ファイル整理・ページ並べ替え・サムネイル作成を切り替えて使う */
 export function App() {
   const [client, setClient] = useState<SidecarClient | null>(null);
-  const [mode, setMode] = useState<Mode>("pages");
+  const [mode, setMode] = useState<Mode>("reorder");
   const [archive, setArchive] = useState("");
   const [pages, setPages] = useState<Page[]>([]);
   const [cardWidth, setCardWidth] = useState(220);
@@ -33,6 +36,27 @@ export function App() {
 
   const [sources, setSources] = useState<string[]>([]);
   const [outputDirectory, setOutputDirectory] = useState("");
+
+  // ドロップの購読は起動時の一度きりなので、最新の一覧は ref から読む
+  const sourcesRef = useRef<string[]>([]);
+  sourcesRef.current = sources;
+
+  /**
+   * 処理対象の一覧を差し替える。
+   *
+   * 空の一覧に最初のファイルが入ったときは、その置き場所を出力先の既定にする。
+   * 整理後の置き場所は元と同じ所であることがほとんどで、毎回選ばせる必要が
+   * 無いため（元の Tkinter 版 main_window.py:225-230 と同じ）。
+   * 既に入っている出力先は利用者が決めたものなので上書きしない。
+   * ドロップと画面のどちらから足しても同じ既定になるよう、一覧を持つ
+   * ここでまとめて面倒を見る。
+   */
+  const changeSources = (paths: string[]) => {
+    if (sourcesRef.current.length === 0 && paths.length > 0) {
+      setOutputDirectory((current) => current || parentDirectory(paths[0]));
+    }
+    setSources(paths);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -56,18 +80,12 @@ export function App() {
     setArchive(params.get("archive") ?? "");
     setOutputDirectory(params.get("output") ?? "");
     const requested = params.get("mode");
-    if (
-      requested === "organize" ||
-      requested === "cover" ||
-      requested === "library"
-    ) {
-      setMode(requested);
-    }
+    if (isMode(requested)) setMode(requested);
 
-    // ネイティブ側で受けたドロップを整理モードの入力に流し込む
+    // ネイティブ側で受けたドロップをファイル整理の入力に流し込む
     const pending = onFilesDropped((paths) => {
       setMode("organize");
-      setSources((current) => [...new Set([...current, ...paths])]);
+      changeSources([...new Set([...sourcesRef.current, ...paths])]);
     });
 
     return () => {
@@ -77,7 +95,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!client || !archive || mode !== "pages") return;
+    if (!client || !archive || mode !== "reorder") return;
     setError("");
     client
       .listPages(archive)
@@ -105,7 +123,7 @@ export function App() {
 
         <div className="flex-1" />
 
-        {mode === "pages" ? (
+        {mode === "reorder" ? (
           <label className="flex items-center gap-2 text-[12px] text-ink-muted">
             表示サイズ
             <input
@@ -148,18 +166,13 @@ export function App() {
           <OrganizePanel
             client={client}
             sources={sources}
-            onSourcesChange={setSources}
+            onSourcesChange={changeSources}
             outputDirectory={outputDirectory}
             onOutputDirectoryChange={setOutputDirectory}
-            onOpenLibrary={() => setMode("library")}
           />
         ) : null}
 
-        {mode === "library" && client ? (
-          <LibraryEditor client={client} />
-        ) : null}
-
-        {mode === "cover" && client && archive ? (
+        {mode === "thumbnail" && client && archive ? (
           <CoverEditor
             client={client}
             archive={archive}
@@ -167,7 +180,7 @@ export function App() {
           />
         ) : null}
 
-        {mode === "pages" && client && archive && pages.length > 0 ? (
+        {mode === "reorder" && client && archive && pages.length > 0 ? (
           <PageGrid
             client={client}
             archive={archive}
@@ -177,9 +190,10 @@ export function App() {
           />
         ) : null}
 
-        {mode === "pages" && !archive ? (
+        {mode === "reorder" && !archive ? (
           <Empty icon={<FileQuestion />} title="アーカイブが選ばれていません">
-            URL に archive= を付けるか、整理モードでファイルを指定してください。
+            URL に archive=
+            を付けるか、ファイル整理でファイルを指定してください。
           </Empty>
         ) : null}
       </div>

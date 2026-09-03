@@ -43,17 +43,18 @@ with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
   return target;
 }
 
+/** サムネイル作成の画面を開く。mode の id は thumbnail */
 async function openCover(
   page: import("@playwright/test").Page,
   archive: string,
 ) {
   await page.goto(
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
-      `&mode=cover&archive=${encodeURIComponent(archive)}`,
+      `&mode=thumbnail&archive=${encodeURIComponent(archive)}`,
   );
 }
 
-test.describe("表紙加工", () => {
+test.describe("サムネイル作成", () => {
   test("見開きを検出し、分割すると 2:3 に収まる", async ({ page }) => {
     // Arrange
     const archive = writeSpreadArchive(sidecar.workDir, "cover.zip");
