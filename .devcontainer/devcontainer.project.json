@@ -9,6 +9,10 @@
   "features": {
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.11"
+    },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest",
+      "profile": "default"
     }
   },
   "customizations": {
@@ -27,9 +31,9 @@
             "source.organizeImports": "explicit"
           }
         },
-        "python.defaultInterpreterPath": "${workspaceFolder}/manga-organizer/.venv/bin/python"
+        "python.defaultInterpreterPath": "${workspaceFolder}/services/core/.venv/bin/python"
       }
     }
   },
-  "postCreateCommand": "bash -lc 'cd manga-organizer && uv sync --group dev'"
+  "postCreateCommand": "bash -lc 'cd services/core && uv sync --group dev'"
 }

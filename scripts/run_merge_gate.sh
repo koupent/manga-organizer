@@ -179,10 +179,12 @@ run_python_checks services/core
 
 run_shell_checks() {
   echo "== Tauri シェル"
-  if ! command -v cargo >/dev/null; then
-    echo "  cargo が無いため Rust の検査を飛ばします" >&2
-    return 0
-  fi
+  # 飛ばさない。検査していないものを合格として公開しないため、cargo が
+  # 無ければ環境の不備として落とす
+  command_available cargo || {
+    echo "cargo が必要です。Dev Container を再作成してください" >&2
+    return 1
+  }
   ( cd "$repo_root/apps/desktop/src-tauri" \
     && cargo fmt --check \
     && cargo clippy --all-targets -- -D warnings \

@@ -32,7 +32,7 @@ Dev Container は Foundation が生成します。製品固有設定の正本は
 
 - Docker Desktop（Linux Dev Container）
 - Windows ホスト（exe ビルド時）
-- Python 3.11（アプリ側は `manga-organizer/.python-version`）
+- Python 3.11（`services/core/pyproject.toml` の `requires-python`）
 - uv
 - Git / GitHub CLI
 
@@ -53,9 +53,8 @@ bash scripts/install_workflow.sh
 3. アプリ依存を同期する（`postCreateCommand` でも実行されます）
 
 ```bash
-cd manga-organizer
+cd services/core
 uv sync --group dev
-uv run python src/main.py
 ```
 
 ## Local Merge Gate
@@ -94,6 +93,11 @@ bash scripts/build_release_artifact.sh
 # 成果物: .artifacts/MangaOrganizer.exe
 ```
 
+現時点で `scripts/build_release_artifact.sh` は未実装として失敗します。旧
+Tkinter アプリの PyInstaller 経路は #28 で撤去済みで、Tauri シェルと Python
+サイドカーを 1 つのインストーラへまとめる処理はまだありません。サイドカー
+単体の梱包は `scripts/build_sidecar.sh` にあります。
+
 公開と CD 起動は Plugin の local-delivery 境界を使います。
 
 ```bash
@@ -105,32 +109,30 @@ node <plugin-root>/scripts/local-delivery.mjs dispatch --project-dir .
 
 非 Windows では `scripts/build_release_artifact.sh` は失敗します。
 
-### 従来のローカルビルド
-
-```bash
-cd manga-organizer
-uv run pyinstaller MangaOrganizer.spec
-```
-
 ## バージョンアップ手順
 
-1. `manga-organizer/src/__version__.py` と `manga-organizer/pyproject.toml` の version を更新
-2. `manga-organizer/CHANGELOG.md` を更新
-3. PR 経由で main へ squash merge（Local Merge Gate 必須）
-4. Windows ホストで local-delivery の prepare / dispatch を実行
+1. `services/core/pyproject.toml` と `apps/desktop/src-tauri/Cargo.toml` の version を更新
+2. PR 経由で main へ squash merge（Local Merge Gate 必須）
+3. Windows ホストで local-delivery の prepare / dispatch を実行
 
 ## プロジェクト構造
 
 ```
 manga-organizer/                 # リポジトリルート
-├── manga-organizer/             # アプリ本体
-│   ├── src/
+├── apps/desktop/                # Tauri シェル + React フロントエンド
+│   ├── src/                     # React + TypeScript
+│   ├── e2e/                     # Playwright
+│   └── src-tauri/               # Rust
+├── services/core/               # コアロジックとサイドカー API
+│   ├── src/manga_core/
+│   ├── src/manga_api/
+│   ├── tests/
 │   ├── pyproject.toml
 │   ├── uv.lock
-│   ├── MangaOrganizer.spec
-│   └── .python-version
+│   └── manga_api.spec           # サイドカーの PyInstaller 定義
 ├── scripts/
 │   ├── run_merge_gate.sh
+│   ├── build_sidecar.sh
 │   ├── build_release_artifact.sh
 │   ├── publish_release_artifact.mjs
 │   └── install_workflow.sh
@@ -144,7 +146,7 @@ manga-organizer/                 # リポジトリルート
 
 ## コーディング規約
 
-- Python は ruff（`manga-organizer/pyproject.toml` の `[tool.ruff]`）に従う
+- Python は ruff（`services/core/pyproject.toml` の `[tool.ruff]`）に従う
 - ブランチ: `feature/issue-<番号>-...` / `fix/issue-<番号>-...`
 - コミットメッセージ: `# <Issue番号> <接頭辞>: <概要>`
 - main へのマージは squash のみ
