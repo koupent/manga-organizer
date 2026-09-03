@@ -4,6 +4,9 @@ suzume-viewer は表紙を縦長 2:3 の枠に中央クロップで描く（`man
 見開きが先頭にあると背表紙付近だけが拡大表示され、表紙が見えない。先頭画像を
 分割・切り抜き・回転して整える。
 
+viewer は辞書順で先頭のページを表紙として描くため、途中の絵をサムネイルに
+したい場合は先頭へ移すしかない。その並べ替えは page_reorder に任せる。
+
 ZIP 内の実画像を差し替える破壊的操作なので、page_reorder と同じ安全機構
 （排他生成した一時ファイル、書き込み検証、原子的置換、タイムスタンプ保持）
 を通す。
@@ -20,7 +23,12 @@ from pathlib import Path
 from PIL import Image
 
 from manga_core.file_times import capture_file_times, restore_file_times
-from manga_core.viewer_contract import VIEWER_IMAGE_EXTENSIONS, output_suffix
+from manga_core.page_reorder import PageEntry, PageReorderError, ZipPageEditor
+from manga_core.viewer_contract import (
+    VIEWER_IMAGE_EXTENSIONS,
+    output_suffix,
+    sequential_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,13 +142,27 @@ def transform_image(
 
 
 def apply_to_archive(
-    archive_path: Path, name: str, transform: CoverTransform
+    archive_path: Path,
+    name: str,
+    transform: CoverTransform,
+    make_first: bool = False,
 ) -> CoverResult:
     """アーカイブ内の 1 枚を加工して差し替える。
 
-    元を捨てる前に書き上げた ZIP を読み直して確かめ、原子的に置き換える。
+    make_first を立てると、加工した 1 枚をサムネイル（先頭ページ）へ移す。
+    どちらの経路でも、元を捨てる前に書き上げた ZIP を読み直して確かめ、
+    原子的に置き換える。
     """
     archive_path = Path(archive_path)
+    if make_first:
+        return _move_to_front(archive_path, name, transform)
+    return _replace_in_place(archive_path, name, transform)
+
+
+def _replace_in_place(
+    archive_path: Path, name: str, transform: CoverTransform
+) -> CoverResult:
+    """加工した 1 枚を、同じ位置のまま差し替える"""
     with zipfile.ZipFile(archive_path, "r") as source:
         try:
             info = source.getinfo(name)
@@ -169,6 +191,49 @@ def apply_to_archive(
         temp_path.unlink(missing_ok=True)
 
     restore_file_times(archive_path, times)
+    with Image.open(io.BytesIO(produced)) as written:
+        size = written.size
+    return CoverResult(
+        name=new_name, width=size[0], height=size[1], renamed=new_name != name
+    )
+
+
+def _front_first_order(name: str, pages: tuple[PageEntry, ...]) -> tuple[str, ...]:
+    """選んだページを先頭に、残りは元の並びのまま続く順序を組み立てる。
+
+    元の並びは page_reorder が示すページ一覧の順をそのまま使う。ここで独自に
+    並べ替えると、利用者がページ修正画面で見ている順と食い違う。
+    """
+    return (name,) + tuple(page.name for page in pages if page.name != name)
+
+
+def _move_to_front(
+    archive_path: Path, name: str, transform: CoverTransform
+) -> CoverResult:
+    """加工した 1 枚を先頭ページへ移し、画像エントリの連番を振り直す。
+
+    加工と並べ替えを page_reorder の 1 回の書き直しに委ねる。別々に適用すると、
+    加工だけ済んで並べ替えに失敗した中途半端なアーカイブが残る。連番の付け方や
+    ページとみなす条件も page_reorder と一致させないと、viewer 側で順序が崩れる。
+    """
+    try:
+        editor = ZipPageEditor(archive_path)
+    except PageReorderError as error:
+        raise CoverEditError(str(error)) from error
+
+    try:
+        original = editor.read_entry(name)
+        # 加工に失敗したらここで止まる。元のアーカイブには触れていない
+        produced = transform_image(original, transform, name)
+        ordered = _front_first_order(name, editor.pages)
+        editor.apply_order(ordered, replacements={name: produced})
+    except PageReorderError as error:
+        raise CoverEditError(str(error)) from error
+    finally:
+        editor.close()
+
+    _, suffix = _output_format(name)
+    new_name = sequential_name(1, len(ordered), suffix)
     with Image.open(io.BytesIO(produced)) as written:
         size = written.size
     return CoverResult(

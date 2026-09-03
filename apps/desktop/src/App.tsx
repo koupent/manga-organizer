@@ -61,7 +61,7 @@ export function App() {
   };
 
   /**
-   * ページ並べ替えの対象を差し替える。
+   * ページ並べ替え・サムネイル作成の対象を差し替える。
    *
    * 前の対象のページを残したまま次を読み込むと、並べ替え途中の順序が
    * 別のファイルへ持ち越される。空にしてから読み直し、編集ごと捨てる。
@@ -99,8 +99,8 @@ export function App() {
     // ネイティブ側で受けたドロップは、いま見ている画面の入力にする。
     // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直
     const pending = onFilesDropped((paths) => {
-      if (modeRef.current === "reorder") {
-        // 並べ替えは 1 冊ずつしか扱えない。まとめて落とされたら先頭を採る
+      if (modeRef.current === "reorder" || modeRef.current === "thumbnail") {
+        // どちらも 1 冊ずつしか扱えない。まとめて落とされたら先頭を採る
         if (paths.length > 0) changeArchive(paths[0]);
         return;
       }
@@ -194,9 +194,12 @@ export function App() {
 
         {mode === "thumbnail" && client && archive ? (
           <CoverEditor
+            // 対象が変われば別の表紙。選んだ 1 枚も切り抜き枠も作り直す
+            key={archive}
             client={client}
             archive={archive}
             archiveName={archiveName}
+            onChangeArchive={() => changeArchive("")}
           />
         ) : null}
 
@@ -213,10 +216,17 @@ export function App() {
           />
         ) : null}
 
-        {mode === "reorder" && client && !archive ? (
+        {/* 並べ替えとサムネイル作成は同じ 1 冊を投入する。入り口も同じものを使い、
+            実パスの引き当てのような壊れやすい所を二重に抱えない */}
+        {(mode === "reorder" || mode === "thumbnail") && client && !archive ? (
           <FilePicker
             client={client}
             single
+            title={
+              mode === "reorder"
+                ? "並べ替えるアーカイブ"
+                : "サムネイルを作るアーカイブ"
+            }
             selected={[]}
             onChange={(paths) => changeArchive(paths[0] ?? "")}
           />

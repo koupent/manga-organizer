@@ -53,8 +53,10 @@ type FilePickerProps = {
   selected: string[];
   onChange: (paths: string[]) => void;
   disabled?: boolean;
-  /** 単一選択。ページ並べ替えは 1 冊ずつしか扱えない */
+  /** 単一選択。ページ並べ替えとサムネイル作成は 1 冊ずつしか扱えない */
   single?: boolean;
+  /** 見出し。何のために選ぶのかは呼び出し側の機能でしか分からない */
+  title?: string;
 };
 
 type SelectedItemProps = {
@@ -205,6 +207,7 @@ export function FilePicker({
   onChange,
   disabled = false,
   single = false,
+  title,
 }: FilePickerProps) {
   const [browsing, setBrowsing] = useState(false);
   const [location, setLocation] = useState<{
@@ -338,7 +341,7 @@ export function FilePicker({
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <h2 className="text-[13px] font-semibold">
-          {single ? "並べ替えるアーカイブ" : "処理対象ファイル"}
+          {title ?? (single ? "並べ替えるアーカイブ" : "処理対象ファイル")}
         </h2>
         {/* 単一選択は一覧を持たない。件数も一括操作も指すものが無い */}
         {single ? null : (
