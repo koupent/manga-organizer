@@ -100,6 +100,36 @@ if [[ -n "$(project_git status --porcelain --untracked-files=normal)" ]]; then
   exit 1
 fi
 
+# ソースが .gitignore に飲み込まれていないか確かめる。
+#
+# git status は無視されたファイルを報告しないため、クリーン判定を通り抜ける。
+# 作業ツリーにだけ存在するソースがあると、ここでの検査は通るのにコミットから
+# はビルドできない状態になる（apps/desktop/src/lib/utils.ts の事例）。
+# 検査対象と配布物を一致させるため、ソースの置き場に無視されたものがあれば
+# 落とす。
+SOURCE_DIRS=(
+  apps/desktop/src
+  apps/desktop/e2e
+  apps/desktop/src-tauri/src
+  services/core/src
+  services/core/tests
+  scripts
+)
+ignored_sources=$(
+  project_git ls-files --others --ignored --exclude-standard -- "${SOURCE_DIRS[@]}" \
+    | grep -vE '(^|/)(__pycache__|node_modules|dist|target|\.ruff_cache)/' \
+    || true
+)
+if [[ -n "$ignored_sources" ]]; then
+  echo "ソースの置き場に .gitignore で除外されたファイルがあります" >&2
+  echo "コミットからビルドできなくなるため、追跡するか置き場所を変えてください" >&2
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    printf '  %s\n' "$(project_git check-ignore -v "$path" 2>/dev/null || echo "$path")" >&2
+  done <<< "$ignored_sources"
+  exit 1
+fi
+
 if [[ "$publish_status" == true ]]; then
   command_available "$gh_bin" || {
     echo "ghコマンドが必要です" >&2
