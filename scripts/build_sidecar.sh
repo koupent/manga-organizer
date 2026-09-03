@@ -16,7 +16,7 @@ command -v uv >/dev/null || {
 }
 
 cd "$core_dir"
-uv sync --group dev --extra api
+uv sync --group dev
 uv run pyinstaller --clean --noconfirm manga_api.spec
 
 # 前回の資材を入れ替える（同梱物が混ざらないよう作り直す）

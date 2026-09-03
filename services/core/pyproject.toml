@@ -5,16 +5,11 @@ description = "漫画アーカイブの整理とページ順修正を担う GUI 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.115.0",
     "pillow>=11.3.0",
     "py7zr>=0.20.0",
-    "requests>=2.31.0",
     "rarfile>=4.0",
-]
-
-[project.optional-dependencies]
-# サイドカー（#21）だけが必要とする。現行 Tkinter アプリには入れない
-api = [
-    "fastapi>=0.115.0",
+    "requests>=2.31.0",
     "uvicorn>=0.32.0",
 ]
 
