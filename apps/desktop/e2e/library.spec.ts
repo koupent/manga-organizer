@@ -18,12 +18,25 @@ function url(mode: string, extra: Record<string, string> = {}) {
   return `/?${params}`;
 }
 
-async function openLibrary(page: Page) {
-  await page.goto(url("library"));
-  await expect(page.getByTestId("mode-library")).toHaveAttribute(
+/** ファイル整理画面を開く */
+const openOrganize = async (page: Page) => {
+  await page.goto(url("organize", { output: join(sidecar.workDir, "out") }));
+  await expect(page.getByTestId("mode-organize")).toHaveAttribute(
     "aria-pressed",
     "true",
   );
+};
+
+/**
+ * 辞書を開く。
+ *
+ * 辞書は独立したタブではなくなったので、ファイル整理画面の「辞書」ボタンから
+ * ダイアログとして開く。
+ */
+async function openLibrary(page: Page) {
+  await openOrganize(page);
+  await page.getByTestId("open-library").click();
+  await expect(page.getByTestId("library-dialog")).toBeVisible();
 }
 
 /** 辞書に 1 件記録する */
@@ -37,12 +50,7 @@ const rememberEntry = async (page: Page, title: string, author: string) => {
   ).toBeVisible();
 };
 
-/** 整理画面を開く */
-const openOrganize = async (page: Page) => {
-  await page.goto(url("organize", { output: join(sidecar.workDir, "out") }));
-};
-
-test.describe("辞書", () => {
+test.describe("辞書ダイアログ", () => {
   test("記録・絞り込み・削除ができる", async ({ page }) => {
     await openLibrary(page);
     await expect(page.getByTestId("entry-count")).toHaveText("0 件");
@@ -93,7 +101,7 @@ test.describe("辞書", () => {
   });
 });
 
-test.describe("整理のオプション", () => {
+test.describe("ファイル整理のオプション", () => {
   test("辞書にある作品名を入れると著者が埋まる", async ({ page }) => {
     // Arrange - 先に辞書へ記録しておく
     await rememberEntry(page, "既知の作品", "既知の著者");

@@ -1,5 +1,5 @@
 import { BookMarked, Plus, Search, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import { Button } from "./ui/button";
 import { Card, CardBody, CardHeader } from "./ui/card";
@@ -20,12 +20,23 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
   const [author, setAuthor] = useState("");
   const [status, setStatus] = useState("");
 
+  // 絞り込みは打つたびに問い合わせる。遅れて届いた古い結果で新しい絞り込みを
+  // 覆さないよう、最後に投げた分だけを採用する
+  const reloadSeq = useRef(0);
+
   const reload = useCallback(
     (search = "") => {
+      const seq = ++reloadSeq.current;
       client
         .knownEntries(search)
-        .then((payload) => setEntries(payload.entries as Entry[]))
-        .catch((reason) => setStatus(String(reason.message ?? reason)));
+        .then((payload) => {
+          if (seq !== reloadSeq.current) return;
+          setEntries(payload.entries as Entry[]);
+        })
+        .catch((reason) => {
+          if (seq !== reloadSeq.current) return;
+          setStatus(String(reason.message ?? reason));
+        });
     },
     [client],
   );

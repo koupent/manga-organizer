@@ -8,7 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CORE_DIR = fileURLToPath(new URL("../../../services/core", import.meta.url));
+const CORE_DIR = fileURLToPath(
+  new URL("../../../services/core", import.meta.url),
+);
 const READY_PREFIX = "MANGA_API_READY ";
 
 export type Sidecar = {
@@ -47,7 +49,9 @@ export async function startSidecar(): Promise<Sidecar> {
       );
       child.stdout.on("data", (chunk: Buffer) => {
         buffered += chunk.toString();
-        const line = buffered.split("\n").find((l) => l.startsWith(READY_PREFIX));
+        const line = buffered
+          .split("\n")
+          .find((l) => l.startsWith(READY_PREFIX));
         if (line) {
           clearTimeout(timer);
           resolve(JSON.parse(line.slice(READY_PREFIX.length)));
@@ -58,7 +62,9 @@ export async function startSidecar(): Promise<Sidecar> {
       });
       child.on("exit", (code) => {
         clearTimeout(timer);
-        reject(new Error(`サイドカーが終了しました (code=${code}): ${buffered}`));
+        reject(
+          new Error(`サイドカーが終了しました (code=${code}): ${buffered}`),
+        );
       });
     },
   );
@@ -98,8 +104,12 @@ with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
   const scriptPath = join(workDir, "make_archive.py");
   writeFileSync(scriptPath, script);
   const target = join(workDir, name);
-  execFileSync("uv", ["run", "python", scriptPath, target, JSON.stringify(entries)], {
-    cwd: CORE_DIR,
-  });
+  execFileSync(
+    "uv",
+    ["run", "python", scriptPath, target, JSON.stringify(entries)],
+    {
+      cwd: CORE_DIR,
+    },
+  );
   return target;
 }

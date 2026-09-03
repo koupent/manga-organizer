@@ -14,8 +14,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# 直下のみ。アンカーが無いと apps/desktop/src/lib のようなソースまで飲み込む
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -28,6 +29,8 @@ MANIFEST
 # PyInstaller
 *.manifest
 *.spec
+# サイドカーの spec は自動生成物ではなく手書きの定義なので追跡する
+!services/core/manga_api.spec
 
 # Installer logs
 pip-log.txt

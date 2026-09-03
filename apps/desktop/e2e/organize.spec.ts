@@ -77,6 +77,55 @@ async function openOrganize(page: Page, output: string) {
 }
 
 /**
+ * 出力先を渡さずにファイル整理画面を開く。
+ *
+ * openOrganize() は URL で output を渡してしまうので、出力先の既定値を
+ * 見るテストには空のまま始まる経路が要る。
+ */
+async function openOrganizeWithoutOutput(page: Page) {
+  await page.goto(
+    `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
+      `&mode=organize`,
+  );
+  await expect(page.getByTestId("mode-organize")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("output-directory")).toHaveValue("");
+}
+
+/**
+ * ファイルブラウザを辿って 1 件だけ追加する。
+ *
+ * directory を渡すとその下へ入ってから選ぶ。追加した順番が分かるよう、
+ * selectArchives() と違って 1 件ずつ扱う。
+ */
+async function addArchiveViaBrowser(
+  page: Page,
+  archive: string,
+  directory?: string,
+) {
+  const name = archive.split("/").pop()!;
+  await page.getByTestId("open-browser").click();
+  await expect(page.getByTestId("file-browser")).toBeVisible();
+  if (directory) {
+    await page
+      .locator(
+        `[data-testid="browse-entry"][data-name="${directory}"] .browser-name`,
+      )
+      .click();
+  }
+  await page
+    .locator(`[data-testid="browse-entry"][data-name="${name}"] .browser-name`)
+    .click();
+  await expect(
+    page.locator(`[data-testid="selected-item"][data-path="${archive}"]`),
+  ).toBeVisible();
+  await page.getByTestId("open-browser").click();
+  await expect(page.getByTestId("file-browser")).toBeHidden();
+}
+
+/**
  * 外部検索を「候補なし」に固定する。
  *
  * 作品名を 2 文字以上入れると 400ms 後に /api/library/suggest を呼び、
@@ -570,22 +619,166 @@ test.describe("整理画面", () => {
     await expect(items.nth(1)).toHaveAttribute("data-path", paths[0]);
   });
 
-  test("辞書ボタンから辞書画面へ移れる", async ({ page }) => {
+  test("辞書ボタンで辞書がダイアログとして開く", async ({ page }) => {
+    // Arrange
     await openOrganize(page, join(sidecar.workDir, "out-nav"));
+
+    // Act
     await page.getByTestId("open-library").click();
-    await expect(page.getByTestId("mode-library")).toHaveAttribute(
+
+    // Assert - モードは切り替わらず、ファイル整理の上に辞書が重なる
+    await expect(page.getByTestId("library-dialog")).toBeVisible();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByTestId("entry-count")).toBeVisible();
+    await expect(page.getByTestId("mode-organize")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+
+    // Act - 閉じる
+    await page.getByTestId("library-close").click();
+
+    // Assert - 元のファイル整理画面に戻る
+    await expect(page.getByTestId("library-dialog")).toBeHidden();
+    await expect(page.getByTestId("organize-title")).toBeVisible();
   });
 
-  test("整理とページ修正を切り替えられる", async ({ page }) => {
+  test("辞書ダイアログを開いて閉じても、入力途中の作品情報と処理対象の一覧が残っている", async ({
+    page,
+  }) => {
+    // Arrange - 入力の途中で辞書を見に行く状況を作る
+    const paths = [
+      writeArchive(sidecar.workDir, "保持A.zip", [
+        { name: "001.jpg", color: "#ff0000" },
+      ]),
+      writeArchive(sidecar.workDir, "保持B.zip", [
+        { name: "001.jpg", color: "#00ff00" },
+      ]),
+    ];
+    const output = join(sidecar.workDir, "out-keep-state");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "保持される作品", "保持される著者");
+    await selectArchives(page, paths);
+
+    // Act - 辞書を開いて閉じる
+    await page.getByTestId("open-library").click();
+    await expect(page.getByTestId("library-dialog")).toBeVisible();
+    await page.getByTestId("library-close").click();
+    await expect(page.getByTestId("library-dialog")).toBeHidden();
+
+    // Assert - 入力途中の作品情報がそのまま残る
+    await expect(page.getByTestId("organize-title")).toHaveValue(
+      "保持される作品",
+    );
+    await expect(page.getByTestId("organize-author")).toHaveValue(
+      "保持される著者",
+    );
+    await expect(page.getByTestId("output-directory")).toHaveValue(output);
+
+    // Assert - 処理対象の一覧も順番ごと残る
+    await expect(page.getByTestId("selected-count")).toHaveText("2 件");
+    const items = page.getByTestId("selected-item");
+    await expect(items.nth(0)).toHaveAttribute("data-path", paths[0]);
+    await expect(items.nth(1)).toHaveAttribute("data-path", paths[1]);
+  });
+
+  test("ファイル整理とページ並べ替えを切り替えられる", async ({ page }) => {
     await openOrganize(page, join(sidecar.workDir, "out-mode"));
-    await page.getByTestId("mode-pages").click();
-    await expect(page.getByTestId("mode-pages")).toHaveAttribute(
+    await page.getByTestId("mode-reorder").click();
+    await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     await expect(page.getByTestId("organize-title")).toBeHidden();
+  });
+});
+
+test.describe("タブ", () => {
+  test("タブは ファイル整理 / サムネイル作成 / ページ並べ替え の 3 つで、辞書は無い", async ({
+    page,
+  }) => {
+    // Arrange
+    await openOrganize(page, join(sidecar.workDir, "out-tabs"));
+
+    // Assert - 機能を表す名前が並ぶ
+    await expect(page.getByTestId("mode-organize")).toHaveText("ファイル整理");
+    await expect(page.getByTestId("mode-thumbnail")).toHaveText(
+      "サムネイル作成",
+    );
+    await expect(page.getByTestId("mode-reorder")).toHaveText("ページ並べ替え");
+
+    // Assert - 辞書はタブから外れ、ファイル整理の中のボタンから開く
+    await expect(page.getByTestId("mode-library")).toHaveCount(0);
+    await expect(page.getByTestId("open-library")).toBeVisible();
+  });
+});
+
+test.describe("出力先の既定", () => {
+  test("出力先が空のとき、最初に追加したファイルの場所が出力先になる", async ({
+    page,
+  }) => {
+    // Arrange - 親ディレクトリが根と違うことが分かるよう、下位に置く
+    const directory = "既定サブ";
+    mkdirSync(join(sidecar.workDir, directory), { recursive: true });
+    const archive = writeArchive(sidecar.workDir, `${directory}/既定A.zip`, [
+      { name: "001.jpg", color: "#ff0000" },
+    ]);
+    await openOrganizeWithoutOutput(page);
+
+    // Act
+    await addArchiveViaBrowser(page, archive, directory);
+
+    // Assert - 元の Tkinter 実装と同じく、そのファイルの親ディレクトリが入る
+    await expect(page.getByTestId("output-directory")).toHaveValue(
+      join(sidecar.workDir, directory),
+    );
+  });
+
+  test("既に出力先が入っているときはファイルを追加しても上書きしない", async ({
+    page,
+  }) => {
+    // Arrange - 先に選んである出力先を勝手に変えない
+    const output = join(sidecar.workDir, "out-fixed");
+    mkdirSync(output, { recursive: true });
+    const archive = writeArchive(sidecar.workDir, "上書き確認.zip", [
+      { name: "001.jpg", color: "#00ff00" },
+    ]);
+    await openOrganize(page, output);
+
+    // Act
+    await addArchiveViaBrowser(page, archive);
+
+    // Assert
+    await expect(page.getByTestId("output-directory")).toHaveValue(output);
+  });
+
+  test("2 つ目以降のファイルを追加しても出力先は変わらない", async ({
+    page,
+  }) => {
+    // Arrange - 1 件目は根、2 件目は別のディレクトリに置く
+    const first = writeArchive(sidecar.workDir, "並び1.zip", [
+      { name: "001.jpg", color: "#0000ff" },
+    ]);
+    const directory = "既定サブ2";
+    mkdirSync(join(sidecar.workDir, directory), { recursive: true });
+    const second = writeArchive(sidecar.workDir, `${directory}/並び2.zip`, [
+      { name: "001.jpg", color: "#ffff00" },
+    ]);
+    await openOrganizeWithoutOutput(page);
+
+    // Act - 1 件目で既定が決まる
+    await addArchiveViaBrowser(page, first);
+    await expect(page.getByTestId("output-directory")).toHaveValue(
+      sidecar.workDir,
+    );
+
+    // Act - 2 件目は別の場所から追加する
+    await addArchiveViaBrowser(page, second, directory);
+
+    // Assert - 既定は 1 件目のままで、追加のたびに動かない
+    await expect(page.getByTestId("output-directory")).toHaveValue(
+      sidecar.workDir,
+    );
   });
 });
