@@ -13,6 +13,19 @@ const CORE_DIR = fileURLToPath(
 );
 const READY_PREFIX = "MANGA_API_READY ";
 
+/**
+ * 画面を配信するオリジン。サイドカーの既定は dev server（5173）だけなので、
+ * preview（4173）から呼ぶと CORS で弾かれる。E2E は既定で preview を見るが、
+ * E2E_DEV_SERVER=1 のときは dev server を見るため、両方を許可しておく。
+ * 検証用のサイドカーは使い捨てで、待ち受けも 127.0.0.1 に限られる。
+ */
+const ALLOWED_ORIGINS = [
+  "http://127.0.0.1:4173",
+  "http://localhost:4173",
+  "http://127.0.0.1:5173",
+  "http://localhost:5173",
+];
+
 export type Sidecar = {
   baseUrl: string;
   token: string;
@@ -34,6 +47,7 @@ export async function startSidecar(): Promise<Sidecar> {
       join(workDir, "state"),
       "--allow-root",
       workDir,
+      ...ALLOWED_ORIGINS.flatMap((origin) => ["--allow-origin", origin]),
       "--log-level",
       "warning",
     ],
