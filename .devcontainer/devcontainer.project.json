@@ -35,5 +35,5 @@
       }
     }
   },
-  "postCreateCommand": "bash -lc 'cd services/core && uv sync --group dev'"
+  "postCreateCommand": "bash -lc 'cd services/core && uv sync --group dev && cd ../../apps/desktop && npm ci && npx playwright install --with-deps chromium'"
 }
