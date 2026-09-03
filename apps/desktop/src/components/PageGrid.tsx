@@ -1,4 +1,4 @@
-import { Save, Undo2, ZoomIn } from "lucide-react";
+import { FolderOpen, Save, Undo2, ZoomIn } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
@@ -115,6 +115,8 @@ type PageGridProps = {
   pages: { name: string; size: number; modified: string }[];
   cardWidth: number;
   onSaved?: (message: string) => void;
+  /** 別のアーカイブを選び直す。渡さなければ選び直す導線を出さない */
+  onChangeArchive?: () => void;
 };
 
 /** サムネイルを並べ、ドラッグで順番を入れ替えて保存する */
@@ -125,6 +127,7 @@ export function PageGrid({
   pages,
   cardWidth,
   onSaved,
+  onChangeArchive,
 }: PageGridProps) {
   const original = useMemo(() => pages.map((page) => page.name), [pages]);
   const [order, setOrder] = useState<string[]>(original);
@@ -262,9 +265,23 @@ export function PageGrid({
   return (
     <section className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-[13px] font-semibold">
+        <h2
+          className="text-[13px] font-semibold"
+          data-testid="reorder-archive-name"
+        >
           {archiveName ?? "ページ修正"}
         </h2>
+        {onChangeArchive ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="change-archive"
+            onClick={onChangeArchive}
+          >
+            <FolderOpen />
+            別のファイルを選ぶ
+          </Button>
+        ) : null}
         <span className="tabular text-[12px] text-ink-faint">
           {pages.length} ページ
         </span>

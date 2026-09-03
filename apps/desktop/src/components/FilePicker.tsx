@@ -24,6 +24,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { parentDirectory } from "../path";
+import { resolveDroppedPaths } from "../lib/dropped";
 import { cn } from "../lib/utils";
 import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
@@ -52,6 +53,8 @@ type FilePickerProps = {
   selected: string[];
   onChange: (paths: string[]) => void;
   disabled?: boolean;
+  /** 単一選択。ページ並べ替えは 1 冊ずつしか扱えない */
+  single?: boolean;
 };
 
 type SelectedItemProps = {
@@ -191,12 +194,17 @@ function SelectedItem({
  * ブラウザはドロップされたファイルの実パスを取得できないため、
  * サーバー側を辿って選ぶ経路も用意する。Tauri ではネイティブのドロップが
  * 実パスを届けるので、そちらも同じ一覧へ入る。
+ *
+ * single のときは 1 件だけを選ぶ（ページ並べ替え）。投入の経路が画面ごとに
+ * 分かれると、実パスの引き当てのような壊れやすい所を二重に抱えるため、
+ * 一覧を持つかどうかだけを変えて同じ入り口を使う。
  */
 export function FilePicker({
   client,
   selected,
   onChange,
   disabled = false,
+  single = false,
 }: FilePickerProps) {
   const [browsing, setBrowsing] = useState(false);
   const [location, setLocation] = useState<{
@@ -247,7 +255,9 @@ export function FilePicker({
    */
   const replace = (paths: string[]) => {
     if (locked.current) return;
-    onChange(paths);
+    // 単一選択でまとめて投入されたら、黙って捨てずに先頭を採る。
+    // どれを使ったかは呼び出し側が対象として画面に出す
+    onChange(single ? paths.slice(0, 1) : paths);
   };
 
   const add = (paths: string[]) => {
@@ -276,79 +286,15 @@ export function FilePicker({
     replace(moveWithin(selected, from, to));
   };
 
-  /**
-   * ドロップから実パスを取り出す。
-   *
-   * VS Code のエクスプローラーや Linux のファイルマネージャは
-   * text/uri-list に file:// の URI を載せてくる。取れる場合はそれが確実。
-   */
-  const pathsFromTransfer = (transfer: DataTransfer): string[] => {
-    const raw =
-      transfer.getData("text/uri-list") || transfer.getData("text/plain") || "";
-    return raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"))
-      .map((line) => {
-        if (!line.startsWith("file://"))
-          return line.startsWith("/") ? line : "";
-        try {
-          return decodeURIComponent(new URL(line).pathname);
-        } catch {
-          return "";
-        }
-      })
-      .filter(Boolean);
-  };
-
-  /**
-   * ドロップを受ける。
-   *
-   * まず実パスが載っていればそれを使う。載っていない場合（多くのブラウザ）は
-   * 名前とサイズを手がかりに、許可された場所の中から探して結びつける。
-   * Tauri のネイティブなドロップは実パスが直接届くので、App が処理する。
-   */
+  /** ドロップを受ける。実パスの引き当ては単一選択と共通の経路で行う */
   const handleDrop = async (transfer: DataTransfer) => {
     if (locked.current) return;
-    const direct = pathsFromTransfer(transfer);
-    if (direct.length > 0) {
-      add(direct);
-      setError("");
-      return;
-    }
-
-    const dropped = Array.from(transfer.files).map((file) => ({
-      name: file.name,
-      size: file.size,
-    }));
-    if (dropped.length === 0) {
-      setError(
-        "ドロップされた内容からファイルを取り出せませんでした。" +
-          "「ファイルを選ぶ」から辿ってください",
-      );
-      return;
-    }
-    setError("");
-    try {
-      const result = await client.resolveDropped(dropped);
-      if (result.resolved.length > 0) add(result.resolved);
-      const problems: string[] = [];
-      if (result.unresolved.length > 0) {
-        const roots = (result.searched_roots ?? []).join(" / ") || "(制限なし)";
-        problems.push(
-          `見つかりません: ${result.unresolved.join(", ")}` +
-            `（探した場所: ${roots}。この中に無いファイルは扱えません）`,
-        );
-      }
-      if (result.ambiguous.length > 0) {
-        problems.push(
-          `同名が複数あるため特定できません: ${result.ambiguous.join(", ")}`,
-        );
-      }
-      setError(problems.join(" / "));
-    } catch (reason) {
-      setError(String((reason as Error).message ?? reason));
-    }
+    const { paths, error: reason } = await resolveDroppedPaths(
+      client,
+      transfer,
+    );
+    if (paths.length > 0) add(paths);
+    setError(reason);
   };
 
   const addFolder = (folder: Entry) => {
@@ -391,18 +337,27 @@ export function FilePicker({
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <h2 className="text-[13px] font-semibold">処理対象ファイル</h2>
-        <span
-          className="tabular text-[12px] text-ink-faint"
-          data-testid="selected-count"
-        >
-          {selected.length} 件
-        </span>
-        {selected.length > 0 ? (
-          <span className="text-[11.5px] text-ink-faint">
-            {sortable ? "ドラッグで順番変更 / Delete で削除" : "Delete で削除"}
-          </span>
-        ) : null}
+        <h2 className="text-[13px] font-semibold">
+          {single ? "並べ替えるアーカイブ" : "処理対象ファイル"}
+        </h2>
+        {/* 単一選択は一覧を持たない。件数も一括操作も指すものが無い */}
+        {single ? null : (
+          <>
+            <span
+              className="tabular text-[12px] text-ink-faint"
+              data-testid="selected-count"
+            >
+              {selected.length} 件
+            </span>
+            {selected.length > 0 ? (
+              <span className="text-[11.5px] text-ink-faint">
+                {sortable
+                  ? "ドラッグで順番変更 / Delete で削除"
+                  : "Delete で削除"}
+              </span>
+            ) : null}
+          </>
+        )}
         <div className="flex-1" />
         <Button
           variant={browsing ? "primary" : "secondary"}
@@ -414,15 +369,17 @@ export function FilePicker({
           <FolderOpen />
           {browsing ? "選択を閉じる" : "ファイルを選ぶ"}
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          data-testid="clear-selection"
-          disabled={disabled || selected.length === 0}
-          onClick={() => replace([])}
-        >
-          一覧を空にする
-        </Button>
+        {single ? null : (
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="clear-selection"
+            disabled={disabled || selected.length === 0}
+            onClick={() => replace([])}
+          >
+            一覧を空にする
+          </Button>
+        )}
       </div>
 
       <div
@@ -449,6 +406,9 @@ export function FilePicker({
           <Empty icon={<Upload />} title="ここにアーカイブをドラッグ&ドロップ">
             または「ファイルを選ぶ」から辿ってください。zip / cbz / rar / 7z
             を扱えます。
+            {single
+              ? "まとめて落としたときは先頭の 1 件を対象にします。"
+              : null}
           </Empty>
         ) : sortable ? (
           <DndContext
@@ -493,21 +453,24 @@ export function FilePicker({
               {location.path}
             </code>
             <div className="flex-1" />
-            <Button
-              variant="secondary"
-              size="sm"
-              data-testid="add-all-here"
-              disabled={disabled}
-              onClick={() =>
-                add(
-                  entries
-                    .filter((entry) => !entry.is_directory)
-                    .map((e) => e.path),
-                )
-              }
-            >
-              ここのアーカイブを全部追加
-            </Button>
+            {/* 単一選択では、まとめて追加しても 1 件しか残らず操作が嘘になる */}
+            {single ? null : (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="add-all-here"
+                disabled={disabled}
+                onClick={() =>
+                  add(
+                    entries
+                      .filter((entry) => !entry.is_directory)
+                      .map((e) => e.path),
+                  )
+                }
+              >
+                ここのアーカイブを全部追加
+              </Button>
+            )}
           </CardHeader>
           <ul className="max-h-72 overflow-y-auto p-1">
             {entries.map((entry) => (
@@ -531,7 +494,7 @@ export function FilePicker({
                 >
                   {entry.name}
                 </button>
-                {entry.is_directory ? (
+                {entry.is_directory && !single ? (
                   <Button
                     variant="ghost"
                     size="sm"

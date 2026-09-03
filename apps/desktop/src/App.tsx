@@ -1,14 +1,14 @@
-import { BookOpen, FileQuestion, TriangleAlert } from "lucide-react";
+import { BookOpen, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "./lib/utils";
 import { parentDirectory } from "./path";
 import { SidecarClient } from "./api/client";
 import { CoverEditor } from "./components/CoverEditor";
+import { FilePicker } from "./components/FilePicker";
 import { PageGrid } from "./components/PageGrid";
 import { OrganizePanel } from "./components/OrganizePanel";
 import { onFilesDropped, resolveConnection } from "./connection";
 import { Alert } from "./components/ui/alert";
-import { Empty } from "./components/ui/empty";
 import { Segmented } from "./components/ui/segmented";
 
 type Page = { name: string; size: number; modified: string };
@@ -37,9 +37,11 @@ export function App() {
   const [sources, setSources] = useState<string[]>([]);
   const [outputDirectory, setOutputDirectory] = useState("");
 
-  // ドロップの購読は起動時の一度きりなので、最新の一覧は ref から読む
+  // ドロップの購読は起動時の一度きりなので、最新の状態は ref から読む
   const sourcesRef = useRef<string[]>([]);
   sourcesRef.current = sources;
+  const modeRef = useRef<Mode>(mode);
+  modeRef.current = mode;
 
   /**
    * 処理対象の一覧を差し替える。
@@ -56,6 +58,18 @@ export function App() {
       setOutputDirectory((current) => current || parentDirectory(paths[0]));
     }
     setSources(paths);
+  };
+
+  /**
+   * ページ並べ替えの対象を差し替える。
+   *
+   * 前の対象のページを残したまま次を読み込むと、並べ替え途中の順序が
+   * 別のファイルへ持ち越される。空にしてから読み直し、編集ごと捨てる。
+   */
+  const changeArchive = (path: string) => {
+    setPages([]);
+    setArchive(path);
+    setError("");
   };
 
   useEffect(() => {
@@ -82,8 +96,14 @@ export function App() {
     const requested = params.get("mode");
     if (isMode(requested)) setMode(requested);
 
-    // ネイティブ側で受けたドロップをファイル整理の入力に流し込む
+    // ネイティブ側で受けたドロップは、いま見ている画面の入力にする。
+    // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直
     const pending = onFilesDropped((paths) => {
+      if (modeRef.current === "reorder") {
+        // 並べ替えは 1 冊ずつしか扱えない。まとめて落とされたら先頭を採る
+        if (paths.length > 0) changeArchive(paths[0]);
+        return;
+      }
       setMode("organize");
       changeSources([...new Set([...sourcesRef.current, ...paths])]);
     });
@@ -182,19 +202,24 @@ export function App() {
 
         {mode === "reorder" && client && archive && pages.length > 0 ? (
           <PageGrid
+            // 対象が変われば別の本。並べ替えの途中経過ごと作り直す
+            key={archive}
             client={client}
             archive={archive}
             archiveName={archiveName}
             pages={pages}
             cardWidth={cardWidth}
+            onChangeArchive={() => changeArchive("")}
           />
         ) : null}
 
-        {mode === "reorder" && !archive ? (
-          <Empty icon={<FileQuestion />} title="アーカイブが選ばれていません">
-            URL に archive=
-            を付けるか、ファイル整理でファイルを指定してください。
-          </Empty>
+        {mode === "reorder" && client && !archive ? (
+          <FilePicker
+            client={client}
+            single
+            selected={[]}
+            onChange={(paths) => changeArchive(paths[0] ?? "")}
+          />
         ) : null}
       </div>
     </main>
