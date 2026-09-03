@@ -10,6 +10,10 @@
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.11"
     },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest",
+      "profile": "default"
+    },
     "ghcr.io/koupent/engineering-dev-foundation/core:0.3.1": {
       "installClaude": true,
       "installCodex": true,
@@ -39,11 +43,11 @@
             "source.organizeImports": "explicit"
           }
         },
-        "python.defaultInterpreterPath": "${workspaceFolder}/manga-organizer/.venv/bin/python"
+        "python.defaultInterpreterPath": "${workspaceFolder}/services/core/.venv/bin/python"
       }
     }
   },
-  "postCreateCommand": "bash -lc 'cd manga-organizer && uv sync --group dev'",
+  "postCreateCommand": "bash -lc 'cd services/core && uv sync --group dev'",
   "mounts": [
     "source=manga-organizer-foundation-claude,target=/home/vscode/.claude,type=volume",
     "source=manga-organizer-foundation-codex,target=/home/vscode/.codex,type=volume",

@@ -1,44 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-repo_root=$(git rev-parse --show-toplevel)
-cd "$repo_root"
+# Windows 向け成果物の作成。
+#
+# 旧 Tkinter アプリを PyInstaller で単一 exe にする経路は #28 で撤去済み。
+# 現在の構成は Tauri シェル + Python サイドカーで、これを 1 つのインストーラへ
+# まとめる実装はまだ無い。
+#
+# ここで黙って何かを作ると、配信の各段（digest 照合、prerelease、製品 Release）
+# が古い前提のまま進んでしまう。未実装であることを明示して止める。
 
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    ;;
-  *)
-    if [[ "${OS:-}" != "Windows_NT" ]]; then
-      echo "Windows exe のビルドは Windows ホストでのみ実行できます" >&2
-      exit 1
-    fi
-    ;;
-esac
+cat >&2 <<'MESSAGE'
+Windows 向け成果物のビルドは未実装です。
 
-app_dir="$repo_root/manga-organizer"
-if [[ ! -f "$app_dir/MangaOrganizer.spec" ]]; then
-  echo "MangaOrganizer.spec が見つかりません" >&2
-  exit 1
-fi
-
-mkdir -p "$repo_root/.artifacts"
-rm -f "$repo_root/.artifacts/MangaOrganizer.exe"
-
-cd "$app_dir"
-command -v uv >/dev/null || {
-  echo "uv が必要です" >&2
-  exit 1
-}
-
-rm -rf build dist
-uv run pyinstaller MangaOrganizer.spec
-
-version=$(uv run python -c "import sys; sys.path.insert(0, 'src'); from __version__ import __version__; print(__version__)")
-built="$app_dir/dist/MangaOrganizer-v${version}.exe"
-if [[ ! -f "$built" ]]; then
-  echo "ビルド成果物が見つかりません: $built" >&2
-  exit 1
-fi
-
-cp "$built" "$repo_root/.artifacts/MangaOrganizer.exe"
-echo "artifact: $repo_root/.artifacts/MangaOrganizer.exe"
+  旧 PyInstaller 経路（manga-organizer/MangaOrganizer.spec）は撤去済みです。
+  現在の構成は Tauri シェル + Python サイドカーで、サイドカー単体の梱包は
+  scripts/build_sidecar.sh にありますが、インストーラへまとめる処理は
+  まだありません。
+MESSAGE
+exit 1
