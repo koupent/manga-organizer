@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
@@ -1065,5 +1065,302 @@ test.describe("整理後の受け渡し", () => {
       "単独利用.zip",
     );
     await expect(page.getByTestId("page-card")).toHaveCount(3);
+  });
+});
+
+/**
+ * 整理の途中で起きた失敗の見え方（#62）。
+ *
+ * process_single_archive() は処理中の例外を握りつぶすので、投入した全件が
+ * 失敗してもジョブは succeeded で終わり、produced が空になる。画面はこれを
+ * 「0 冊を整理しました」と読み替えてしまい、失敗と「対象が 0 件だった」の
+ * 区別が付かない。
+ */
+test.describe("整理の失敗", () => {
+  /** 中身が ZIP ではないファイル。展開の段で必ず失敗する */
+  function writeBrokenArchive(name: string): string {
+    const target = join(sidecar.workDir, name);
+    writeFileSync(target, "これは ZIP ではない");
+    return target;
+  }
+
+  /** 中身のある正常なアーカイブ */
+  function writeGoodArchive(name: string): string {
+    return writeArchive(sidecar.workDir, name, [
+      { name: "001.jpg", color: "#ff0000" },
+      { name: "002.jpg", color: "#00ff00" },
+    ]);
+  }
+
+  type Failure = { archive: string; reason: string };
+
+  /**
+   * 整理を実行し、サイドカーが記録したジョブをそのまま読む。
+   *
+   * 画面の文言ではなく、投入したジョブの結果を直接見る。何が失敗したかは
+   * 環境で文字列が変わりうるので、期待値をテストに書き写さず API から取る。
+   */
+  async function organizeAndReadJob(page: Page) {
+    const submitted = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/jobs/organize") &&
+        response.request().method() === "POST",
+    );
+    await page.getByTestId("confirm").click();
+    const { id } = (await (await submitted).json()) as { id: string };
+
+    // 実行中だけ出るボタンが消えるまで待つ。終わったことを状態の文言で
+    // 判定すると、文言を変えるだけでテストの意味が変わってしまう
+    await expect(page.getByTestId("cancel")).toHaveCount(0, {
+      timeout: 30_000,
+    });
+
+    const response = await fetch(
+      `${sidecar.baseUrl}/api/jobs/${id}?token=${sidecar.token}`,
+    );
+    return (await response.json()) as {
+      state: string;
+      result: { produced?: string[]; failed?: Failure[] } | null;
+    };
+  }
+
+  /** ジョブの結果から失敗の内訳を取り出す。無ければそこで落とす */
+  function readFailures(job: {
+    result: { failed?: Failure[] } | null;
+  }): Failure[] {
+    const failed = job.result?.failed;
+    expect(
+      failed,
+      `ジョブの結果に failed が無い: ${JSON.stringify(job.result)}`,
+    ).toBeDefined();
+    return failed!;
+  }
+
+  /**
+   * 処理ログを畳む。
+   *
+   * ログは既定で開いていて、失敗の行をそのまま含んでいる。畳まずに測ると
+   * 「理由が画面に出ている」は最初から成り立ってしまい、何も実装しなくても
+   * 通る。畳んだ状態で何が見えるかが「処理ログを開かなくても気づける」の
+   * 測り方になる。どこにどう出すかは縛らない。
+   */
+  async function collapseLog(page: Page) {
+    const log = page.getByTestId("organize-log");
+    await expect(log).toBeVisible();
+    await page.getByRole("button", { name: "処理ログ" }).click();
+    await expect(log).toBeHidden();
+  }
+
+  /** 画面に見えている文字列のうち、その語を含むもの */
+  function visible(page: Page, text: string) {
+    return page.getByText(text, { exact: false }).filter({ visible: true });
+  }
+
+  /**
+   * 「どのファイルが、なぜ失敗したか」が一緒に見えている箇所を数える。
+   *
+   * 対象ファイルの名前は処理対象の一覧にも出ているので、名前だけを探すと
+   * 実装しなくても見つかってしまう。名前と理由が同じ小さな箱に収まって
+   * いることを条件にする。畳んだログの文字列は textContent には残るため、
+   * ログとログを内側に含む祖先は数えない。
+   *
+   * 理由は API が返した reason をそのまま照合する。文言をテストに書き写すと
+   * 環境で変わる文字列を固定してしまうため。出し方（行・箇条書き・注意書き）
+   * と置き場所は問わない。
+   */
+  async function failureSpots(page: Page, name: string, reason: string) {
+    return page.evaluate(
+      ({ name, reason, limit }) => {
+        const log = document.querySelector('[data-testid="organize-log"]');
+        const found: string[] = [];
+        for (const element of Array.from(
+          document.querySelectorAll<HTMLElement>("body *"),
+        )) {
+          if (log && (log === element || log.contains(element))) continue;
+          if (log && element.contains(log)) continue;
+          const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+          if (!text.includes(name) || !text.includes(reason)) continue;
+          if (text.length > limit) continue;
+          if (
+            !element.checkVisibility({
+              contentVisibilityAuto: true,
+              opacityProperty: true,
+              visibilityProperty: true,
+            })
+          ) {
+            continue;
+          }
+          found.push(text);
+        }
+        return found;
+      },
+      { name, reason, limit: 300 },
+    );
+  }
+
+  /** 失敗した各件について、名前と理由が一緒に見えていることを確かめる */
+  async function expectFailuresVisible(page: Page, failures: Failure[]) {
+    expect(failures.length).toBeGreaterThan(0);
+    for (const failure of failures) {
+      const name = failure.archive.split(/[\\/]/).pop()!;
+      await expect
+        .poll(
+          async () => (await failureSpots(page, name, failure.reason)).length,
+          {
+            message:
+              `「${name}」と、その理由「${failure.reason}」が` +
+              "処理ログの外で一緒に見えていない",
+            timeout: 5_000,
+          },
+        )
+        .toBeGreaterThan(0);
+    }
+  }
+
+  test("全件失敗したときに、整理できたかのような文言を出さない", async ({
+    page,
+  }) => {
+    // Arrange - 中身が ZIP ではない 2 冊。投入は通り、実行中に必ず失敗する
+    const paths = [
+      writeBrokenArchive("全件失敗A.zip"),
+      writeBrokenArchive("全件失敗B.zip"),
+    ];
+    const output = join(sidecar.workDir, "out-all-failed");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "全件失敗する作品", "全件失敗の著者");
+    await selectArchives(page, paths);
+
+    // Act
+    const job = await organizeAndReadJob(page);
+
+    // Assert - 前提の確認。ジョブは走り切り、1 冊も出来ていない
+    expect(job.state).toBe("succeeded");
+    expect(job.result?.produced ?? []).toEqual([]);
+    expect(producedFiles(output)).toEqual([]);
+
+    // Assert - 成功の文言を出さない。「0 冊を整理しました」もこれに当たる
+    await expect(page.getByTestId("organize-status")).not.toContainText(
+      "整理しました",
+    );
+
+    // Assert - 失敗したことが伝わる。文言を変えただけでは足りないので、
+    // 処理ログを畳んだ状態で理由が残っていることまで見る
+    const failures = readFailures(job);
+    await collapseLog(page);
+    await expect
+      .poll(async () => visible(page, failures[0].reason).count(), {
+        message: `失敗の理由「${failures[0].reason}」が画面に出ていない`,
+        timeout: 5_000,
+      })
+      .toBeGreaterThan(0);
+  });
+
+  test("失敗した理由が、処理ログを開かずに、どのファイルのものか分かる形で見える", async ({
+    page,
+  }) => {
+    // Arrange - 失敗の理由が別々に出ることを見たいので 2 冊とも失敗させる
+    const paths = [
+      writeBrokenArchive("理由A.zip"),
+      writeBrokenArchive("理由B.zip"),
+    ];
+    const output = join(sidecar.workDir, "out-failure-reason");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "理由が出る作品", "理由が出る著者");
+    await selectArchives(page, paths);
+
+    // Act
+    const job = await organizeAndReadJob(page);
+    const failures = readFailures(job);
+
+    // Assert - 投入した 2 冊ぶんの理由がある
+    expect(failures).toHaveLength(2);
+    await collapseLog(page);
+
+    // Assert - 名前と理由が組になって見えている。名前だけなら処理対象の
+    // 一覧にも出ているので、理由と一緒であることが条件
+    await expectFailuresVisible(page, failures);
+  });
+
+  test("一部だけ失敗したとき、出来たぶんと失敗したぶんの両方が見える", async ({
+    page,
+  }) => {
+    // Arrange - 正常な 2 冊と、中身が ZIP ではない 2 冊
+    const good = [
+      writeGoodArchive("一部失敗_正常01.zip"),
+      writeGoodArchive("一部失敗_正常02.zip"),
+    ];
+    const broken = [
+      writeBrokenArchive("一部失敗_壊れA.zip"),
+      writeBrokenArchive("一部失敗_壊れB.zip"),
+    ];
+    const output = join(sidecar.workDir, "out-partial-failed");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "一部失敗する作品", "一部失敗の著者");
+    await selectArchives(page, [...good, ...broken]);
+
+    // Act
+    const job = await organizeAndReadJob(page);
+
+    // Assert - 出来たぶんは今までどおり数と名前で見える
+    const produced = producedNames(output);
+    expect(produced).toHaveLength(2);
+    await expect(page.getByTestId("produced-item")).toHaveCount(2);
+    await expect(page.getByTestId("produced-name")).toHaveText(produced);
+
+    // Assert - 失敗したぶんも、件数が分かる形で並ぶ。2 件を 1 行に
+    // まとめて数を伏せる実装は、片方が見つからずここで落ちる
+    const failures = readFailures(job);
+    expect(failures).toHaveLength(2);
+    await collapseLog(page);
+    await expectFailuresVisible(page, failures);
+  });
+
+  test("全件失敗したときは、出来たファイルの一覧に何も出ない", async ({
+    page,
+  }) => {
+    // Arrange - 先に成功させておく。失敗しても produced が空なだけなので、
+    // 何も出来ていない状態から失敗させるのでは「一覧が出ない」は最初から
+    // 成り立ってしまう。前回の一覧が残らないことまで見る
+    const good = [
+      writeGoodArchive("一覧_正常01.zip"),
+      writeGoodArchive("一覧_正常02.zip"),
+    ];
+    // 2 回目に選ぶぶんもここで作る。ファイルブラウザの一覧は画面を開いた
+    // ときのものなので、後から作ったファイルは選べない
+    const broken = [
+      writeBrokenArchive("一覧_壊れA.zip"),
+      writeBrokenArchive("一覧_壊れB.zip"),
+    ];
+    const output = join(sidecar.workDir, "out-failed-list");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "一覧が消える作品", "一覧が消える著者");
+    await selectArchives(page, good);
+    await organizeAndReadJob(page);
+    await expect(page.getByTestId("produced-item")).toHaveCount(2);
+    const before = producedFiles(output);
+    expect(before).toHaveLength(2);
+
+    // Act - 対象を入れ替えて、全件失敗する実行をもう一度行う
+    await page.getByTestId("clear-selection").click();
+    await expect(page.getByTestId("selected-count")).toHaveText("0 件");
+    await selectArchives(page, broken);
+    const job = await organizeAndReadJob(page);
+
+    // Assert - 出来たものは増えていない
+    expect(producedFiles(output)).toEqual(before);
+
+    // Assert - 失敗した件を「出来たファイル」として並べない。前回ぶんも残らない
+    await expect(page.getByTestId("produced-item")).toHaveCount(0);
+    await expect(page.getByTestId("produced-list")).toHaveCount(0);
+
+    // Assert - そのうえで、失敗したことは理由付きで見えている。
+    // 一覧が消えるだけでは、何も起きなかったのと区別が付かない
+    const failures = readFailures(job);
+    await collapseLog(page);
+    await expectFailuresVisible(page, failures);
   });
 });

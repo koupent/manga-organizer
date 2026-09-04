@@ -780,5 +780,116 @@ class FixedTokenTest(unittest.TestCase):
         self.assertGreater(len(first), 20)
 
 
+class OrganizeFailureReportTest(ApiTestBase):
+    """整理ジョブが失敗の内訳を返すことを見る（#62）。
+
+    process_single_archive() は処理中の例外を握りつぶして success=False を
+    返すため、ジョブ自体は最後まで走って succeeded で終わる。成功したものだけ
+    集めていると、全件失敗しても「produced が空の成功」と見分けが付かない。
+    走り切ったこと（state）と、何が出来たか（result）は別々に伝える必要がある。
+    """
+
+    def setUp(self):
+        super().setUp()
+        # 2 冊目。1 冊だけだと「全件失敗」と「1 件失敗」が同じ形になる
+        self.second = self.work_dir / "volume2.zip"
+        with zipfile.ZipFile(self.second, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name in ("001.jpg", "002.jpg"):
+                archive.writestr(name, make_page())
+
+        # 中身が ZIP ではないファイル。resolve_archive() は実在するファイルとして
+        # 通すので 400 にはならず、ジョブの実行中に展開で失敗する
+        self.broken = self.work_dir / "壊れた.zip"
+        self.broken.write_bytes(b"not a zip at all")
+
+    def organize(self, archives: list[Path], output_directory: Path) -> dict:
+        """整理ジョブを投入し、終わったジョブの詳細を返す"""
+        accepted = self.client.post(
+            "/api/jobs/organize",
+            params=self.auth(),
+            json={
+                "archives": [str(archive) for archive in archives],
+                "output_directory": str(output_directory),
+                "title": "作品",
+                "author": "著者",
+                "keep_originals": True,
+            },
+        )
+        self.assertEqual(202, accepted.status_code, accepted.text)
+        job_id = accepted.json()["id"]
+        return self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
+
+    def failures(self, job: dict) -> list[dict]:
+        """結果から失敗の内訳を取り出す。形が違えばそこで落とす"""
+        result = job["result"]
+        self.assertIn("failed", result, f"失敗の内訳が結果に無い: {result}")
+        failed = result["failed"]
+        self.assertIsInstance(failed, list, f"failed が一覧ではない: {failed}")
+        for entry in failed:
+            # どのファイルが、なぜ駄目だったのか。片方だけでは伝わらない
+            self.assertIn("archive", entry, f"どのファイルか分からない: {entry}")
+            self.assertIn("reason", entry, f"理由が無い: {entry}")
+            self.assertTrue(str(entry["reason"]).strip(), f"理由が空: {entry}")
+        return failed
+
+    def test_reports_every_failure_when_nothing_was_organized(self):
+        # Arrange - 出力先に既存のファイルを指定すると、作品のディレクトリを
+        # 作る段で必ず失敗する（[Errno 20] Not a directory）
+        occupied = self.work_dir / "占有ファイル"
+        occupied.write_text("ディレクトリではない", encoding="utf-8")
+
+        # Act
+        job = self.organize([self.archive, self.second], occupied)
+
+        # Assert - 走り切ったので状態は succeeded のまま
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual([], job["result"]["produced"])
+
+        # Assert - 投入した 2 冊が、それぞれ理由付きで載る
+        failed = self.failures(job)
+        self.assertEqual(2, len(failed), f"失敗した 2 件が揃っていない: {failed}")
+        reported = [str(entry["archive"]) for entry in failed]
+        for archive in (self.archive, self.second):
+            self.assertTrue(
+                any(archive.name in name for name in reported),
+                f"{archive.name} が失敗の内訳に無い: {reported}",
+            )
+
+    def test_reports_both_sides_when_only_some_archives_fail(self):
+        # Arrange - 正常な 1 冊と、中身が ZIP ではない 1 冊
+        output = self.work_dir / "out-partial"
+
+        # Act
+        job = self.organize([self.archive, self.broken], output)
+
+        # Assert - 成功したぶんは今までどおり produced に出る
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        produced = job["result"]["produced"]
+        self.assertEqual(1, len(produced), f"成功した 1 冊が出ていない: {produced}")
+        self.assertTrue(produced[0].endswith(".zip"))
+        self.assertNotIn(self.broken.name, produced[0])
+
+        # Assert - 失敗したぶんだけが failed に出る。成功したものは混ざらない
+        failed = self.failures(job)
+        self.assertEqual(1, len(failed), f"失敗した 1 件だけのはず: {failed}")
+        self.assertIn(self.broken.name, str(failed[0]["archive"]))
+        self.assertNotIn(self.archive.name, str(failed[0]["archive"]))
+
+    def test_reports_no_failures_when_every_archive_was_organized(self):
+        # Arrange
+        output = self.work_dir / "out-all-ok"
+
+        # Act
+        job = self.organize([self.archive, self.second], output)
+
+        # Assert - 既存の挙動を壊さない
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual(2, len(job["result"]["produced"]))
+
+        # Assert - 「失敗が無い」ことも結果として言う。キーごと省くと、
+        # 失敗が無いのか、失敗を数えていないのかを画面が区別できない
+        self.assertEqual([], self.failures(job))
+
+
 if __name__ == "__main__":
     unittest.main()
