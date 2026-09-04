@@ -1,5 +1,5 @@
 import { BookOpen, TriangleAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "./lib/utils";
 import { parentDirectory } from "./path";
 import { SidecarClient } from "./api/client";
@@ -27,17 +27,58 @@ const MODES: { id: Mode; label: string }[] = [
 const isMode = (value: string | null): value is Mode =>
   MODES.some((item) => item.id === value);
 
+/**
+ * 起動時のクエリ文字列。
+ *
+ * 窓の中で移動しないので、読むのは最初の描画の一度きりでよい。効果ではなく
+ * 初期値として読むのは、どの画面をどのファイルで開くかが最初の描画から
+ * 決まっている必要があるため。後から入れ直すと、その前に既定の画面を
+ * 一度作ってしまう。
+ */
+const startupParams = () => new URLSearchParams(window.location.search);
+
+/**
+ * 画面ひとつぶんの入れ物。見えていない間も中身を捨てない。
+ *
+ * 隠すのに display:none を使う。画面の外へ逃がす・透明にするといった、
+ * 描画が生きたままの隠し方では、隠れている格子の img が残りのサムネイルを
+ * 取りに行ってしまう。display:none の中は配置そのものが行われないので、
+ * loading="lazy" の img は表示領域に入らず取りに行かない。高さも取らないため、
+ * 見えている画面の寸法にも影響しない。
+ *
+ * 見えている間は display:contents にして、この入れ物自体を配置から消す。
+ * 箱を 1 枚挟むと、パネルが作業面の flex の子であるという前提が崩れる。
+ */
+function Panel({ active, children }: { active: boolean; children: ReactNode }) {
+  return <div className={active ? "contents" : "hidden"}>{children}</div>;
+}
+
 /** ファイル整理・ページ並べ替え・サムネイル作成を切り替えて使う */
 export function App() {
   const [client, setClient] = useState<SidecarClient | null>(null);
-  const [mode, setMode] = useState<Mode>("reorder");
-  const [archive, setArchive] = useState("");
+  const [mode, setMode] = useState<Mode>(() => {
+    const requested = startupParams().get("mode");
+    return isMode(requested) ? requested : "reorder";
+  });
+  const [archive, setArchive] = useState(
+    () => startupParams().get("archive") ?? "",
+  );
   const [pages, setPages] = useState<Page[]>([]);
   const [error, setError] = useState("");
   const [health, setHealth] = useState("");
 
+  /**
+   * 一度でも開いた画面。開いた画面は隠すだけで捨てず、状態を残す。
+   *
+   * まだ開いていない画面は作らない。作れば、利用者が一度も見ていない画面の
+   * 読み込みや監視が裏で走る。
+   */
+  const [opened, setOpened] = useState<Mode[]>(() => [mode]);
+
   const [sources, setSources] = useState<string[]>([]);
-  const [outputDirectory, setOutputDirectory] = useState("");
+  const [outputDirectory, setOutputDirectory] = useState(
+    () => startupParams().get("output") ?? "",
+  );
 
   // ドロップの購読は起動時の一度きりなので、最新の状態は ref から読む
   const sourcesRef = useRef<string[]>([]);
@@ -62,16 +103,31 @@ export function App() {
     setSources(paths);
   };
 
+  /** 画面を移る。移った先は初回だけ作り、以後は隠すだけで捨てない */
+  const changeMode = (next: Mode) => {
+    setMode(next);
+    setOpened((current) =>
+      current.includes(next) ? current : [...current, next],
+    );
+  };
+
   /**
    * ページ並べ替え・サムネイル作成の対象を差し替える。
    *
    * 前の対象のページを残したまま次を読み込むと、並べ替え途中の順序が
    * 別のファイルへ持ち越される。空にしてから読み直し、編集ごと捨てる。
+   *
+   * 対象が変われば別の本なので、表紙も並べ替えも作り直しになる。作り直しに
+   * なる画面は隠れたまま抱えても残せる状態が無く、読み込みだけが走る。
+   * keep（移った先の画面）とファイル整理だけを残し、他は一旦落とす。
    */
-  const changeArchive = (path: string) => {
+  const changeArchive = (path: string, keep: Mode = modeRef.current) => {
     setPages([]);
     setArchive(path);
     setError("");
+    setOpened((current) =>
+      current.filter((item) => item === "organize" || item === keep),
+    );
   };
 
   /**
@@ -86,8 +142,8 @@ export function App() {
    * 見た目も振る舞いも従来のままになる。
    */
   const openArchiveIn = (path: string, next: HandoffMode) => {
-    changeArchive(path);
-    setMode(next);
+    changeArchive(path, next);
+    changeMode(next);
   };
 
   useEffect(() => {
@@ -108,12 +164,6 @@ export function App() {
       })
       .catch((reason) => setError(String(reason.message ?? reason)));
 
-    const params = new URLSearchParams(window.location.search);
-    setArchive(params.get("archive") ?? "");
-    setOutputDirectory(params.get("output") ?? "");
-    const requested = params.get("mode");
-    if (isMode(requested)) setMode(requested);
-
     // ネイティブ側で受けたドロップは、いま見ている画面の入力にする。
     // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直
     const pending = onFilesDropped((paths) => {
@@ -122,7 +172,7 @@ export function App() {
         if (paths.length > 0) changeArchive(paths[0]);
         return;
       }
-      setMode("organize");
+      changeMode("organize");
       changeSources([...new Set([...sourcesRef.current, ...paths])]);
     });
 
@@ -160,7 +210,7 @@ export function App() {
         <Segmented
           items={MODES.map((m) => ({ ...m, testId: `mode-${m.id}` }))}
           value={mode}
-          onChange={setMode}
+          onChange={changeMode}
         />
 
         <div className="flex-1" />
@@ -191,38 +241,48 @@ export function App() {
           </Alert>
         ) : null}
 
-        {mode === "organize" && client ? (
-          <OrganizePanel
-            client={client}
-            sources={sources}
-            onSourcesChange={changeSources}
-            outputDirectory={outputDirectory}
-            onOutputDirectoryChange={setOutputDirectory}
-            onOpenProduced={openArchiveIn}
-          />
+        {/* 一度開いた画面は、別の画面へ移っても作り直さない。作品名も
+            並べ替えの途中経過も切り抜き枠も、戻ってくればそのまま続けられる */}
+        {opened.includes("organize") && client ? (
+          <Panel active={mode === "organize"}>
+            <OrganizePanel
+              active={mode === "organize"}
+              client={client}
+              sources={sources}
+              onSourcesChange={changeSources}
+              outputDirectory={outputDirectory}
+              onOutputDirectoryChange={setOutputDirectory}
+              onOpenProduced={openArchiveIn}
+            />
+          </Panel>
         ) : null}
 
-        {mode === "thumbnail" && client && archive ? (
-          <CoverEditor
-            // 対象が変われば別の表紙。選んだ 1 枚も切り抜き枠も作り直す
-            key={archive}
-            client={client}
-            archive={archive}
-            archiveName={archiveName}
-            onChangeArchive={() => changeArchive("")}
-          />
+        {opened.includes("thumbnail") && client && archive ? (
+          <Panel active={mode === "thumbnail"}>
+            <CoverEditor
+              // 対象が変われば別の表紙。選んだ 1 枚も切り抜き枠も作り直す
+              key={archive}
+              client={client}
+              archive={archive}
+              archiveName={archiveName}
+              onChangeArchive={() => changeArchive("")}
+            />
+          </Panel>
         ) : null}
 
-        {mode === "reorder" && client && archive && pages.length > 0 ? (
-          <PageGrid
-            // 対象が変われば別の本。並べ替えの途中経過ごと作り直す
-            key={archive}
-            client={client}
-            archive={archive}
-            archiveName={archiveName}
-            pages={pages}
-            onChangeArchive={() => changeArchive("")}
-          />
+        {opened.includes("reorder") && client && archive && pages.length > 0 ? (
+          <Panel active={mode === "reorder"}>
+            <PageGrid
+              // 対象が変われば別の本。並べ替えの途中経過ごと作り直す
+              key={archive}
+              active={mode === "reorder"}
+              client={client}
+              archive={archive}
+              archiveName={archiveName}
+              pages={pages}
+              onChangeArchive={() => changeArchive("")}
+            />
+          </Panel>
         ) : null}
 
         {/* 並べ替えとサムネイル作成は同じ 1 冊を投入する。入り口も同じものを使い、

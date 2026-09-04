@@ -798,7 +798,10 @@ test.describe("ページ並べ替えの表示サイズ", () => {
 
     const backToReorder = async () => {
       await page.getByTestId("mode-organize").click();
-      await expect(page.getByTestId("page-card")).toHaveCount(0);
+      // 画面を移っても格子は作り直されず隠れるだけになった（#67）ので、
+      // カードは DOM に残る。離れたことは見えているかどうかで確かめる。
+      // カードは 1 つの入れ物ごと隠れるため、先頭を見れば全体が分かる
+      await expect(page.getByTestId("page-card").first()).toBeHidden();
       await page.getByTestId("mode-reorder").click();
       await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
       return gridLayout(page);
