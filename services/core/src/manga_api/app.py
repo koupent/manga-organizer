@@ -761,12 +761,27 @@ def create_app(
             )
             organizer.set_manga_info(author=request.author, title=request.title)
             produced: list[str] = []
+            failed: list[dict[str, str]] = []
             for index, archive in enumerate(archives, 1):
                 report(current=index, total=len(archives), message=archive.name)
                 for result in organizer.process_single_archive(archive):
                     if result.success and result.output_path:
                         produced.append(str(result.output_path))
-            return {"produced": produced}
+                        continue
+                    # process_single_archive() は処理中の例外を握りつぶして
+                    # success=False を返すので、ジョブは最後まで走り succeeded で
+                    # 終わる。ここで拾わないと「produced が空の成功」になり、
+                    # 全件失敗と「対象が 0 件だった」の区別が付かなくなる
+                    failed.append(
+                        {
+                            "archive": str(result.original_path),
+                            "reason": result.error_message or "原因不明の失敗",
+                        }
+                    )
+            # 走り切ったこと（state）と、何が出来たか（result）は別に伝える。
+            # failed はキーごと省かない。省くと画面から見て「失敗が無い」のか
+            # 「失敗を数えていない」のかを区別できない
+            return {"produced": produced, "failed": failed}
 
         _start(app, job_id, work)
         return JobAccepted(id=job_id)

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import { cn } from "../lib/utils";
 import { DirectoryPicker } from "./DirectoryPicker";
+import { FailedList, type OrganizeFailure } from "./FailedList";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
 import { OrganizeLog } from "./OrganizeLog";
@@ -38,6 +39,21 @@ const MIN_SEARCH_LENGTH = 2;
 
 /** 打つたびに問い合わせないための待ち時間 */
 const SEARCH_DELAY_MS = 400;
+
+/**
+ * 実行し終わったときの状態の文言。
+ *
+ * ジョブは 1 冊も出来なくても走り切って succeeded で終わるので、件数だけを
+ * 「整理しました」に添えると、全件失敗が「0 冊を整理しました」という成功の
+ * 報告になってしまう。出来た数と失敗した数を別々に見て文言を選ぶ。
+ */
+function organizeSummary(producedCount: number, failedCount: number): string {
+  if (failedCount === 0) return `${producedCount} 冊を整理しました`;
+  // 1 冊も出来ていないなら「整理しました」とは言わない
+  if (producedCount === 0)
+    return `整理できませんでした（${failedCount} 件失敗）`;
+  return `${producedCount} 冊を整理しました（${failedCount} 件失敗）`;
+}
 
 type OrganizePanelProps = {
   client: SidecarClient;
@@ -80,6 +96,10 @@ export function OrganizePanel({
   // 整理して出来たファイルの絶対パス。実際に出来たものだけを持つので、
   // 中断・失敗のときは空のままになる
   const [produced, setProduced] = useState<string[]>([]);
+
+  // 整理できなかったアーカイブと、その理由。ジョブは失敗しても succeeded で
+  // 終わるため、ここに出さないと処理ログを開くまで失敗に気づけない
+  const [failures, setFailures] = useState<OrganizeFailure[]>([]);
 
   // 打ち直しの途中で古い検索結果が届いても無視できるようにする
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,6 +221,7 @@ export function OrganizePanel({
     // 前回の結果はここで捨てる。今回が中断・失敗に終わったとき、前回の
     // 一覧が残っていると「今回出来たもの」に見えてしまう
     setProduced([]);
+    setFailures([]);
     setStatus("整理しています...");
     setProgress({ current: 0, total: sources.length });
 
@@ -249,13 +270,18 @@ export function OrganizePanel({
       if (job.state !== "succeeded") {
         throw new Error(job.error ?? "整理に失敗しました");
       }
-      // 状態の produced を隠さないよう別名にする。ここで扱うのは
+      // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
       // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
-      const producedPaths =
-        (job.result as { produced?: string[] } | null)?.produced ?? [];
+      const result = job.result as {
+        produced?: string[];
+        failed?: OrganizeFailure[];
+      } | null;
+      const producedPaths = result?.produced ?? [];
+      const failedEntries = result?.failed ?? [];
       setProgress({ current: sources.length, total: sources.length });
       setProduced(producedPaths);
-      setStatus(`${producedPaths.length} 冊を整理しました`);
+      setFailures(failedEntries);
+      setStatus(organizeSummary(producedPaths.length, failedEntries.length));
       loadEntries();
     } catch (error) {
       // 画面が消えたことによる打ち切りは、利用者に見せる失敗ではない
@@ -467,8 +493,8 @@ export function OrganizePanel({
 
       {/*
         作業面。処理対象の一覧が高さいっぱいを取り、実行の結果だけが
-        下に居場所を持つ。出来たファイルは処理ログの真上に置く。
-        どちらも「実行して何が起きたか」を見る所で、離すと目が往復する。
+        下に居場所を持つ。失敗と出来たファイルは処理ログの真上に置く。
+        どれも「実行して何が起きたか」を見る所で、離すと目が往復する。
       */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
         <FilePicker
@@ -478,6 +504,11 @@ export function OrganizePanel({
           disabled={running}
           fill
         />
+        {/*
+          失敗は出来たファイルより先に置く。放っておけないのはこちらで、
+          出来たぶんの一覧に押し下げられて見落とすと元も子もない。
+        */}
+        <FailedList failures={failures} />
         <ProducedList paths={produced} onOpen={onOpenProduced} />
         <OrganizeLog lines={log} />
       </div>
