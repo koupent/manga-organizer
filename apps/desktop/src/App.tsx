@@ -15,10 +15,12 @@ type Page = { name: string; size: number; modified: string };
 type Mode = "organize" | "reorder" | "thumbnail";
 
 // 対象物ではなく、そこで何ができるかでタブを名付ける
+// 使う順に並べる。整理はほぼ必ず通り、サムネイルは良し悪しが一目で分かる。
+// ページ順の異常は読んで初めて気づくもので、後から戻ってくる使い方が主になる
 const MODES: { id: Mode; label: string }[] = [
   { id: "organize", label: "ファイル整理" },
-  { id: "reorder", label: "ページ並べ替え" },
   { id: "thumbnail", label: "サムネイル作成" },
+  { id: "reorder", label: "ページ並べ替え" },
 ];
 
 const isMode = (value: string | null): value is Mode =>
