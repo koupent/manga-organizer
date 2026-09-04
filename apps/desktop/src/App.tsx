@@ -32,7 +32,6 @@ export function App() {
   const [mode, setMode] = useState<Mode>("reorder");
   const [archive, setArchive] = useState("");
   const [pages, setPages] = useState<Page[]>([]);
-  const [cardWidth, setCardWidth] = useState(220);
   const [error, setError] = useState("");
   const [health, setHealth] = useState("");
 
@@ -149,22 +148,6 @@ export function App() {
 
         <div className="flex-1" />
 
-        {mode === "reorder" ? (
-          <label className="flex items-center gap-2 text-[12px] text-ink-muted">
-            表示サイズ
-            <input
-              type="range"
-              min={140}
-              max={520}
-              step={20}
-              value={cardWidth}
-              data-testid="card-width"
-              onChange={(event) => setCardWidth(Number(event.target.value))}
-              className="h-1 w-28 cursor-pointer accent-brand"
-            />
-          </label>
-        ) : null}
-
         <span
           className="flex items-center gap-1.5 text-[11.5px] text-ink-faint"
           data-testid="connection"
@@ -220,7 +203,6 @@ export function App() {
             archive={archive}
             archiveName={archiveName}
             pages={pages}
-            cardWidth={cardWidth}
             onChangeArchive={() => changeArchive("")}
           />
         ) : null}

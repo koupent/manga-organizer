@@ -81,7 +81,9 @@ test.describe("ページ並べ替え", () => {
     await expect(cards).toHaveCount(3);
     await expect(cards.first()).toHaveAttribute("data-name", "001.jpg");
     const firstThumb = cards.first().locator("img");
-    await expect(firstThumb).toHaveJSProperty("naturalWidth", 240);
+    // サイドカーは要求幅を (160, 240, 360, 520) の段に丸める。
+    // 既定の表示サイズ 160px はその最初の段に載る
+    await expect(firstThumb).toHaveJSProperty("naturalWidth", 160);
 
     // Act - 1 枚目を 3 枚目の位置へドラッグする
     const source = cards.nth(0);
@@ -142,7 +144,8 @@ test.describe("ページ並べ替え", () => {
         `&archive=${encodeURIComponent(archive)}`,
     );
     const thumb = page.getByTestId("page-card").first().locator("img");
-    await expect(thumb).toHaveJSProperty("naturalWidth", 240);
+    // 既定の表示サイズ 160px は、サイドカーの段 (160, 240, 360, 520) の最初に載る
+    await expect(thumb).toHaveJSProperty("naturalWidth", 160);
 
     await page.getByTestId("card-width").fill("520");
     await expect(thumb).toHaveJSProperty("naturalWidth", 520);
@@ -490,5 +493,342 @@ test.describe("ページ並べ替えの対象選択", () => {
       "まとめ投入 先頭.zip",
     );
     await expect(page.getByTestId("page-card")).toHaveCount(2);
+  });
+});
+
+/**
+ * 表示サイズの置き場所と密度（UI 刷新の第 4 段階）。
+ *
+ * 決めたことは 3 つ。
+ * 1. 画面固有の操作を共通ヘッダーに置かない。他の 2 画面と構造を揃え、
+ *    表示サイズはページ並べ替えのツールバーへ移す
+ * 2. 単行本は 150〜200 ページある。1 行 5 枚では全体を見渡せないので、
+ *    既定を密（1 行 7〜8 枚）にする
+ * 3. 表示の好みは画面側の設定。再読み込みや画面の行き来で消えない
+ *
+ * 測るのは利用者から見える結果だけにする。どこに保存したか（localStorage か
+ * サイドカーか）は実装の選択であり、ここで縛ると保存先を変えた瞬間に壊れる。
+ * 「動かした後の見え方が残っているか」だけを見る。
+ */
+
+/** 実際に使う窓の大きさ。承認された受け入れ基準がこの寸法で書かれている */
+const REORDER_VIEWPORT = { width: 1280, height: 860 };
+
+/** 密度を測るためのページ数。1 行 8 枚でも 3 行に届き、行の切れ目が見える */
+const DENSE_PAGE_COUNT = 24;
+
+/**
+ * 既定で 1 行に並ぶべき枚数の下限。
+ *
+ * 1280px の窓では作業面（p-3 の内側）が 1256px、カードの間隔が 12px。
+ * n 枚並べるにはカード幅が (1256 + 12) / n - 12 以下である必要がある。
+ * 7 枚なら 169px 以下、8 枚なら 146px 以下。現行のスライダーは
+ * min=140 step=20 なので、140 で 8 枚、160 で 7 枚に届く。
+ * 目標は現行の可動域の中で到達できる（実測で確認済み）。
+ */
+const MIN_CARDS_PER_ROW = 7;
+
+/**
+ * 同じく上限。
+ *
+ * 「密にする」を、判別できない大きさまで縮めることや、1 行に全ページを
+ * 流す横スクロールの帯にすることで満たされないようにする。承認された値は
+ * 7〜8 枚なので、端の実装差を見込んでも 10 枚を超えていれば行き過ぎ。
+ */
+const MAX_CARDS_PER_ROW = 10;
+
+/** 同じ行とみなす y 座標のずれ。小数の丸めのぶんだけ許す */
+const ROW_TOLERANCE = 2;
+
+type GridLayout = {
+  total: number;
+  inFirstRow: number;
+  cardWidth: number;
+  template: string;
+};
+
+/**
+ * ツールバーの中身。
+ *
+ * ツールバーには testid が無く、クラス名（flex flex-wrap ...）は今回
+ * 書き換わる所なので目印にしない。対象ファイル名と保存ボタンの両方を含む
+ * 一番内側の祖先、という位置関係で辿る（density.spec.ts の
+ * installContentRoot() と同じ要領）。
+ */
+type ToolbarShape = {
+  holdsSlider: boolean;
+  holdsModeTabs: boolean;
+  holdsCards: boolean;
+  insideHeader: boolean;
+};
+
+/**
+ * サムネイルの並びを測る。
+ *
+ * 1 行の枚数は、最初のカードと同じ y 座標にあるカードの数で数える。
+ * grid の列指定を読むとカードが 1 枚も無くても数が出てしまうので、
+ * 実際に置かれたカードの座標だけを見る。
+ */
+async function gridLayout(page: Page): Promise<GridLayout> {
+  const measured = await page.evaluate((tolerance) => {
+    const cards = [
+      ...document.querySelectorAll<HTMLElement>('[data-testid="page-card"]'),
+    ];
+    if (cards.length === 0) return null;
+    const first = cards[0].getBoundingClientRect();
+    return {
+      total: cards.length,
+      inFirstRow: cards.filter(
+        (card) =>
+          Math.abs(card.getBoundingClientRect().top - first.top) <= tolerance,
+      ).length,
+      cardWidth: Math.round(first.width * 100) / 100,
+      template: getComputedStyle(cards[0].parentElement!).gridTemplateColumns,
+    };
+  }, ROW_TOLERANCE);
+
+  // カードが 1 枚も無いまま「1 行 0 枚」で通らないようにする
+  expect(measured, "サムネイルが 1 枚も描画されていない").not.toBeNull();
+  return measured!;
+}
+
+async function toolbarShape(page: Page): Promise<ToolbarShape | null> {
+  return page.evaluate(() => {
+    const name = document.querySelector<HTMLElement>(
+      '[data-testid="reorder-archive-name"]',
+    );
+    const save = document.querySelector<HTMLElement>('[data-testid="save"]');
+    if (!name || !save) return null;
+
+    let node: HTMLElement = name;
+    while (node.parentElement && !node.contains(save)) {
+      node = node.parentElement;
+    }
+    if (!node.contains(save)) return null;
+
+    return {
+      holdsSlider: !!node.querySelector('[data-testid="card-width"]'),
+      // 画面全体を「ツールバー」と言い張れないようにする。
+      // タブやサムネイルまで含む所まで上っていたら、それはツールバーではない
+      holdsModeTabs: !!node.querySelector('[data-testid="mode-reorder"]'),
+      holdsCards: !!node.querySelector('[data-testid="page-card"]'),
+      insideHeader: !!node.closest("header"),
+    };
+  });
+}
+
+/** 密度を測るためのアーカイブを開く。ページが並びきるまで待つ */
+async function openDenseArchive(page: Page, archive: string): Promise<void> {
+  await page.setViewportSize(REORDER_VIEWPORT);
+  await page.goto(
+    `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
+      `&archive=${encodeURIComponent(archive)}`,
+  );
+  await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
+}
+
+/**
+ * スライダーを動かし、並びが実際に組み替わるまで待つ。
+ *
+ * fill() の直後に測ると、再描画前の座標を読んでしまうことがある。
+ * 列の指定が変わったことを見てから測る。
+ */
+async function moveSlider(page: Page, value: string): Promise<GridLayout> {
+  const before = await gridLayout(page);
+  await page.getByTestId("card-width").fill(value);
+  await page.waitForFunction(
+    (previous) =>
+      getComputedStyle(
+        document.querySelector<HTMLElement>('[data-testid="page-card"]')!
+          .parentElement!,
+      ).gridTemplateColumns !== previous,
+    before.template,
+  );
+  return gridLayout(page);
+}
+
+test.describe("ページ並べ替えの表示サイズ", () => {
+  let denseArchive: string;
+
+  test.beforeAll(() => {
+    denseArchive = writeArchive(
+      sidecar.workDir,
+      "密度確認.zip",
+      Array.from({ length: DENSE_PAGE_COUNT }, (_, index) => ({
+        name: `${String(index + 1).padStart(3, "0")}.jpg`,
+        color: "#ff0000",
+      })),
+    );
+  });
+
+  test("表示サイズのスライダーが共通ヘッダーの中に無い", async ({ page }) => {
+    // Arrange
+    await openDenseArchive(page, denseArchive);
+
+    // Assert - スライダーごと消して通らないようにする。
+    // 画面のどこかに 1 つだけあることが前提
+    await expect(page.getByTestId("card-width")).toHaveCount(1);
+
+    // Assert - ヘッダーそのものは残っている（測る対象が消えていない）
+    const header = page.locator("header");
+    await expect(header).toBeVisible();
+    await expect(header.getByTestId("mode-reorder")).toHaveCount(1);
+
+    // Assert - 画面固有の操作はヘッダーに置かない
+    await expect(
+      header.getByTestId("card-width"),
+      "表示サイズのスライダーが共通ヘッダーの中にある",
+    ).toHaveCount(0);
+  });
+
+  test("表示サイズのスライダーがページ並べ替えのツールバーの中にある", async ({
+    page,
+  }) => {
+    // Arrange
+    await openDenseArchive(page, denseArchive);
+    await expect(page.getByTestId("card-width")).toHaveCount(1);
+
+    // Act - 対象ファイル名と保存ボタンを含む一番内側の祖先をツールバーとみなす
+    const toolbar = await toolbarShape(page);
+
+    // Assert - 測る対象が見つからないまま通らないようにする
+    expect(toolbar, "ツールバーが見つからない").not.toBeNull();
+    expect(toolbar!.insideHeader, "ツールバーがヘッダーの中にある").toBe(false);
+    expect(
+      toolbar!.holdsModeTabs,
+      "タブまで含む所をツールバーとして測っている",
+    ).toBe(false);
+    expect(
+      toolbar!.holdsCards,
+      "サムネイルまで含む所をツールバーとして測っている",
+    ).toBe(false);
+
+    // Assert - 対象ファイル名や保存と同じ並びに表示サイズがある
+    expect(
+      toolbar!.holdsSlider,
+      "表示サイズのスライダーがツールバーの中に無い",
+    ).toBe(true);
+  });
+
+  test(`既定でサムネイルが 1 行に ${MIN_CARDS_PER_ROW} 枚以上並ぶ`, async ({
+    page,
+  }) => {
+    // Arrange - スライダーには触れない。開いた直後の見え方を測る
+    await openDenseArchive(page, denseArchive);
+
+    // Act
+    const layout = await gridLayout(page);
+
+    // Assert - 全ページが並んでいる（数え漏らしたまま通らないようにする）
+    expect(layout.total).toBe(DENSE_PAGE_COUNT);
+
+    // Assert - 150〜200 ページを見渡せる密度が既定になっている
+    expect(
+      layout.inFirstRow,
+      `既定で 1 行 ${layout.inFirstRow} 枚（カード幅 ${layout.cardWidth}px）`,
+    ).toBeGreaterThanOrEqual(MIN_CARDS_PER_ROW);
+
+    // Assert - 判別できない大きさまで縮めたり、1 行に全ページを流す帯に
+    // したりして満たさない
+    expect(
+      layout.inFirstRow,
+      `既定で 1 行 ${layout.inFirstRow} 枚（カード幅 ${layout.cardWidth}px）は詰め過ぎ`,
+    ).toBeLessThanOrEqual(MAX_CARDS_PER_ROW);
+  });
+
+  test("表示サイズを大きくすると 1 行の枚数が減る", async ({ page }) => {
+    // Arrange
+    await openDenseArchive(page, denseArchive);
+    const before = await gridLayout(page);
+    const slider = page.getByTestId("card-width");
+    const max = await slider.getAttribute("max");
+    expect(max, "スライダーに上限が無い").not.toBeNull();
+
+    // Act - 可動域の端まで大きくする。既定値に依らず必ず「大きくする」になる
+    const after = await moveSlider(page, max!);
+
+    // Assert - 操作そのものが効いている
+    await expect(slider).toHaveValue(max!);
+
+    // Assert - 大きくしたぶんだけ 1 行に入らなくなる
+    expect(
+      after.inFirstRow,
+      `${before.inFirstRow} 枚（幅 ${before.cardWidth}px）から` +
+        `${after.inFirstRow} 枚（幅 ${after.cardWidth}px）へ変わっていない`,
+    ).toBeLessThan(before.inFirstRow);
+    expect(after.cardWidth).toBeGreaterThan(before.cardWidth);
+  });
+
+  test("表示サイズの設定が再読み込み後も残る", async ({ page }) => {
+    // Arrange - 動かす前の見え方を控える
+    await openDenseArchive(page, denseArchive);
+    const initial = await gridLayout(page);
+    const max = await page.getByTestId("card-width").getAttribute("max");
+    expect(max).not.toBeNull();
+
+    // Act - 利用者が表示サイズを決める
+    const moved = await moveSlider(page, max!);
+    expect(
+      moved.inFirstRow,
+      "動かしても見え方が変わっておらず、残ったかどうか区別できない",
+    ).not.toBe(initial.inFirstRow);
+
+    // Act - アプリを開き直したときと同じ状態にする
+    await page.reload();
+    await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
+
+    // Assert - 保存先の実装ではなく、利用者から見える結果で確かめる
+    const reloaded = await gridLayout(page);
+    expect(
+      reloaded.inFirstRow,
+      `再読み込みで 1 行 ${moved.inFirstRow} 枚から ${reloaded.inFirstRow} 枚へ戻った` +
+        `（開いた直後は ${initial.inFirstRow} 枚）`,
+    ).toBe(moved.inFirstRow);
+
+    // Assert - スライダーのつまみの位置も、利用者が決めた所のまま
+    await expect(page.getByTestId("card-width")).toHaveValue(max!);
+  });
+
+  test("表示サイズの設定が画面を移って戻っても残る", async ({ page }) => {
+    // Arrange
+    await openDenseArchive(page, denseArchive);
+    const initial = await gridLayout(page);
+    const max = await page.getByTestId("card-width").getAttribute("max");
+    expect(max).not.toBeNull();
+
+    const backToReorder = async () => {
+      await page.getByTestId("mode-organize").click();
+      await expect(page.getByTestId("page-card")).toHaveCount(0);
+      await page.getByTestId("mode-reorder").click();
+      await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
+      return gridLayout(page);
+    };
+
+    // Act - 表示サイズを決める
+    const moved = await moveSlider(page, max!);
+    expect(
+      moved.inFirstRow,
+      "動かしても見え方が変わっておらず、残ったかどうか区別できない",
+    ).not.toBe(initial.inFirstRow);
+
+    // Act & Assert - ファイル整理へ移って戻る。
+    // 表示サイズをツールバー（PageGrid）へ移すと、この往復で画面ごと
+    // 作り直される。今は App が値を持っているので往復では消えない
+    const returned = await backToReorder();
+    expect(
+      returned.inFirstRow,
+      `画面を往復したら 1 行 ${moved.inFirstRow} 枚から ${returned.inFirstRow} 枚へ戻った`,
+    ).toBe(moved.inFirstRow);
+
+    // Act & Assert - 開き直してからもう一度往復する。
+    // 「別の画面を開いたままアプリを閉じ、次に開いて戻ってくる」使い方
+    await page.reload();
+    await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
+    const afterRestart = await backToReorder();
+    expect(
+      afterRestart.inFirstRow,
+      `開き直して往復したら 1 行 ${moved.inFirstRow} 枚から ${afterRestart.inFirstRow} 枚へ戻った` +
+        `（開いた直後は ${initial.inFirstRow} 枚）`,
+    ).toBe(moved.inFirstRow);
   });
 });
