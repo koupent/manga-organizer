@@ -7,6 +7,7 @@ import { CoverEditor } from "./components/CoverEditor";
 import { FilePicker } from "./components/FilePicker";
 import { PageGrid } from "./components/PageGrid";
 import { OrganizePanel } from "./components/OrganizePanel";
+import type { HandoffMode } from "./components/ProducedList";
 import { onFilesDropped, resolveConnection } from "./connection";
 import { Alert } from "./components/ui/alert";
 import { Segmented } from "./components/ui/segmented";
@@ -71,6 +72,22 @@ export function App() {
     setPages([]);
     setArchive(path);
     setError("");
+  };
+
+  /**
+   * 指定したファイルを読み込んだ状態で、その画面へ移る。
+   *
+   * ファイル整理で出来たファイルから次の作業へ移るための近道。対象と画面を
+   * 同時に決めるので、移った先で選び直す必要がない。対象を先に入れてから
+   * 画面を切り替えるのではなく一度に済ませるのは、対象の無い状態を経由すると
+   * 移った先で一瞬ファイル選択が出てしまうため。
+   *
+   * 各機能は今までどおり単独でも使える。ここを通らなければ、移った先の
+   * 見た目も振る舞いも従来のままになる。
+   */
+  const openArchiveIn = (path: string, next: HandoffMode) => {
+    changeArchive(path);
+    setMode(next);
   };
 
   useEffect(() => {
@@ -181,6 +198,7 @@ export function App() {
             onSourcesChange={changeSources}
             outputDirectory={outputDirectory}
             onOutputDirectoryChange={setOutputDirectory}
+            onOpenProduced={openArchiveIn}
           />
         ) : null}
 
