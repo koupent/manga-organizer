@@ -327,6 +327,126 @@ class CoverEditTest(ApiTestBase):
         self.assertIn("90", job["error"])
 
 
+# サムネイル移動の検証用。ページごとに違う色を塗り、移動後も中身で見分ける。
+# 連番でない名前にして、先頭移動に伴う振り直しが起きたかどうかも見えるようにする
+THUMBNAIL_PAGES = (
+    ("page-a.jpg", "red"),
+    ("page-b.jpg", "lime"),
+    ("page-c.jpg", "blue"),
+)
+
+_COLOR_SAMPLES = {"red": (255, 0, 0), "lime": (0, 255, 0), "blue": (0, 0, 255)}
+
+
+def closest_color_name(pixel: tuple[int, int, int]) -> str:
+    """画素に最も近い色名を返す。JPEG の劣化があっても見分けられるようにする"""
+
+    def squared_distance(name: str) -> int:
+        sample = _COLOR_SAMPLES[name]
+        return sum((pixel[index] - sample[index]) ** 2 for index in range(3))
+
+    return min(_COLOR_SAMPLES, key=squared_distance)
+
+
+def page_colors(archive_path: Path) -> list[str]:
+    """ページの色名を viewer と同じ辞書順で返す。どの絵が何ページ目かを見る"""
+    with zipfile.ZipFile(archive_path) as archive:
+        names = sorted(archive.namelist())
+        colors = []
+        for name in names:
+            with Image.open(io.BytesIO(archive.read(name))) as opened:
+                image = opened.convert("RGB")
+                colors.append(
+                    closest_color_name(image.getpixel((image.width // 2, 10)))
+                )
+        return colors
+
+
+def page_sizes(archive_path: Path) -> dict[str, tuple[int, int]]:
+    """エントリ名ごとの画像サイズ。加工が効いた 1 枚を見分ける"""
+    with zipfile.ZipFile(archive_path) as archive:
+        sizes = {}
+        for name in archive.namelist():
+            with Image.open(io.BytesIO(archive.read(name))) as image:
+                sizes[name] = image.size
+        return sizes
+
+
+class CoverMakeFirstTest(ApiTestBase):
+    """選んだ 1 枚をサムネイル（先頭ページ）にする経路。
+
+    viewer は辞書順の先頭を表紙として描くため、途中の絵をサムネイルにするには
+    先頭へ移すしかない。その指示が API を素通りしていないことを確かめる。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.pages = self.work_dir / "pages.zip"
+        with zipfile.ZipFile(self.pages, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, color in THUMBNAIL_PAGES:
+                archive.writestr(name, make_page(color))
+
+    def submit(self, payload: dict) -> dict:
+        """加工ジョブを投げて、完了したジョブの内容を返す"""
+        submitted = self.client.post(
+            "/api/jobs/cover",
+            params=self.auth(),
+            json={"archive": str(self.pages)} | payload,
+        )
+        self.assertEqual(202, submitted.status_code, submitted.text)
+        return self.client.get(
+            f"/api/jobs/{submitted.json()['id']}", params=self.auth()
+        ).json()
+
+    def test_moves_the_chosen_page_to_the_front(self):
+        # Act - 真ん中の page-b.jpg（lime）をサムネイルにする
+        job = self.submit({"name": "page-b.jpg", "make_first": True})
+
+        # Assert - 選んだ絵が先頭に来て、残りは元の順のまま続く
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual(
+            ["lime", "red", "blue"],
+            page_colors(self.pages),
+            "選んだ絵が先頭ページになっていない",
+        )
+        with zipfile.ZipFile(self.pages) as archive:
+            names = sorted(archive.namelist())
+        self.assertEqual(len(THUMBNAIL_PAGES), len(names), "ページ数が変わっている")
+        self.assertEqual(
+            ["001.jpg", "002.jpg", "003.jpg"], names, "連番へ振り直されていない"
+        )
+        self.assertEqual("001.jpg", job["result"]["name"])
+
+    def test_applies_the_transform_to_the_page_it_moves(self):
+        # Act - 切り抜きと先頭移動を同時に頼む
+        job = self.submit(
+            {"name": "page-b.jpg", "crop": [100, 150, 500, 750], "make_first": True}
+        )
+
+        # Assert - 先頭が切り抜き後の寸法で、色も選んだ 1 枚のもの
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        sizes = page_sizes(self.pages)
+        self.assertEqual((400, 600), sizes["001.jpg"], "先頭が切り抜かれていない")
+        self.assertEqual((800, 1200), sizes["002.jpg"], "他のページまで加工している")
+        self.assertEqual(["lime", "red", "blue"], page_colors(self.pages))
+
+    def test_replaces_in_place_when_make_first_is_omitted(self):
+        # Act - make_first を省くと従来どおり同じ位置で差し替わる
+        job = self.submit({"name": "page-b.jpg", "crop": [100, 150, 500, 750]})
+
+        # Assert - 並びも名前も変わらず、加工されたのは指定した 1 枚だけ
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual(["red", "lime", "blue"], page_colors(self.pages))
+        sizes = page_sizes(self.pages)
+        self.assertEqual(
+            {"page-a.jpg", "page-b.jpg", "page-c.jpg"},
+            set(sizes),
+            "先頭移動を頼んでいないのに名前が変わっている",
+        )
+        self.assertEqual((400, 600), sizes["page-b.jpg"])
+        self.assertEqual((800, 1200), sizes["page-a.jpg"])
+
+
 class LibraryTest(ApiTestBase):
     """タイトル・著者の辞書。現行 Tkinter アプリの DB 編集画面の置き換え"""
 

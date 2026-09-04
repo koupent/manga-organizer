@@ -23,6 +23,7 @@ from manga_core.cover_editor import (  # noqa: E402
     is_spread,
     transform_image,
 )
+from manga_core.viewer_contract import is_viewer_page, sequential_name  # noqa: E402
 
 
 def image_bytes(size: tuple[int, int], fmt: str = "JPEG", color="navy") -> bytes:
@@ -39,6 +40,62 @@ def spread_bytes() -> bytes:
     buffer = io.BytesIO()
     canvas.save(buffer, "JPEG", quality=95)
     return buffer.getvalue()
+
+
+# サムネイル移動の検証用。ページごとに違う色を塗り、移動後も中身を見分けられる。
+# 連番になっていない名前にして、振り直しが起きたかどうかを見えるようにする
+PAGE_COLORS = (
+    ("page-1.jpg", "red"),
+    ("page-2.jpg", "lime"),
+    ("page-3.jpg", "blue"),
+    ("page-4.jpg", "yellow"),
+)
+PAGE_COUNT = len(PAGE_COLORS)
+
+_COLOR_SAMPLES = {
+    "red": (255, 0, 0),
+    "lime": (0, 255, 0),
+    "blue": (0, 0, 255),
+    "yellow": (255, 255, 0),
+}
+
+
+def closest_color_name(pixel: tuple[int, int, int]) -> str:
+    """画素に最も近い色名を返す。JPEG の劣化があっても見分けられるようにする"""
+
+    def squared_distance(name: str) -> int:
+        sample = _COLOR_SAMPLES[name]
+        return sum((pixel[index] - sample[index]) ** 2 for index in range(3))
+
+    return min(_COLOR_SAMPLES, key=squared_distance)
+
+
+def center_pixel(data: bytes) -> tuple[int, int, int]:
+    """画像の中心の画素。切り抜き後でも塗った色が残る位置を見る"""
+    with Image.open(io.BytesIO(data)) as opened:
+        image = opened.convert("RGB")
+        return image.getpixel((image.width // 2, image.height // 2))
+
+
+def archive_page_names(archive_path: Path) -> list[str]:
+    """viewer がページとして読むエントリ名を、viewer と同じ辞書順で返す"""
+    with zipfile.ZipFile(archive_path) as archive:
+        return sorted(name for name in archive.namelist() if is_viewer_page(name))
+
+
+def archive_page_colors(archive_path: Path) -> list[str]:
+    """ページの色名を viewer の並び順で返す。どの絵が何ページ目かを見る"""
+    with zipfile.ZipFile(archive_path) as archive:
+        return [
+            closest_color_name(center_pixel(archive.read(name)))
+            for name in archive_page_names(archive_path)
+        ]
+
+
+def archive_snapshot(archive_path: Path) -> list[tuple[str, bytes]]:
+    """エントリ名と中身の対を格納順に並べて返す。壊れていないか比べる用"""
+    with zipfile.ZipFile(archive_path) as archive:
+        return [(name, archive.read(name)) for name in archive.namelist()]
 
 
 class IsSpreadTest(unittest.TestCase):
@@ -222,6 +279,149 @@ class ApplyToArchiveTest(unittest.TestCase):
     def test_cover_aspect_ratio_matches_the_viewer(self):
         # viewer は AspectRatio(2/3) で描く
         self.assertAlmostEqual(2 / 3, COVER_ASPECT_RATIO)
+
+
+class ApplyToArchiveMakeFirstTest(unittest.TestCase):
+    """選んだ画像を先頭ページへ移してサムネイルにする振る舞い。
+
+    viewer は先頭ページを表紙として描くため、選んだ画像を先頭へ動かす以外に
+    サムネイルを差し替える方法がない。本文側に同じ絵は残さず、ページ数は変えない。
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.work_dir = Path(self._temp.name)
+        self.archive = self.work_dir / "volume.zip"
+        with zipfile.ZipFile(self.archive, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("ComicInfo.xml", b"<ComicInfo/>")
+            for name, color in PAGE_COLORS:
+                archive.writestr(name, image_bytes((800, 1200), color=color))
+
+    def test_moves_the_chosen_page_to_the_front(self):
+        # Arrange - 真ん中の page-3.jpg（青）をサムネイルにする
+        chosen_color = dict(PAGE_COLORS)["page-3.jpg"]
+
+        # Act
+        result = apply_to_archive(
+            self.archive, "page-3.jpg", CoverTransform(), make_first=True
+        )
+
+        # Assert
+        colors = archive_page_colors(self.archive)
+        self.assertEqual(chosen_color, colors[0], "選んだ絵が先頭ページになっていない")
+        self.assertEqual(
+            sequential_name(1, PAGE_COUNT, ".jpg"),
+            result.name,
+            "戻り値が先頭ページの名前を指していない",
+        )
+
+    def test_renumbers_every_page_sequentially(self):
+        # Arrange
+        expected = [
+            sequential_name(position, PAGE_COUNT, ".jpg")
+            for position in range(1, PAGE_COUNT + 1)
+        ]
+
+        # Act
+        apply_to_archive(self.archive, "page-3.jpg", CoverTransform(), make_first=True)
+
+        # Assert
+        self.assertEqual(expected, archive_page_names(self.archive))
+        colors = archive_page_colors(self.archive)
+        self.assertEqual(PAGE_COUNT, len(colors), "ページ数が変わっている")
+        self.assertEqual(
+            PAGE_COUNT, len(set(colors)), "選んだ絵が本文側にも残って重複している"
+        )
+
+    def test_keeps_the_relative_order_of_the_other_pages(self):
+        # Arrange - page-2 を先頭にしたら、残りは元の順のまま続く
+        colors = dict(PAGE_COLORS)
+        expected = [
+            colors["page-2.jpg"],
+            colors["page-1.jpg"],
+            colors["page-3.jpg"],
+            colors["page-4.jpg"],
+        ]
+
+        # Act
+        apply_to_archive(self.archive, "page-2.jpg", CoverTransform(), make_first=True)
+
+        # Assert
+        self.assertEqual(expected, archive_page_colors(self.archive))
+
+    def test_keeps_the_order_when_the_chosen_page_is_already_first(self):
+        # Arrange
+        expected_colors = [color for _, color in PAGE_COLORS]
+        expected_names = [
+            sequential_name(position, PAGE_COUNT, ".jpg")
+            for position in range(1, PAGE_COUNT + 1)
+        ]
+
+        # Act - 既に先頭の page-1.jpg を指定する
+        apply_to_archive(self.archive, "page-1.jpg", CoverTransform(), make_first=True)
+
+        # Assert
+        self.assertEqual(expected_colors, archive_page_colors(self.archive))
+        self.assertEqual(expected_names, archive_page_names(self.archive))
+
+    def test_applies_the_transform_to_the_page_it_moves(self):
+        # Arrange - 加工（切り抜き）と先頭移動が両方効くこと
+        chosen_color = dict(PAGE_COLORS)["page-3.jpg"]
+
+        # Act
+        result = apply_to_archive(
+            self.archive,
+            "page-3.jpg",
+            CoverTransform(crop=(100, 150, 500, 750)),
+            make_first=True,
+        )
+
+        # Assert
+        self.assertEqual((400, 600), (result.width, result.height))
+        with zipfile.ZipFile(self.archive) as archive:
+            first = archive.read(archive_page_names(self.archive)[0])
+        with Image.open(io.BytesIO(first)) as cover:
+            self.assertEqual((400, 600), cover.size, "先頭が切り抜き後の寸法でない")
+        self.assertEqual(chosen_color, closest_color_name(center_pixel(first)))
+
+    def test_leaves_the_archive_intact_when_the_page_is_missing(self):
+        # Arrange
+        before = archive_snapshot(self.archive)
+
+        # Act / Assert
+        with self.assertRaises(CoverEditError):
+            apply_to_archive(
+                self.archive, "missing.jpg", CoverTransform(), make_first=True
+            )
+        self.assertEqual(before, archive_snapshot(self.archive))
+
+    def test_leaves_the_archive_intact_when_the_crop_is_invalid(self):
+        # Arrange
+        before = archive_snapshot(self.archive)
+
+        # Act / Assert - 画像の外を指す切り抜きは通らない
+        with self.assertRaises(CoverEditError):
+            apply_to_archive(
+                self.archive,
+                "page-3.jpg",
+                CoverTransform(crop=(0, 0, 900, 1300)),
+                make_first=True,
+            )
+        self.assertEqual(before, archive_snapshot(self.archive))
+
+    def test_preserves_the_archive_timestamp(self):
+        # Arrange
+        import os
+
+        past = 1_500_000_000
+        os.utime(self.archive, (past, past))
+
+        # Act
+        apply_to_archive(self.archive, "page-3.jpg", CoverTransform(), make_first=True)
+
+        # Assert
+        self.assertEqual(past, int(self.archive.stat().st_mtime))
 
 
 if __name__ == "__main__":

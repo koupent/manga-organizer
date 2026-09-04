@@ -538,7 +538,7 @@
     "/api/cover": {
       "get": {
         "summary": "Cover",
-        "description": "表紙（先頭ページ）の状態を返す。\n\nviewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が\n見えない。UI で加工を促せるよう、見開きかどうかを添える。",
+        "description": "サムネイルにする候補 1 枚の状態を返す。name を省くと先頭ページ。\n\nviewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が\n見えない。UI で加工を促せるよう、見開きかどうかを添える。\n\n寸法と見開き判定をここで返すのは、UI が切り抜き枠を元画像の画素へ\n写すのに必要だから。画面側で画像から測り直すと、判定の基準が\nサーバーと二重になり、片方だけずれても気づけない。",
         "operationId": "cover_api_cover_get",
         "parameters": [
           {
@@ -548,6 +548,22 @@
             "schema": {
               "type": "string",
               "title": "Archive"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Name"
             }
           },
           {
@@ -1039,6 +1055,12 @@
             "title": "Rotate",
             "description": "回転角。90 度単位",
             "default": 0
+          },
+          "make_first": {
+            "type": "boolean",
+            "title": "Make First",
+            "description": "加工した 1 枚を先頭ページ（サムネイル）へ移すかどうか",
+            "default": false
           }
         },
         "type": "object",

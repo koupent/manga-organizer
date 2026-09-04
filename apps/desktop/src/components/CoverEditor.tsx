@@ -1,5 +1,9 @@
 import {
+  Check,
+  FolderOpen,
   Image as ImageIcon,
+  Images,
+  RotateCcw,
   RotateCw,
   SplitSquareHorizontal,
   TriangleAlert,
@@ -8,12 +12,19 @@ import { useEffect, useState } from "react";
 import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Card, CardBody } from "./ui/card";
+import { Card, CardBody, CardHeader } from "./ui/card";
+import {
+  CropFrame,
+  TARGET_RATIO,
+  defaultCrop,
+  toCropBox,
+  type CropRect,
+} from "./CropFrame";
 import { Empty } from "./ui/empty";
 import type { SidecarClient } from "../api/client";
 
-/** viewer が表紙を描く枠の縦横比 */
-const TARGET_RATIO = 2 / 3;
+/** 候補一覧に出す見本の幅。原寸を並べると読み込みが重い */
+const CANDIDATE_WIDTH = 120;
 
 type Cover = {
   name: string;
@@ -23,47 +34,72 @@ type Cover = {
   target_aspect_ratio: number;
 };
 
+/** 1 回の加工でサイドカーへ頼む内容。対象は画面が持っているので添えない */
+type CoverEdit = {
+  split?: "left" | "right";
+  rotate?: number;
+  crop?: CropRect;
+  makeFirst?: boolean;
+};
+
 type CoverEditorProps = {
   client: SidecarClient;
   archive: string;
   archiveName?: string;
+  onChangeArchive?: () => void;
 };
 
 /**
- * 表紙の加工画面。
+ * サムネイル作成の画面。
  *
- * viewer は表紙を縦長 2:3 に中央クロップして描くため、見開きが先頭にあると
- * 表紙が見えない。分割・回転で整える。
+ * viewer は辞書順で先頭のページを表紙として描き、縦長 2:3 に中央クロップする。
+ * どの絵をサムネイルにするか選び、2:3 に切り抜いて先頭ページへ移す。
+ * 見開きが先頭にある場合の分割・回転もここで行う。
  */
 export function CoverEditor({
   client,
   archive,
   archiveName,
+  onChangeArchive,
 }: CoverEditorProps) {
+  const [pages, setPages] = useState<string[]>([]);
+  const [selected, setSelected] = useState("");
   const [cover, setCover] = useState<Cover | null>(null);
+  // 枠を触っていない間は null。初期状態は画像の寸法から毎回導く
+  const [crop, setCrop] = useState<CropRect | null>(null);
+  const [choosing, setChoosing] = useState(false);
   const [status, setStatus] = useState("");
   const [running, setRunning] = useState(false);
+  // 加工しても名前は変わらないことがある。ブラウザの画像キャッシュを外す鍵
   const [reloadKey, setReloadKey] = useState(0);
 
-  // 対象が変わったときだけ表示を初期化する。加工後の再読み込みで
-  // 「加工しました」を消さないよう、reloadKey とは分ける
   useEffect(() => {
-    setStatus("");
-    setCover(null);
-  }, [archive]);
-
-  useEffect(() => {
-    if (!archive) return;
     client
-      .cover(archive)
-      .then((payload) => setCover(payload as Cover))
+      .listPages(archive)
+      .then((payload) => {
+        const names = payload.pages.map((page) => page.name);
+        setPages(names);
+        // 既定は先頭ページ。選び直した後は、その 1 枚が残っている限り保つ
+        setSelected((current) =>
+          names.includes(current) ? current : (names[0] ?? ""),
+        );
+      })
       .catch((reason) => setStatus(String(reason.message ?? reason)));
   }, [client, archive, reloadKey]);
 
-  const apply = async (transform: {
-    split?: "left" | "right";
-    rotate?: number;
-  }) => {
+  useEffect(() => {
+    if (!selected) return;
+    client
+      .cover(archive, selected)
+      .then((payload) => {
+        setCover(payload as Cover);
+        // 別の絵になれば枠の意味も変わる。持ち越さず初期状態から始める
+        setCrop(null);
+      })
+      .catch((reason) => setStatus(String(reason.message ?? reason)));
+  }, [client, archive, selected, reloadKey]);
+
+  const apply = async (edit: CoverEdit) => {
     if (!cover) return;
     setRunning(true);
     setStatus("加工しています...");
@@ -71,14 +107,18 @@ export function CoverEditor({
       const accepted = await client.editCover({
         archive,
         name: cover.name,
-        split: transform.split ?? null,
-        crop: null,
-        rotate: transform.rotate ?? 0,
+        split: edit.split ?? null,
+        crop: edit.crop ? toCropBox(edit.crop, cover) : null,
+        rotate: edit.rotate ?? 0,
+        make_first: edit.makeFirst ?? false,
       });
       const job = await client.waitForJob(accepted.id);
       if (job.state !== "succeeded") {
         throw new Error(job.error ?? "加工に失敗しました");
       }
+      // 先頭へ移すと連番が振り直される。加工した 1 枚を新しい名前で追い続ける
+      const produced = job.result as { name?: string } | null;
+      if (produced?.name) setSelected(produced.name);
       setStatus("表紙を加工しました");
       setReloadKey((key) => key + 1);
     } catch (error) {
@@ -98,11 +138,29 @@ export function CoverEditor({
 
   const ratio = cover.width / cover.height;
   const fitsFrame = Math.abs(ratio - TARGET_RATIO) < 0.05;
+  const frame = crop ?? defaultCrop(cover);
+  const imageUrl = `${client.imageUrl(archive, cover.name)}&v=${reloadKey}`;
 
   return (
     <section className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-[13px] font-semibold">{archiveName ?? "表紙"}</h2>
+        <h2
+          className="text-[13px] font-semibold"
+          data-testid="thumbnail-archive-name"
+        >
+          {archiveName ?? "表紙"}
+        </h2>
+        {onChangeArchive ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="change-archive"
+            onClick={onChangeArchive}
+          >
+            <FolderOpen />
+            別のファイルを選ぶ
+          </Button>
+        ) : null}
         <span className="text-[12px] text-ink-faint" data-testid="cover-name">
           {cover.name}
         </span>
@@ -133,7 +191,27 @@ export function CoverEditor({
       <Card>
         <CardBody className="flex flex-wrap items-center gap-2">
           <Button
-            variant="primary"
+            variant="secondary"
+            size="sm"
+            data-testid="choose-page"
+            disabled={running}
+            onClick={() => setChoosing((open) => !open)}
+          >
+            <Images />
+            {choosing ? "候補を閉じる" : "サムネイルにする画像を選ぶ"}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="crop-reset"
+            disabled={running}
+            onClick={() => setCrop(null)}
+          >
+            <RotateCcw />
+            枠を戻す
+          </Button>
+          <Button
+            variant="secondary"
             size="sm"
             data-testid="split-right"
             disabled={running}
@@ -161,20 +239,71 @@ export function CoverEditor({
             <RotateCw />
             90 度回す
           </Button>
+          <div className="flex-1" />
+          <Button
+            variant="primary"
+            size="sm"
+            data-testid="apply-thumbnail"
+            disabled={running}
+            onClick={() => apply({ crop: frame, makeFirst: true })}
+          >
+            <Check />
+            この範囲をサムネイルにする
+          </Button>
         </CardBody>
       </Card>
+
+      {choosing ? (
+        <Card data-testid="page-candidates">
+          <CardHeader>
+            <span className="text-[12px] text-ink-muted">
+              サムネイルにする 1 枚を選ぶと、確定したときに先頭ページへ移ります
+            </span>
+          </CardHeader>
+          <ul className="flex max-h-72 flex-wrap gap-2 overflow-y-auto p-2">
+            {pages.map((name) => (
+              <li key={name}>
+                <button
+                  type="button"
+                  data-testid="thumbnail-candidate"
+                  data-name={name}
+                  aria-pressed={name === cover.name}
+                  className="flex w-28 flex-col items-center gap-1 rounded border border-line p-1 hover:border-brand"
+                  onClick={() => {
+                    setSelected(name);
+                    setChoosing(false);
+                  }}
+                >
+                  <img
+                    className="max-h-28 rounded"
+                    src={`${client.thumbnailUrl(archive, name, CANDIDATE_WIDTH)}&v=${reloadKey}`}
+                    alt={name}
+                  />
+                  <span className="w-full truncate text-[11px] text-ink-muted">
+                    {name}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
 
       <div className="flex flex-wrap items-start gap-6">
         <figure className="m-0 flex flex-col gap-1.5">
           <figcaption className="text-[12px] font-medium text-ink-muted">
-            実際の画像
+            切り抜く範囲（枠は 2:3 固定。掴んで動かせます）
           </figcaption>
-          <img
-            data-testid="cover-image"
-            className="max-h-96 rounded border border-line"
-            src={`${client.imageUrl(archive, cover.name)}&v=${reloadKey}`}
-            alt={cover.name}
-          />
+          {/* 枠の位置を画像そのものに合わせるため、枠線は外側の箱に持たせる */}
+          <div className="relative self-start overflow-hidden rounded border border-line">
+            <img
+              data-testid="cover-image"
+              className="block max-h-96"
+              src={imageUrl}
+              alt={cover.name}
+            />
+            <CropFrame image={cover} crop={frame} onChange={setCrop} />
+          </div>
         </figure>
         <figure className="m-0 flex flex-col gap-1.5">
           <figcaption className="text-[12px] font-medium text-ink-muted">
@@ -186,7 +315,7 @@ export function CoverEditor({
           >
             <img
               className="size-full object-cover"
-              src={`${client.imageUrl(archive, cover.name)}&v=${reloadKey}`}
+              src={imageUrl}
               alt="viewer での見え方"
             />
           </div>

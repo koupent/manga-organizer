@@ -106,8 +106,12 @@ export class SidecarClient {
     return this.request<PagesResponse>("/api/pages", { archive });
   }
 
-  cover(archive: string): Promise<CoverResponse> {
-    return this.request<CoverResponse>("/api/cover", { archive });
+  /** サムネイル候補 1 枚の寸法と見開き判定。name を省くと先頭ページ */
+  cover(archive: string, name?: string): Promise<CoverResponse> {
+    return this.request<CoverResponse>(
+      "/api/cover",
+      name ? { archive, name } : { archive },
+    );
   }
 
   reorder(archive: string, order: string[]): Promise<JobAccepted> {

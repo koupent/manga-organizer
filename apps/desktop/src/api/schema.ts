@@ -192,10 +192,14 @@ export interface paths {
     };
     /**
      * Cover
-     * @description 表紙（先頭ページ）の状態を返す。
+     * @description サムネイルにする候補 1 枚の状態を返す。name を省くと先頭ページ。
      *
      *     viewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が
      *     見えない。UI で加工を促せるよう、見開きかどうかを添える。
+     *
+     *     寸法と見開き判定をここで返すのは、UI が切り抜き枠を元画像の画素へ
+     *     写すのに必要だから。画面側で画像から測り直すと、判定の基準が
+     *     サーバーと二重になり、片方だけずれても気づけない。
      */
     get: operations["cover_api_cover_get"];
     put?: never;
@@ -399,6 +403,12 @@ export interface components {
        * @default 0
        */
       rotate: number;
+      /**
+       * Make First
+       * @description 加工した 1 枚を先頭ページ（サムネイル）へ移すかどうか
+       * @default false
+       */
+      make_first: boolean;
     };
     /**
      * CoverView
@@ -1022,6 +1032,7 @@ export interface operations {
     parameters: {
       query: {
         archive: string;
+        name?: string | null;
         /** @description 使い捨てトークン */
         token?: string;
       };

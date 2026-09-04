@@ -100,9 +100,11 @@ test.describe("ページ並べ替え", () => {
     );
     await expect(cards.nth(2)).toHaveAttribute("data-name", "001.jpg");
 
-    // Act - 保存する。dnd-kit はドラッグ直後の 1 クリックを抑止するので、
-    // 実際の操作と同じくいったんマウスを離してから押す
+    // Act - 保存する。
+    // dnd-kit はドラッグ終了から 50ms のあいだ click を document で止める。
+    // 人はその間に押せないので、実際の操作と同じだけ間を空けてから押す
     await page.mouse.move(5, 5);
+    await page.waitForTimeout(100);
     await page.getByTestId("save").click();
     await expect(page.getByTestId("status")).toContainText(
       "3 ページを並び替えました",
@@ -397,9 +399,11 @@ test.describe("ページ並べ替えの対象選択", () => {
     );
     await expect(cards.nth(2)).toHaveAttribute("data-name", "001.jpg");
 
-    // Act - 保存する。dnd-kit はドラッグ直後の 1 クリックを抑止するので、
-    // 実際の操作と同じくいったんマウスを離してから押す
+    // Act - 保存する。
+    // dnd-kit はドラッグ終了から 50ms のあいだ click を document で止める。
+    // 人はその間に押せないので、実際の操作と同じだけ間を空けてから押す
     await page.mouse.move(5, 5);
+    await page.waitForTimeout(100);
     await page.getByTestId("save").click();
     await expect(page.getByTestId("status")).toContainText(
       "3 ページを並び替えました",

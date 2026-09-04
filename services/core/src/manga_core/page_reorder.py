@@ -14,6 +14,7 @@ import tempfile
 import threading
 import zipfile
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -123,15 +124,19 @@ def _copy_entry(
     info: zipfile.ZipInfo,
     arcname: str,
     convert: bool = False,
+    replacement: bytes | None = None,
 ) -> None:
     """エントリを新しい名前でコピーする。
 
     viewer が読めない形式のときだけ変換し、それ以外はバイト列を変えない。
+    replacement を渡すとその中身で差し替える。差し替える側は呼び出し元が
+    viewer の読める形式に整えて渡すので、ここでは変換しない。
     """
-    data = source.read(info)
-    converted = convert and needs_conversion(info.filename)
-    if converted:
+    rewritten = replacement is not None
+    data = replacement if rewritten else source.read(info)
+    if not rewritten and convert and needs_conversion(info.filename):
         data = _convert_to_png(data)
+        rewritten = True
     copied = zipfile.ZipInfo(arcname, date_time=info.date_time)
     copied.compress_type = info.compress_type
     copied.external_attr = info.external_attr
@@ -139,8 +144,8 @@ def _copy_entry(
     copied.create_system = info.create_system
     copied.comment = info.comment
     copied.extra = _portable_extra(info.extra)
-    if converted:
-        # 元の圧縮方式は変換後のバイト列に対しては意味を持たない
+    if rewritten:
+        # 元の圧縮方式は書き換えた後のバイト列に対しては意味を持たない
         copied.compress_type = zipfile.ZIP_DEFLATED
     level = DEFLATE_LEVEL if copied.compress_type == zipfile.ZIP_DEFLATED else None
     destination.writestr(copied, data, compresslevel=level)
@@ -198,16 +203,29 @@ class ZipPageEditor:
                 self._handle.close()
                 self._handle = None
 
-    def apply_order(self, ordered_names, progress=None) -> ReorderResult:
-        """指定された順序で連番を振り直し、ZIP をその場で置き換える"""
+    def apply_order(
+        self,
+        ordered_names,
+        progress=None,
+        replacements: Mapping[str, bytes] | None = None,
+    ) -> ReorderResult:
+        """指定された順序で連番を振り直し、ZIP をその場で置き換える。
+
+        replacements を渡すと、そのページだけ中身を差し替えたうえで並べ替える。
+        並べ替えと差し替えを 1 回の書き直しで済ませることで、片方だけ適用された
+        中途半端なアーカイブが残らない。
+        """
         with self._lock:
             ordered = tuple(ordered_names)
             self._validate_order(ordered)
+            replaced = dict(replacements or {})
+            self._validate_replacements(ordered, replaced)
             renames = self._build_renames(ordered)
 
             current = tuple(page.name for page in self._pages)
             renamed_nothing = all(old == new for old, new in renames.items())
-            if renamed_nothing and ordered == current:
+            # 差し替えがあるなら、名前と順序が同じでも書き直さないと中身が変わらない
+            if not replaced and renamed_nothing and ordered == current:
                 return ReorderResult(
                     changed=False,
                     page_count=len(ordered),
@@ -219,8 +237,9 @@ class ZipPageEditor:
             original_times = capture_file_times(self.zip_path)
             temp_path = self._create_temp_file()
             try:
-                self._write_reordered(temp_path, ordered, renames, progress)
+                self._write_reordered(temp_path, ordered, renames, progress, replaced)
                 self._verify_written(temp_path, ordered, renames)
+                self._verify_replacements(temp_path, renames, replaced)
                 os.replace(temp_path, self.zip_path)
             finally:
                 # 置き換えに成功していれば既に消えている
@@ -342,6 +361,48 @@ class ZipPageEditor:
                 f"並び順がページ一覧と一致しません (不足: {missing}, 不明: {unknown})"
             )
 
+    def _validate_replacements(
+        self, ordered: tuple[str, ...], replacements: dict[str, bytes]
+    ) -> None:
+        """差し替え対象が並び順に含まれるページかどうか検証する"""
+        unknown = sorted(set(replacements) - set(ordered))
+        if unknown:
+            raise PageReorderError(f"差し替え対象がページ一覧にありません: {unknown}")
+        empty = sorted(name for name, data in replacements.items() if not data)
+        if empty:
+            raise PageReorderError(f"差し替える中身が空です: {empty}")
+
+    def _verify_replacements(
+        self, temp_path: Path, renames: dict[str, str], replacements: dict[str, bytes]
+    ) -> None:
+        """差し替えたページが渡した中身のまま書けているか確かめる。
+
+        名前と CRC の検証（_verify_written）だけでは、差し替えたつもりで元の
+        中身が残っていても気づけない。元を捨てる前に大きさまで突き合わせる。
+
+        _verify_written に混ぜていないのは、あちらが並び替えなら常に必要な検証で、
+        こちらは差し替えたときだけ意味を持つため。
+        """
+        if not replacements:
+            return
+        try:
+            with zipfile.ZipFile(temp_path, "r") as written:
+                sizes = {
+                    name: written.getinfo(renames[name]).file_size
+                    for name in replacements
+                }
+        except (OSError, KeyError, zipfile.BadZipFile) as error:
+            raise PageReorderError(
+                f"書き出した ZIP の差し替えを確認できませんでした: {error}"
+            ) from error
+        mismatched = sorted(
+            name for name, size in sizes.items() if size != len(replacements[name])
+        )
+        if mismatched:
+            raise PageReorderError(
+                f"差し替えたページの大きさが一致しません: {mismatched}"
+            )
+
     def _build_renames(self, ordered: tuple[str, ...]) -> dict[str, str]:
         """旧エントリ名から新しい連番名への対応表を作る"""
         total = len(ordered)
@@ -372,8 +433,10 @@ class ZipPageEditor:
         ordered: tuple[str, ...],
         renames: dict[str, str],
         progress=None,
+        replacements: dict[str, bytes] | None = None,
     ) -> None:
         """新しい並び順の ZIP を一時ファイルとして書き出す"""
+        replaced = replacements or {}
         with (
             zipfile.ZipFile(self.zip_path, "r") as source,
             zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as destination,
@@ -396,6 +459,7 @@ class ZipPageEditor:
                     source.getinfo(name),
                     renames[name],
                     convert=True,
+                    replacement=replaced.get(name),
                 )
                 if progress is not None:
                     progress(position, total)

@@ -171,6 +171,10 @@ class CoverRequest(BaseModel):
         default=None, description="切り抜き範囲 (left, upper, right, lower)"
     )
     rotate: int = Field(default=0, description="回転角。90 度単位")
+    make_first: bool = Field(
+        default=False,
+        description="加工した 1 枚を先頭ページ（サムネイル）へ移すかどうか",
+    )
 
 
 class CoverView(BaseModel):
@@ -595,11 +599,15 @@ def create_app(
         )
 
     @app.get("/api/cover", dependencies=guarded, response_model=CoverView)
-    def cover(archive: str) -> CoverView:
-        """表紙（先頭ページ）の状態を返す。
+    def cover(archive: str, name: str | None = None) -> CoverView:
+        """サムネイルにする候補 1 枚の状態を返す。name を省くと先頭ページ。
 
         viewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が
         見えない。UI で加工を促せるよう、見開きかどうかを添える。
+
+        寸法と見開き判定をここで返すのは、UI が切り抜き枠を元画像の画素へ
+        写すのに必要だから。画面側で画像から測り直すと、判定の基準が
+        サーバーと二重になり、片方だけずれても気づけない。
         """
         editor = open_editor(archive)
         try:
@@ -607,8 +615,8 @@ def create_app(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail="ページがありません"
                 )
-            first = editor.pages[0]
-            with Image.open(io.BytesIO(editor.read_entry(first.name))) as image:
+            target = name or editor.pages[0].name
+            with Image.open(io.BytesIO(editor.read_entry(target))) as image:
                 width, height = image.size
         except PageReorderError as error:
             raise HTTPException(
@@ -617,7 +625,7 @@ def create_app(
         finally:
             editor.close()
         return CoverView(
-            name=first.name,
+            name=target,
             width=width,
             height=height,
             is_spread=is_spread(width, height),
@@ -646,6 +654,7 @@ def create_app(
                     CoverTransform(
                         split=request.split, crop=request.crop, rotate=request.rotate
                     ),
+                    make_first=request.make_first,
                 )
             except CoverEditError as error:
                 raise RuntimeError(str(error)) from error
