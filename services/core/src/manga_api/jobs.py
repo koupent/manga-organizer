@@ -184,12 +184,18 @@ class JobStore:
 
         `work` には進捗報告用の関数を渡す。キャンセル済みのジョブで報告すると
         `JobCancelled` が送出され、処理はそこで打ち切られる。
+
+        報告は「進捗（何件目か）」と「ログ 1 行」の 2 つの用途を兼ねる。
+        ログだけを出したい呼び出しは current と total を省くため、省いた
+        引数は 0 で上書きせず現在値を保つ。
         """
         if self._state_of(job_id) is JobState.CANCELLED:
             raise JobCancelled(job_id)
         self._update(job_id, state=JobState.RUNNING)
 
-        def report(current: int = 0, total: int = 0, message: str = "") -> None:
+        def report(
+            current: int | None = None, total: int | None = None, message: str = ""
+        ) -> None:
             self._report(job_id, current, total, message)
 
         try:
@@ -220,17 +226,28 @@ class JobStore:
             ).fetchall()
         return [row["message"] for row in reversed(rows)]
 
-    def _report(self, job_id: str, current: int, total: int, message: str) -> None:
+    def _report(
+        self, job_id: str, current: int | None, total: int | None, message: str
+    ) -> None:
         """進捗とログを 1 度のロックとトランザクションで書く。
 
         別々に書くと、進捗だけ進んでログが残らない状態が途中で見えてしまう。
         キャンセルの確認も同じロックの中で行い、判定と書き込みの間に状態が
         変わらないようにする。
+
+        current と total が None の報告は「ログを 1 行足すだけ」を意味する。
+        整理は 1 件につき数行のログを出すので、ここで件数を書きに行くと、
+        設定された直後の進捗をログが 0 に戻し続けてしまう。
         """
+        fields: dict[str, Any] = {"message": message}
+        if current is not None:
+            fields["current"] = current
+        if total is not None:
+            fields["total"] = total
         with self._lock:
             if self._read_state(job_id) is JobState.CANCELLED:
                 raise JobCancelled(job_id)
-            self._write_fields(job_id, current=current, total=total, message=message)
+            self._write_fields(job_id, **fields)
             if message:
                 self._write_log(job_id, message)
             self._connection.commit()
