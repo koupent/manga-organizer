@@ -309,19 +309,6 @@ export function FilePicker({
     setError(reason);
   };
 
-  const addFolder = (folder: BrowseEntry) => {
-    client
-      .browse(folder.path)
-      .then((result) =>
-        add(
-          (result.entries as BrowseEntry[])
-            .filter((entry) => !entry.is_directory)
-            .map((entry) => entry.path),
-        ),
-      )
-      .catch((reason) => setError(String(reason.message ?? reason)));
-  };
-
   // 2 件以上でなければ運ぶ先が無い。並べ替えの仕掛けごと出さない
   const sortable = selected.length > 1;
 
@@ -418,7 +405,6 @@ export function FilePicker({
       fill={fill}
       onOpen={load}
       onAdd={add}
-      onAddFolder={addFolder}
     />
   );
 

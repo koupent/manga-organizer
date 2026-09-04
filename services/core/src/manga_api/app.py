@@ -27,6 +27,7 @@ from manga_core.cover_editor import (
     apply_to_archive,
     is_spread,
 )
+from manga_core.input_expander import ARCHIVE_SUFFIXES, expand_inputs
 from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
@@ -36,9 +37,6 @@ logger = logging.getLogger(__name__)
 TITLE = "Manga Organizer サイドカー"
 # 外部からは触らせない。Tauri シェルと同一ホスト内でのみ使う
 HOST = "127.0.0.1"
-
-# ファイル選択に出すアーカイブ形式
-ARCHIVE_SUFFIXES = frozenset({".zip", ".cbz", ".rar", ".cbr", ".7z", ".cb7", ".epub"})
 
 # 作品名として妥当な長さ。これを超えるものは打ち間違いか攻撃とみなす
 MAX_TITLE_LENGTH = 200
@@ -62,7 +60,9 @@ class ReorderRequest(BaseModel):
 class OrganizeRequest(BaseModel):
     """アーカイブ整理の依頼"""
 
-    archives: list[str] = Field(description="整理対象アーカイブの絶対パス")
+    archives: list[str] = Field(
+        description="整理対象の絶対パス。フォルダを渡すと中を再帰的に辿る"
+    )
     output_directory: str = Field(description="出力先ディレクトリ")
     title: str = Field(default="", description="作品名")
     author: str = Field(default="", description="著者名")
@@ -326,16 +326,45 @@ def create_app(
         """
         return MangaDatabase(app.state.database_path)
 
-    def resolve_archive(raw: str) -> Path:
-        """受け取ったパスを検証して解決する"""
-        path = Path(raw).resolve()
+    def within_allowed(path: Path) -> bool:
+        """許可された場所に留まるかを見る。
+
+        判定は必ず resolve() した後のパスで行う。許可の中に置かれたリンクが
+        外を指していると、名前のままでは中に見えて、開くと外を読んでしまう。
+        """
         roots = app.state.allowed_roots
-        if roots and not any(path.is_relative_to(root) for root in roots):
+        if not roots:
+            return True
+        return any(path.resolve().is_relative_to(root) for root in roots)
+
+    def refuse_outside(path: Path) -> None:
+        """許可の外なら、開く前に断る"""
+        if not within_allowed(path):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="対象外のディレクトリです",
             )
+
+    def resolve_archive(raw: str) -> Path:
+        """受け取ったパスを検証して解決する"""
+        path = Path(raw).resolve()
+        refuse_outside(path)
         if not path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ファイルが見つかりません",
+            )
+        return path
+
+    def resolve_organize_target(raw: str) -> Path:
+        """整理の対象を検証して解決する。
+
+        こちらはフォルダも受け付ける。利用者はアーカイブを 1 つずつ選ばず、
+        フォルダごと投げ込むため（#70）。中身の展開は投入時に行う。
+        """
+        path = Path(raw).resolve()
+        refuse_outside(path)
+        if not path.exists():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="ファイルが見つかりません",
@@ -459,11 +488,7 @@ def create_app(
             target = roots[0] if roots else Path.home()
         else:
             target = Path(path).resolve()
-            if roots and not any(target.is_relative_to(root) for root in roots):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="対象外のディレクトリです",
-                )
+            refuse_outside(target)
         if not target.is_dir():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -738,8 +763,20 @@ def create_app(
         response_model=JobAccepted,
     )
     def submit_organize(request: OrganizeRequest) -> JobAccepted:
-        """アーカイブの整理をジョブとして投入する"""
-        archives = [resolve_archive(raw) for raw in request.archives]
+        """アーカイブの整理をジョブとして投入する。
+
+        フォルダを渡されたら、ここで中身を 1 冊ずつへ展開する。フォルダを
+        1 件のまま走らせると、進捗の総数が 1 のまま複数冊が出来上がる。
+        """
+        targets = [resolve_organize_target(raw) for raw in request.archives]
+        # 辿って見つけたものは利用者が名指ししていない。リンクで許可の外を
+        # 指していないか、1 件ずつ確かめてから処理対象に入れる
+        archives: list[Path] = []
+        for found in expand_inputs(targets):
+            if within_allowed(found):
+                archives.append(found)
+            else:
+                logger.warning("許可された場所の外を指すため除きました: %s", found)
         job_id = app.state.jobs.submit(
             "organize",
             {

@@ -321,7 +321,10 @@ export interface paths {
     put?: never;
     /**
      * Submit Organize
-     * @description アーカイブの整理をジョブとして投入する
+     * @description アーカイブの整理をジョブとして投入する。
+     *
+     *     フォルダを渡されたら、ここで中身を 1 冊ずつへ展開する。フォルダを
+     *     1 件のまま走らせると、進捗の総数が 1 のまま複数冊が出来上がる。
      */
     post: operations["submit_organize_api_jobs_organize_post"];
     delete?: never;
@@ -552,7 +555,7 @@ export interface components {
     OrganizeRequest: {
       /**
        * Archives
-       * @description 整理対象アーカイブの絶対パス
+       * @description 整理対象の絶対パス。フォルダを渡すと中を再帰的に辿る
        */
       archives: string[];
       /**

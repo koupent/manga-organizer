@@ -859,6 +859,81 @@ class OrganizeProgressTest(ApiTestBase):
         self.assertEqual((4, 4), (job["current"], job["total"]), job)
 
 
+class OrganizeFolderExpansionTest(ApiTestBase):
+    """フォルダを投入したときの、件数とリンクの扱いを見る（#70）。
+
+    フォルダを 1 件のまま走らせると、進捗の総数が 1 のまま複数冊が出来上がる。
+    また、再帰で辿る以上、許可された場所の中に置かれたリンクが外を指していれば
+    外のファイルを読めてしまう。どちらも展開の仕方そのものの話なので、
+    出来上がるファイル名だけでは確かめられない。
+    """
+
+    def make_archive(self, path: Path) -> Path:
+        """巻数が名前から決まる ZIP を作る。どれが入ったかを名前で見分ける"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("001.jpg", make_page())
+        return path
+
+    def organize(self, targets: list[Path], output: Path) -> dict:
+        accepted = self.client.post(
+            "/api/jobs/organize",
+            params=self.auth(),
+            json={
+                "archives": [str(target) for target in targets],
+                "output_directory": str(output),
+                "title": "作品",
+                "author": "著者",
+                "keep_originals": True,
+            },
+        )
+        self.assertEqual(202, accepted.status_code, accepted.text)
+        job_id = accepted.json()["id"]
+        return self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
+
+    def test_progress_counts_the_books_inside_a_submitted_folder(self):
+        # Arrange - フォルダ 1 つの下に 3 冊
+        folder = self.work_dir / "件数"
+        for index in (1, 2, 3):
+            self.make_archive(folder / f"raw_{index:02d}.zip")
+
+        # Act - フォルダのパスだけを渡す
+        job = self.organize([folder], self.work_dir / "out-count")
+
+        # Assert - 総数は投入したパスの数（1）ではなく、中の冊数になる
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual(3, job["total"], f"進捗の総数が冊数と合わない: {job}")
+        self.assertEqual((3, 3), (job["current"], job["total"]), job)
+
+    def test_skips_links_that_leave_the_allowed_roots(self):
+        # Arrange - 許可の外に 1 冊置き、許可の中からリンクで指す
+        outside_temp = TemporaryDirectory()
+        self.addCleanup(outside_temp.cleanup)
+        outside = self.make_archive(Path(outside_temp.name) / "外_09.zip")
+
+        folder = self.work_dir / "リンク入り"
+        self.make_archive(folder / "本物_01.zip")
+        try:
+            (folder / "リンク_09.zip").symlink_to(outside)
+        except OSError as error:  # 権限が要る環境ではリンクを作れない
+            self.skipTest(f"リンクを作れない環境です: {error}")
+
+        # Act
+        job = self.organize([folder], self.work_dir / "out-link")
+
+        # Assert - リンクの先は許可の外なので処理しない。名前で見分ける
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        names = sorted(Path(raw).name for raw in job["result"]["produced"])
+        self.assertEqual(
+            ["[著者] 作品 第001巻.zip"],
+            names,
+            f"リンクをたどって許可の外まで処理している: {names}",
+        )
+        # Assert - 除いたものを失敗として数えない。読ませない判断であって、
+        # 利用者が直せる失敗ではない
+        self.assertEqual([], job["result"]["failed"], job["result"])
+
+
 class OrganizeFailureReportTest(ApiTestBase):
     """整理ジョブが失敗の内訳を返すことを見る（#62）。
 

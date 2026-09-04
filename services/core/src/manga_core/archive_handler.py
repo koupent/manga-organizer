@@ -11,6 +11,7 @@ from pathlib import Path
 import py7zr
 from PIL import Image
 
+from manga_core.input_expander import ARCHIVE_SUFFIXES
 from manga_core.naming import natural_sort_key
 from manga_core.safe_extract import (
     DEFAULT_LIMITS,
@@ -34,7 +35,9 @@ logger = logging.getLogger(__name__)
 
 class ArchiveHandler:
     # Class-level constants
-    SUPPORTED_ARCHIVES = {".zip", ".rar", ".7z", ".cbz", ".cbr", ".cb7", ".epub"}
+    # 扱う形式は投入時の展開と揃える。別々に持つと、片方だけ増やしたときに
+    # 「一覧には出るのに整理されない」形式が生まれる
+    SUPPORTED_ARCHIVES = ARCHIVE_SUFFIXES
 
     @staticmethod
     def _get_bundled_7zip_path():

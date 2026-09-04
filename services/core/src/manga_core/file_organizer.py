@@ -46,23 +46,6 @@ class FileOrganizer:
         self.author = author
         self.title = title
 
-    def collect_archives(self, paths: list[Path]) -> list[Path]:
-        """Collect all archive files from given paths"""
-        archives = []
-
-        for path in paths:
-            if path.is_file() and self.archive_handler.is_archive(path):
-                archives.append(path)
-            elif path.is_dir():
-                # Scan directory for archives
-                for file_path in path.rglob("*"):
-                    if file_path.is_file() and self.archive_handler.is_archive(
-                        file_path
-                    ):
-                        archives.append(file_path)
-
-        return archives
-
     def _validate_and_extract_archive(
         self, archive_path: Path
     ) -> tuple[list[Path], str | None]:
@@ -149,8 +132,36 @@ class FileOrganizer:
             except Exception as e:
                 self._log(f"Failed to delete original: {e}", "error")
 
+    def _process_image_directory(self, image_dir: Path) -> list[ProcessResult]:
+        """裸の画像フォルダを 1 冊として整える。
+
+        ZIP に入っていない、画像が直接置かれたフォルダも 1 巻として扱う（#70）。
+        展開が要らないので一時領域は作らず、元のフォルダをそのまま読む。
+        巻数はフォルダ名から取る。アーカイブと違い元を消さないのは、
+        フォルダごと消すのが取り返しのつかない操作だから。
+        """
+        self._log(f"Processing: {image_dir}")
+        try:
+            manga_dir = self._create_manga_directory()
+            volume = self.volume_detector.detect_volume(image_dir)
+            return [self._process_volume(image_dir, image_dir, manga_dir, volume)]
+        except Exception as e:
+            self._log(f"Error processing {image_dir}: {e}", "error")
+            return [
+                ProcessResult(
+                    original_path=image_dir,
+                    output_path=None,
+                    success=False,
+                    error_message=str(e),
+                )
+            ]
+
     def process_single_archive(self, archive_path: Path) -> list[ProcessResult]:
         """Process a single archive file"""
+        # フォルダが来たら、その中身が 1 冊分。展開する物が無いので別経路へ回す
+        if archive_path.is_dir():
+            return self._process_image_directory(archive_path)
+
         self._log(f"Processing: {archive_path}")
         results = []
 
