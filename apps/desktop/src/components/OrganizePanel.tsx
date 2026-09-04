@@ -6,6 +6,7 @@ import { DirectoryPicker } from "./DirectoryPicker";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
 import { OrganizeLog } from "./OrganizeLog";
+import { ProducedList, type HandoffMode } from "./ProducedList";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import {
@@ -44,6 +45,8 @@ type OrganizePanelProps = {
   onSourcesChange: (paths: string[]) => void;
   outputDirectory: string;
   onOutputDirectoryChange: (path: string) => void;
+  /** 出来たファイルを、指定した画面へ読み込んだ状態で開く */
+  onOpenProduced: (path: string, mode: HandoffMode) => void;
 };
 
 /**
@@ -58,6 +61,7 @@ export function OrganizePanel({
   onSourcesChange,
   outputDirectory,
   onOutputDirectoryChange,
+  onOpenProduced,
 }: OrganizePanelProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -72,6 +76,10 @@ export function OrganizePanel({
   const [status, setStatus] = useState("待機中");
   const [log, setLog] = useState<string[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+
+  // 整理して出来たファイルの絶対パス。実際に出来たものだけを持つので、
+  // 中断・失敗のときは空のままになる
+  const [produced, setProduced] = useState<string[]>([]);
 
   // 打ち直しの途中で古い検索結果が届いても無視できるようにする
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -190,6 +198,9 @@ export function OrganizePanel({
     cancelRequested.current = false;
     jobId.current = null;
     setLog([]);
+    // 前回の結果はここで捨てる。今回が中断・失敗に終わったとき、前回の
+    // 一覧が残っていると「今回出来たもの」に見えてしまう
+    setProduced([]);
     setStatus("整理しています...");
     setProgress({ current: 0, total: sources.length });
 
@@ -238,10 +249,13 @@ export function OrganizePanel({
       if (job.state !== "succeeded") {
         throw new Error(job.error ?? "整理に失敗しました");
       }
-      const produced =
+      // 状態の produced を隠さないよう別名にする。ここで扱うのは
+      // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
+      const producedPaths =
         (job.result as { produced?: string[] } | null)?.produced ?? [];
       setProgress({ current: sources.length, total: sources.length });
-      setStatus(`${produced.length} 冊を整理しました`);
+      setProduced(producedPaths);
+      setStatus(`${producedPaths.length} 冊を整理しました`);
       loadEntries();
     } catch (error) {
       // 画面が消えたことによる打ち切りは、利用者に見せる失敗ではない
@@ -452,8 +466,9 @@ export function OrganizePanel({
       </aside>
 
       {/*
-        作業面。処理対象の一覧が高さいっぱいを取り、処理ログだけが
-        下に居場所を持つ。
+        作業面。処理対象の一覧が高さいっぱいを取り、実行の結果だけが
+        下に居場所を持つ。出来たファイルは処理ログの真上に置く。
+        どちらも「実行して何が起きたか」を見る所で、離すと目が往復する。
       */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
         <FilePicker
@@ -463,6 +478,7 @@ export function OrganizePanel({
           disabled={running}
           fill
         />
+        <ProducedList paths={produced} onOpen={onOpenProduced} />
         <OrganizeLog lines={log} />
       </div>
 
