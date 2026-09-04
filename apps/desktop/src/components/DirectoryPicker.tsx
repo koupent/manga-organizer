@@ -2,7 +2,13 @@ import { ChevronUp, Folder, FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import { Button } from "./ui/button";
-import { Card, CardHeader } from "./ui/card";
+import { CardHeader } from "./ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "./ui/dialog";
 import { Input } from "./ui/input";
 
 type Entry = { name: string; path: string; is_directory: boolean };
@@ -64,8 +70,16 @@ export function DirectoryPicker({
         </Button>
       </div>
 
-      {open ? (
-        <Card data-testid="output-browser">
+      {/*
+        辿る一覧は設定の列に入る幅が無い。列を広げると処理対象の作業面を
+        削ることになるので、選んでいる間だけ重ねて出す。
+      */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent data-testid="output-browser">
+          <DialogTitle className="sr-only">出力先を選ぶ</DialogTitle>
+          <DialogDescription className="sr-only">
+            フォルダを辿って、整理後のファイルを置く場所を決めます。
+          </DialogDescription>
           <CardHeader>
             <Button
               variant="ghost"
@@ -93,7 +107,7 @@ export function DirectoryPicker({
               ここを出力先にする
             </Button>
           </CardHeader>
-          <ul className="max-h-56 overflow-y-auto p-1">
+          <ul className="max-h-[50vh] overflow-y-auto p-1">
             {entries.length === 0 ? (
               <li className="px-2 py-3 text-center text-[12px] text-ink-faint">
                 この下にフォルダはありません
@@ -115,8 +129,8 @@ export function DirectoryPicker({
               ))
             )}
           </ul>
-        </Card>
-      ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
