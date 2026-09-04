@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
@@ -44,6 +45,45 @@ with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
   return target;
 }
 
+/**
+ * 細かいノイズを載せた見開きの ZIP を作る。
+ *
+ * JPEG は保存し直すたびに劣化する。一様な色だと何度書き直しても画素が
+ * ほとんど動かず、「押すたびに書き換わる」ことを中身から捉えられない。
+ * ノイズを載せておけば、何回書き直されたかが画素の差として残る。
+ * 左右の色は残し、見え方でも向きが分かるようにする。
+ */
+function writeNoisyArchive(workDir: string, name: string): string {
+  const target = `${workDir}/${name}`;
+  execFileSync(
+    "uv",
+    [
+      "run",
+      "python",
+      "-c",
+      `
+import io, random, sys, zipfile
+from PIL import Image
+rnd = random.Random(7)
+base = Image.new("RGB", (1600, 1200), "#ff2020")
+base.paste(Image.new("RGB", (800, 1200), "#2020ff"), (800, 0))
+noise = Image.frombytes("RGB", (1600, 1200), rnd.randbytes(1600 * 1200 * 3))
+spread = Image.blend(base, noise, 0.3)
+buffer = io.BytesIO()
+spread.save(buffer, "JPEG", quality=95)
+page = io.BytesIO()
+Image.new("RGB", (800, 1200), "#888888").save(page, "JPEG")
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("001.jpg", buffer.getvalue())
+    archive.writestr("002.jpg", page.getvalue())
+`,
+      target,
+    ],
+    { cwd: CORE_DIR },
+  );
+  return target;
+}
+
 /** サムネイル作成の画面を開く。mode の id は thumbnail */
 async function openCover(
   page: import("@playwright/test").Page,
@@ -55,8 +95,101 @@ async function openCover(
   );
 }
 
+/** 枠の位置と大きさ。動いたかどうかを実際の描画から見る */
+async function frameBox(page: Page) {
+  const box = await page.getByTestId("crop-frame").boundingBox();
+  if (!box) throw new Error("crop-frame が描画されていません");
+  return box;
+}
+
+/** 指定した点から掴んで、そのぶんだけ運ぶ */
+async function dragFrom(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 12 });
+  await page.mouse.up();
+}
+
+/**
+ * 枠の真ん中を掴んで、指定した側の端いっぱいまで運ぶ。
+ *
+ * 枠は画像の外へは出ないので、窓の内側いっぱいまで運べば端で止まる。
+ * 見開き（1600×1200）なら、2:3 の枠がちょうど片側の半分に重なる。
+ */
+async function dragFrameTo(page: Page, side: "left" | "right") {
+  const box = await frameBox(page);
+  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const viewport = page.viewportSize()!;
+  await dragFrom(page, centre, {
+    x: side === "right" ? viewport.width - 1 : 1,
+    y: centre.y,
+  });
+}
+
+/**
+ * viewer での見え方（cover-frame）に何が見えているかの指紋。
+ *
+ * 中の作りではなく、描かれた絵そのものを見る。同じ状態なら同じ指紋になる。
+ */
+async function previewShot(page: Page): Promise<string> {
+  const buffer = await page.getByTestId("cover-frame").screenshot();
+  return createHash("sha256").update(buffer).digest("hex").slice(0, 16);
+}
+
+/** 画像の読み込みが終わり、見え方が動かなくなるまで待つ。その指紋を返す */
+async function settledPreview(page: Page): Promise<string> {
+  let current = await previewShot(page);
+  await expect
+    .poll(
+      async () => {
+        const previous = current;
+        current = await previewShot(page);
+        return current === previous;
+      },
+      { timeout: 20_000, message: "viewer での見え方が落ち着きません" },
+    )
+    .toBe(true);
+  return current;
+}
+
+/**
+ * 90 度回し、見え方が変わるまで待つ。
+ *
+ * 待つ先を見え方に置くのは、押した時点でファイルを書き換える実装でも
+ * 保留にする実装でも、同じ合図で待ち切るため。前者ではこの合図が出た時点で
+ * 書き込みまで終わっているので、直後にファイルを見れば書き換えを捉えられる。
+ */
+async function rotateOnce(page: Page, previous: string): Promise<string> {
+  await page.getByTestId("rotate").click();
+  await expect
+    .poll(() => previewShot(page), {
+      timeout: 30_000,
+      message: "90 度回しても viewer での見え方が変わりません",
+    })
+    .not.toBe(previous);
+  return settledPreview(page);
+}
+
+/**
+ * ファイルブラウザを辿って対象を 1 件選ぶ。
+ *
+ * page-reorder.spec.ts と同じ要領で、実パスはサーバー側が返す。
+ */
+async function chooseArchiveViaBrowser(page: Page, archive: string) {
+  const name = archive.split("/").pop()!;
+  await page.getByTestId("open-browser").click();
+  await expect(page.getByTestId("file-browser")).toBeVisible();
+  await page
+    .locator(`[data-testid="browse-entry"][data-name="${name}"] .browser-name`)
+    .click();
+}
+
 test.describe("サムネイル作成", () => {
-  test("見開きを検出し、分割すると 2:3 に収まる", async ({ page }) => {
+  test("見開きを検出し、片側を切り抜くと 2:3 に収まる", async ({ page }) => {
     // Arrange
     const archive = writeSpreadArchive(sidecar.workDir, "cover.zip");
     await openCover(page, archive);
@@ -66,8 +199,10 @@ test.describe("サムネイル作成", () => {
     await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
     await expect(page.getByTestId("spread-warning")).toBeVisible();
 
-    // Act - 右半分を表紙にする
-    await page.getByTestId("split-right").click();
+    // Act - 2:3 の枠を右半分へ寄せて確定する。
+    // 見開きの表紙は、使いたい側へ枠を合わせれば表紙になる
+    await dragFrameTo(page, "right");
+    await page.getByTestId("apply-thumbnail").click();
     await expect(page.getByTestId("cover-status")).toContainText(
       "加工しました",
       {
@@ -81,11 +216,15 @@ test.describe("サムネイル作成", () => {
     await expect(page.getByTestId("fits-frame")).toHaveText("枠に合っています");
   });
 
-  test("加工後の表紙が実際に差し替わっている", async ({ page }) => {
+  test("切り抜いた表紙が実際に差し替わっている", async ({ page }) => {
     // Arrange
     const archive = writeSpreadArchive(sidecar.workDir, "replace.zip");
     await openCover(page, archive);
-    await page.getByTestId("split-right").click();
+    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
+
+    // Act - 右半分（青）へ枠を寄せて確定する
+    await dragFrameTo(page, "right");
+    await page.getByTestId("apply-thumbnail").click();
     await expect(page.getByTestId("cover-status")).toContainText(
       "加工しました",
       {
@@ -105,11 +244,14 @@ import io, json, sys, zipfile
 from PIL import Image
 with zipfile.ZipFile(sys.argv[1]) as archive:
     names = archive.namelist()
-    with Image.open(io.BytesIO(archive.read("001.jpg"))) as cover:
-        red, green, blue = cover.convert("RGB").getpixel((400, 600))
+    with Image.open(io.BytesIO(archive.read("001.jpg"))) as opened:
+        cover = opened.convert("RGB")
+        size = cover.size
+        red, green, blue = cover.getpixel((cover.width // 4, cover.height // 4))
     with Image.open(io.BytesIO(archive.read("002.jpg"))) as other:
-        size = other.size
-print(json.dumps({"names": names, "blue_wins": blue > red, "other": size}))
+        other_size = other.size
+print(json.dumps({"names": names, "size": size,
+                  "blue_wins": blue > red, "other": other_size}))
 `,
         archive,
       ],
@@ -117,22 +259,9 @@ print(json.dumps({"names": names, "blue_wins": blue > red, "other": size}))
     );
     const result = JSON.parse(inspected);
     expect(result.names).toEqual(["001.jpg", "002.jpg"]);
+    expect(result.size).toEqual([800, 1200]);
     expect(result.blue_wins).toBeTruthy();
     expect(result.other).toEqual([800, 1200]);
-  });
-
-  test("90 度回すと縦横が入れ替わる", async ({ page }) => {
-    const archive = writeSpreadArchive(sidecar.workDir, "rotate.zip");
-    await openCover(page, archive);
-
-    await page.getByTestId("rotate").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      {
-        timeout: 30_000,
-      },
-    );
-    await expect(page.getByTestId("cover-size")).toHaveText("1200×1600");
   });
 });
 
@@ -206,6 +335,444 @@ function pageColours(archive: string): string[] {
     .map((name) => nearestColour(colours[name]));
 }
 
+/** ZIP の指紋。ページ名・寸法・中身のハッシュを並べる */
+type ArchiveState = {
+  name: string;
+  size: [number, number];
+  digest: string;
+}[];
+
+/**
+ * ZIP が書き換えられたかどうかを中身から見る。
+ *
+ * 名前と寸法だけでは、同じ寸法で保存し直された書き換えを見逃す。
+ * ページのバイト列そのものをハッシュして、1 バイトの違いも捉える。
+ */
+function archiveState(archive: string): ArchiveState {
+  const output = execFileSync(
+    "uv",
+    [
+      "run",
+      "python",
+      "-c",
+      `
+import hashlib, io, json, sys, zipfile
+from PIL import Image
+result = []
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    for name in sorted(archive.namelist()):
+        data = archive.read(name)
+        with Image.open(io.BytesIO(data)) as image:
+            size = list(image.size)
+        result.append({"name": name, "size": size,
+                       "digest": hashlib.sha256(data).hexdigest()[:16]})
+print(json.dumps(result))
+`,
+      archive,
+    ],
+    { cwd: CORE_DIR, encoding: "utf8" },
+  );
+  return JSON.parse(output);
+}
+
+/**
+ * 先頭ページの寸法と四隅寄りの色。どちらを向いているかを中身から見分ける。
+ *
+ * 左右で色が違う見開きなら、回っていなければ上下の 2 点が同じ色になり、
+ * 90 度回っていれば左右の 2 点が同じ色になる。切り抜きの範囲に左右されない。
+ */
+function firstPageProfile(archive: string): {
+  name: string;
+  size: [number, number];
+  corners: string[];
+} {
+  const output = execFileSync(
+    "uv",
+    [
+      "run",
+      "python",
+      "-c",
+      `
+import io, json, sys, zipfile
+from PIL import Image
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    name = sorted(archive.namelist())[0]
+    with Image.open(io.BytesIO(archive.read(name))) as opened:
+        image = opened.convert("RGB")
+        width, height = image.size
+        spots = [(width // 4, height // 4), (width * 3 // 4, height // 4),
+                 (width // 4, height * 3 // 4), (width * 3 // 4, height * 3 // 4)]
+        corners = ["#%02x%02x%02x" % image.getpixel(spot) for spot in spots]
+print(json.dumps({"name": name, "size": [width, height], "corners": corners}))
+`,
+      archive,
+    ],
+    { cwd: CORE_DIR, encoding: "utf8" },
+  );
+  const parsed = JSON.parse(output);
+  return { ...parsed, corners: parsed.corners.map(nearestColour) };
+}
+
+/**
+ * 2 つの ZIP の先頭ページを画素で比べる。
+ *
+ * 同じ加工を 1 回だけ受けた画像どうしなら完全に一致する。書き直しが
+ * 重なっていれば、そのぶんだけ平均差（mae）が積み上がる。
+ */
+function firstPageDiff(
+  left: string,
+  right: string,
+): { sizes: [number, number][]; mae: number | null } {
+  const output = execFileSync(
+    "uv",
+    [
+      "run",
+      "python",
+      "-c",
+      `
+import io, json, sys, zipfile
+from PIL import Image, ImageChops
+def first(path):
+    with zipfile.ZipFile(path) as archive:
+        name = sorted(archive.namelist())[0]
+        with Image.open(io.BytesIO(archive.read(name))) as image:
+            return image.convert("RGB")
+left = first(sys.argv[1])
+right = first(sys.argv[2])
+out = {"sizes": [list(left.size), list(right.size)], "mae": None}
+if left.size == right.size:
+    hist = ImageChops.difference(left, right).histogram()
+    total = sum(index % 256 * count for index, count in enumerate(hist))
+    out["mae"] = total / (left.size[0] * left.size[1] * 3)
+print(json.dumps(out))
+`,
+      left,
+      right,
+    ],
+    { cwd: CORE_DIR, encoding: "utf8" },
+  );
+  return JSON.parse(output);
+}
+
+/** 1 回ぶんの保存で動く画素差の上限。同じ加工なら本来は完全に一致する */
+const SAME_IMAGE_MAE = 0.5;
+
+/** ボタンの位置が動いたとみなす量 */
+const BUTTON_SHIFT_TOLERANCE = 4;
+
+/** 加工を押した後、ボタンが動かないかを見張る時間 */
+const BUTTON_WATCH_MS = 2_000;
+
+/**
+ * 加工は押した瞬間ではなく、確定したときに 1 回だけファイルへ書く。
+ *
+ * 押すたびに書き換える作りでは、分割や回転が書き換わった画像へ更に重なり、
+ * 押した回数だけ画像が壊れる。ここで見るのは「押しても書かない」ことと、
+ * 「確定するまで元のファイルが無傷である」ことの 2 つ。
+ */
+test.describe("サムネイル作成: 加工は確定するまで保留する", () => {
+  test("90 度回しても、確定するまでアーカイブは書き換わらない", async ({
+    page,
+  }) => {
+    // Arrange - 開く前の中身を控える
+    const archive = writeSpreadArchive(sidecar.workDir, "回転は保留.zip");
+    const before = archiveState(archive);
+    await openCover(page, archive);
+    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
+    const initial = await settledPreview(page);
+
+    // Act - 90 度回す。見え方が変わるまで待つので、
+    // 押した時点で書き込む作りならこの時点で書き込みも済んでいる
+    await rotateOnce(page, initial);
+
+    // Assert - ページ名も寸法も中身も、1 バイトも変わっていない
+    expect(archiveState(archive)).toEqual(before);
+
+    // Act - 確定する
+    await page.getByTestId("apply-thumbnail").click();
+    await expect(page.getByTestId("cover-status")).toContainText(
+      "加工しました",
+      { timeout: 30_000 },
+    );
+
+    // Assert - 回転はここで 1 回ぶんだけ効く。
+    // 左右に並んでいた赤と青が、上下に並ぶ
+    const profile = firstPageProfile(archive);
+    expect(profile.corners).toEqual(["red", "red", "blue", "blue"]);
+  });
+
+  test("90 度を 4 回押して確定しても、1 回だけ書いたのと同じ画像になる", async ({
+    page,
+  }) => {
+    // Arrange - 中身が同じ 2 つ。片方はそのまま確定し、比べる物差しにする
+    const control = writeNoisyArchive(sidecar.workDir, "四回転 対照.zip");
+    const spun = writeNoisyArchive(sidecar.workDir, "四回転 実験.zip");
+    await openCover(page, control);
+    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
+    await page.getByTestId("apply-thumbnail").click();
+    await expect(page.getByTestId("cover-status")).toContainText(
+      "加工しました",
+      { timeout: 30_000 },
+    );
+
+    // Act - もう一方は 90 度を 4 回押してから確定する。1 周して元の向きに戻る
+    await openCover(page, spun);
+    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
+    let shot = await settledPreview(page);
+    for (let turn = 0; turn < 4; turn += 1) {
+      shot = await rotateOnce(page, shot);
+    }
+    await page.getByTestId("apply-thumbnail").click();
+    await expect(page.getByTestId("cover-status")).toContainText(
+      "加工しました",
+      { timeout: 30_000 },
+    );
+
+    // Assert - 向きも寸法も同じで、画素もほぼ一致する。
+    // 押すたびに書き直す作りでは、4 回ぶんの再エンコードが画素に残る
+    const diff = firstPageDiff(control, spun);
+    expect(diff.sizes[1]).toEqual(diff.sizes[0]);
+    expect(
+      diff.mae,
+      `1 回だけ書いた画像との画素の平均差が ${diff.mae}`,
+    ).toBeLessThan(SAME_IMAGE_MAE);
+  });
+
+  test("切り抜き枠を動かすと viewer での見え方が変わる", async ({ page }) => {
+    // Arrange - 左右で色が違う見開き。枠を寄せた側の色だけが残るはず
+    const archive = writeSpreadArchive(sidecar.workDir, "枠と見え方.zip");
+    await openCover(page, archive);
+    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
+    const before = await settledPreview(page);
+
+    // Act - 枠を右端いっぱいまで運ぶ。右半分（青）だけが枠に入る
+    const start = await frameBox(page);
+    await dragFrameTo(page, "right");
+    expect((await frameBox(page)).x).toBeGreaterThan(start.x + 20);
+
+    // Assert - 確定しなくても、切り抜いた結果が見える
+    await expect
+      .poll(() => previewShot(page), {
+        timeout: 15_000,
+        message: "枠を動かしても viewer での見え方が変わりません",
+      })
+      .not.toBe(before);
+    const right = await settledPreview(page);
+
+    // Act - 反対側へ運ぶ。今度は左半分（赤）だけが枠に入る
+    await dragFrameTo(page, "left");
+
+    // Assert - 寄せた側によって見え方が違う。どちらへ寄せても同じなら、
+    // 枠の中身ではなく「動かしたこと」に反応しているだけ
+    await expect
+      .poll(() => previewShot(page), {
+        timeout: 15_000,
+        message: "枠をどちら側へ寄せても viewer での見え方が同じです",
+      })
+      .not.toBe(right);
+    expect(await settledPreview(page)).not.toBe(before);
+  });
+
+  test("枠を戻すと、切り抜きも回転も初期状態に戻る", async ({ page }) => {
+    // Arrange
+    const archive = writeSpreadArchive(sidecar.workDir, "全部戻す.zip");
+    await openCover(page, archive);
+    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
+    const initialFrame = await frameBox(page);
+    const initialShot = await settledPreview(page);
+
+    // Act - 90 度回し、枠も動かす
+    await rotateOnce(page, initialShot);
+    await dragFrameTo(page, "right");
+
+    // Act - 戻す
+    await page.getByTestId("crop-reset").click();
+
+    // Assert - 見え方が開いた直後に戻る。枠だけ戻しても回転は残ってしまう
+    await expect
+      .poll(() => previewShot(page), {
+        timeout: 15_000,
+        message: "枠を戻しても回転が残っています",
+      })
+      .toBe(initialShot);
+
+    // Assert - 枠も初期状態
+    const reset = await frameBox(page);
+    expect(Math.abs(reset.x - initialFrame.x)).toBeLessThan(3);
+    expect(Math.abs(reset.width - initialFrame.width)).toBeLessThan(3);
+  });
+
+  test("確定せずに別のファイルへ移ると、元のファイルは無傷", async ({
+    page,
+  }) => {
+    // Arrange - 触る方と、移る先
+    const first = writeSpreadArchive(sidecar.workDir, "無傷 1.zip");
+    const second = writeSpreadArchive(sidecar.workDir, "無傷 2.zip");
+    const before = archiveState(first);
+    await openCover(page, first);
+    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
+
+    // Act - 枠を動かし、回しもする。確定はしない
+    const start = await frameBox(page);
+    await dragFrameTo(page, "right");
+    expect((await frameBox(page)).x).toBeGreaterThan(start.x + 20);
+    await rotateOnce(page, await settledPreview(page));
+
+    // Act - 確定しないまま別のファイルを選ぶ
+    await page.getByTestId("change-archive").click();
+    await expect(page.getByTestId("dropzone")).toBeVisible();
+    await chooseArchiveViaBrowser(page, second);
+    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
+      "無傷 2.zip",
+    );
+
+    // Assert - 触っていたファイルは 1 バイトも変わっていない
+    expect(archiveState(first)).toEqual(before);
+  });
+
+  test("左右に分割する操作は無い", async ({ page }) => {
+    // Arrange - 見開きを開く。分割が要りそうな場面でも置かない
+    const archive = writeSpreadArchive(sidecar.workDir, "分割なし.zip");
+    await openCover(page, archive);
+    await expect(page.getByTestId("crop-frame")).toBeVisible();
+
+    // Assert - 範囲を選ぶ枠と役目が重なるため、ページを割る操作はここに無い
+    await expect(page.getByTestId("split-right")).toHaveCount(0);
+    await expect(page.getByTestId("split-left")).toHaveCount(0);
+  });
+
+  test("90 度回してもボタンの位置が動かない", async ({ page }) => {
+    // Arrange - 操作の列が縦に溢れる大きさで見る。溢れていない間は主操作が
+    // 列の下端に貼り付くので、間の警告が出入りしてもずれない。実機で報告
+    // されたずれは、列が溢れて下端に貼り付けなくなったときに起きる
+    await page.setViewportSize({ width: 1000, height: 560 });
+    const archive = writeSpreadArchive(sidecar.workDir, "ボタン位置.zip");
+    await openCover(page, archive);
+    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
+    await expect(page.getByTestId("spread-warning")).toBeVisible();
+
+    const topOf = async (id: string) => {
+      const box = await page.getByTestId(id).boundingBox();
+      if (!box) throw new Error(`${id} が描画されていません`);
+      return Math.round(box.y);
+    };
+    /**
+     * 見え方の見本から測った、ボタンまでの距離。
+     *
+     * 溢れた列は押した拍子にスクロールするので、画面上の y をそのまま比べると
+     * スクロールぶんまで拾ってしまう。警告は見本とボタンの間にあるので、
+     * 見本からの距離で見れば、警告が場所を空けたままかどうかだけが残る。
+     */
+    const gaps = async () => {
+      const preview = await topOf("cover-frame");
+      return {
+        choose: (await topOf("choose-page")) - preview,
+        apply: (await topOf("apply-thumbnail")) - preview,
+      };
+    };
+    const before = await gaps();
+
+    // Act
+    await rotateOnce(page, await settledPreview(page));
+
+    // Assert - 見開きの警告が出入りしても、押す場所は動かない。
+    // 加工の反映は後から届くので、しばらく見張って一番動いた量を見る。
+    // 1 回だけ測ると、届く前の値を見て「動かなかった」と取り違える
+    const worst = { choose: 0, apply: 0 };
+    const until = Date.now() + BUTTON_WATCH_MS;
+    while (Date.now() < until) {
+      const now = await gaps();
+      worst.choose = Math.max(worst.choose, Math.abs(now.choose - before.choose)); // prettier-ignore
+      worst.apply = Math.max(worst.apply, Math.abs(now.apply - before.apply));
+      await page.waitForTimeout(50);
+    }
+    expect(
+      worst.apply,
+      `確定ボタンが、見え方の見本から ${before.apply}px の所から ${worst.apply}px ぶん動いた`,
+    ).toBeLessThanOrEqual(BUTTON_SHIFT_TOLERANCE);
+    expect(
+      worst.choose,
+      `画像を選ぶボタンが、見え方の見本から ${before.choose}px の所から ${worst.choose}px ぶん動いた`,
+    ).toBeLessThanOrEqual(BUTTON_SHIFT_TOLERANCE);
+  });
+});
+
+/** 候補を格子で見るために用意するページ数。1 行には収まらない量にする */
+const MANY_PAGES = 24;
+
+/**
+ * 候補一覧は、切り抜きの面と入れ替えて大きく出す。
+ *
+ * 単行本は 150〜200 ページある。1 行のフィルムストリップでは、中ほどの
+ * ページへ辿り着けない。
+ */
+test.describe("サムネイル作成: 候補一覧", () => {
+  test("候補一覧は切り抜きの面と入れ替わる", async ({ page }) => {
+    // Arrange
+    const archive = writeArchive(sidecar.workDir, "候補と入れ替え.zip", [
+      { name: "page-a.jpg", color: "#ff0000" },
+      { name: "page-b.jpg", color: "#00ff00" },
+      { name: "page-c.jpg", color: "#0000ff" },
+    ]);
+    await openCover(page, archive);
+    await expect(page.getByTestId("crop-frame")).toBeVisible();
+
+    // Act - 候補を開く
+    await page.getByTestId("choose-page").click();
+
+    // Assert - 切り抜きの面は退く。同時に見比べる必要は薄い
+    await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(3);
+    await expect(page.getByTestId("crop-frame")).toBeHidden();
+
+    // Act - 閉じる
+    await page.getByTestId("choose-page").click();
+
+    // Assert - 切り抜きの面が戻る
+    await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(0);
+    await expect(page.getByTestId("crop-frame")).toBeVisible();
+  });
+
+  test(`${MANY_PAGES} ページの候補が 1 行に収まらず格子に並ぶ`, async ({
+    page,
+  }) => {
+    // Arrange - 1 行では収まらない数のページ
+    const archive = writeArchive(
+      sidecar.workDir,
+      "候補が多い.zip",
+      Array.from({ length: MANY_PAGES }, (_, index) => ({
+        name: `${String(index + 1).padStart(3, "0")}.jpg`,
+        color: "#3366cc",
+      })),
+    );
+    await openCover(page, archive);
+
+    // Act
+    await page.getByTestId("choose-page").click();
+    const candidates = page.getByTestId("thumbnail-candidate");
+    await expect(candidates).toHaveCount(MANY_PAGES);
+
+    // Assert - 縦に積まれている
+    const boxes = await candidates.evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const rect = node.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width };
+      }),
+    );
+    const rows = new Set(boxes.map((box) => Math.round(box.y)));
+    expect(rows.size, `候補が ${rows.size} 行に並んでいる`).toBeGreaterThan(1);
+
+    // Assert - 横へ流して隠さない。全部が候補の場所の幅に収まる
+    const area = (await page.getByTestId("page-candidates").boundingBox())!;
+    const spread =
+      Math.max(...boxes.map((box) => box.x + box.width)) -
+      Math.min(...boxes.map((box) => box.x));
+    expect(
+      spread,
+      `候補が横へ ${Math.round(spread)}px 続き、幅 ${Math.round(area.width)}px に収まらない`,
+    ).toBeLessThanOrEqual(area.width + 2);
+  });
+});
+
 test.describe("サムネイル作成の対象選択と加工", () => {
   /**
    * 実際のドロップを再現する。
@@ -253,22 +820,6 @@ test.describe("サムネイル作成の対象選択と加工", () => {
     );
   }
 
-  /**
-   * ファイルブラウザを辿って対象を 1 件選ぶ。
-   *
-   * page-reorder.spec.ts と同じ要領で、実パスはサーバー側が返す。
-   */
-  async function chooseArchiveViaBrowser(page: Page, archive: string) {
-    const name = archive.split("/").pop()!;
-    await page.getByTestId("open-browser").click();
-    await expect(page.getByTestId("file-browser")).toBeVisible();
-    await page
-      .locator(
-        `[data-testid="browse-entry"][data-name="${name}"] .browser-name`,
-      )
-      .click();
-  }
-
   /** 色を塗り分けた 3 ページの ZIP。どの絵が何ページ目かを中身から見分ける。
    * 連番でない名前にして、先頭移動に伴う振り直しが起きたかどうかも見えるようにする */
   function writePages(name: string): string {
@@ -313,25 +864,6 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
       { cwd: CORE_DIR },
     );
     return target;
-  }
-
-  /** 枠の位置と大きさ。動いたかどうかを実際の描画から見る */
-  async function frameBox(page: Page) {
-    const box = await page.getByTestId("crop-frame").boundingBox();
-    if (!box) throw new Error("crop-frame が描画されていません");
-    return box;
-  }
-
-  /** 指定した点から掴んで、そのぶんだけ運ぶ */
-  async function dragFrom(
-    page: Page,
-    from: { x: number; y: number },
-    to: { x: number; y: number },
-  ) {
-    await page.mouse.move(from.x, from.y);
-    await page.mouse.down();
-    await page.mouse.move(to.x, to.y, { steps: 12 });
-    await page.mouse.up();
   }
 
   test("対象が選ばれていないときはドロップ領域が出る", async ({ page }) => {
