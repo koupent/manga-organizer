@@ -153,7 +153,6 @@ export function CoverEditor({
         {onChangeArchive ? (
           <Button
             variant="ghost"
-            size="sm"
             data-testid="change-archive"
             onClick={onChangeArchive}
           >
@@ -192,7 +191,6 @@ export function CoverEditor({
         <CardBody className="flex flex-wrap items-center gap-2">
           <Button
             variant="secondary"
-            size="sm"
             data-testid="choose-page"
             disabled={running}
             onClick={() => setChoosing((open) => !open)}
@@ -202,7 +200,6 @@ export function CoverEditor({
           </Button>
           <Button
             variant="secondary"
-            size="sm"
             data-testid="crop-reset"
             disabled={running}
             onClick={() => setCrop(null)}
@@ -212,7 +209,6 @@ export function CoverEditor({
           </Button>
           <Button
             variant="secondary"
-            size="sm"
             data-testid="split-right"
             disabled={running}
             onClick={() => apply({ split: "right" })}
@@ -222,7 +218,6 @@ export function CoverEditor({
           </Button>
           <Button
             variant="secondary"
-            size="sm"
             data-testid="split-left"
             disabled={running}
             onClick={() => apply({ split: "left" })}
@@ -231,7 +226,6 @@ export function CoverEditor({
           </Button>
           <Button
             variant="secondary"
-            size="sm"
             data-testid="rotate"
             disabled={running}
             onClick={() => apply({ rotate: 90 })}
@@ -242,7 +236,7 @@ export function CoverEditor({
           <div className="flex-1" />
           <Button
             variant="primary"
-            size="sm"
+            size="lg"
             data-testid="apply-thumbnail"
             disabled={running}
             onClick={() => apply({ crop: frame, makeFirst: true })}

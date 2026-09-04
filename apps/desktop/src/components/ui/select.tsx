@@ -14,7 +14,7 @@ export function SelectTrigger({
   return (
     <SelectPrimitive.Trigger
       className={cn(
-        "inline-flex h-7 items-center justify-between gap-1.5 rounded-md border border-line",
+        "inline-flex h-7 items-center justify-between gap-1.5 rounded-control border border-line",
         "bg-canvas px-2 text-[11.5px] text-ink-muted outline-none transition-colors",
         "hover:border-line-strong focus-visible:border-brand data-[placeholder]:text-ink-faint",
         className,
@@ -40,7 +40,7 @@ export function SelectContent({
         position="popper"
         sideOffset={4}
         className={cn(
-          "z-50 min-w-[10rem] overflow-hidden rounded-md border border-line",
+          "z-50 min-w-[10rem] overflow-hidden rounded-card border border-line",
           "bg-surface p-1 shadow-lg",
           className,
         )}
