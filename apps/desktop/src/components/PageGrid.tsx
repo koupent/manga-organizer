@@ -19,8 +19,28 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { SidecarClient } from "../api/client";
+import { useStoredNumber } from "../lib/setting";
 
 const MAX_HISTORY = 100;
+
+/**
+ * 表示サイズ（サムネイル 1 枚の最小幅・px）の可動域と既定。
+ *
+ * 既定を可動域と同じ所で決める。離して置くと、可動域を動かしたときに
+ * 既定が外へ出ても誰も気づけない。
+ *
+ * 既定は 160px。単行本は 150〜200 ページあり、1 行 5 枚（220px）では
+ * 全体を見渡すのに何度も転がすことになる。ページ順の異常を探すという
+ * 用途に合わせて密を既定にした。1280px の窓で 1 行 7 枚になり、
+ * 判別できる大きさを保ったまま、詰める側にも広げる側にも余地が残る。
+ */
+const CARD_WIDTH_MIN = 140;
+const CARD_WIDTH_MAX = 520;
+const CARD_WIDTH_STEP = 20;
+const CARD_WIDTH_DEFAULT = 160;
+
+/** 表示サイズの保存先。画面を移っても開き直しても同じ見え方に戻す */
+const CARD_WIDTH_KEY = "reorder.cardWidth";
 
 type PageCardProps = {
   name: string;
@@ -113,7 +133,6 @@ type PageGridProps = {
   archive: string;
   archiveName?: string;
   pages: { name: string; size: number; modified: string }[];
-  cardWidth: number;
   onSaved?: (message: string) => void;
   /** 別のアーカイブを選び直す。渡さなければ選び直す導線を出さない */
   onChangeArchive?: () => void;
@@ -125,11 +144,17 @@ export function PageGrid({
   archive,
   archiveName,
   pages,
-  cardWidth,
   onSaved,
   onChangeArchive,
 }: PageGridProps) {
   const original = useMemo(() => pages.map((page) => page.name), [pages]);
+  // 表示サイズはこの画面だけの設定なので、この画面が持つ。
+  // 対象を選び直すとこの部品ごと作り直されるが、保存された値から始まるので
+  // 置き場所に関わらず利用者が決めた見え方に戻る
+  const [cardWidth, setCardWidth] = useStoredNumber(
+    CARD_WIDTH_KEY,
+    CARD_WIDTH_DEFAULT,
+  );
   const [order, setOrder] = useState<string[]>(original);
   const [selection, setSelection] = useState<string[]>([]);
   const [history, setHistory] = useState<string[][]>([]);
@@ -293,6 +318,22 @@ export function PageGrid({
         >
           {selection.length} 件選択
         </span>
+        {/* 画面固有の操作なので、共通ヘッダーではなく対象ファイル名や保存と
+            同じ並びに置く。伸び縮みする status より左に置き、文字が増えても
+            つまみの位置が動かないようにする */}
+        <label className="flex items-center gap-2 text-[12px] text-ink-muted">
+          表示サイズ
+          <input
+            type="range"
+            min={CARD_WIDTH_MIN}
+            max={CARD_WIDTH_MAX}
+            step={CARD_WIDTH_STEP}
+            value={cardWidth}
+            data-testid="card-width"
+            onChange={(event) => setCardWidth(Number(event.target.value))}
+            className="h-1 w-28 cursor-pointer accent-brand"
+          />
+        </label>
         <div className="flex-1" />
         <span className="text-[12px] text-ink-muted" data-testid="status">
           {status}
