@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Card, CardBody, CardHeader } from "./ui/card";
+import { CoverCandidates } from "./CoverCandidates";
 import {
   CropFrame,
   TARGET_RATIO,
@@ -21,10 +21,15 @@ import {
   type CropRect,
 } from "./CropFrame";
 import { Empty } from "./ui/empty";
+import { SectionTitle } from "./ui/section-title";
+import { fitInside, useBoxSize } from "../lib/stage";
 import type { SidecarClient } from "../api/client";
 
-/** 候補一覧に出す見本の幅。原寸を並べると読み込みが重い */
-const CANDIDATE_WIDTH = 120;
+/** 絵を囲う枠線の太さ。この画面で唯一、絵の縁を背景から切り分けるもの */
+const FRAME_BORDER = 1;
+
+/** viewer での見え方に使う幅。2:3 なので高さは 300px になる */
+const PREVIEW_WIDTH = 200;
 
 type Cover = {
   name: string;
@@ -72,6 +77,9 @@ export function CoverEditor({
   const [running, setRunning] = useState(false);
   // 加工しても名前は変わらないことがある。ブラウザの画像キャッシュを外す鍵
   const [reloadKey, setReloadKey] = useState(0);
+
+  // 絵を置ける面の実寸。候補一覧の開け閉てや窓の大きさで変わる
+  const [stageRef, stage] = useBoxSize<HTMLDivElement>();
 
   useEffect(() => {
     client
@@ -141,11 +149,22 @@ export function CoverEditor({
   const frame = crop ?? defaultCrop(cover);
   const imageUrl = `${client.imageUrl(archive, cover.name)}&v=${reloadKey}`;
 
+  // 絵は枠線の内側に入る。枠線のぶんを先に引いてから収める大きさを決める
+  const display = fitInside(cover, {
+    width: stage.width - FRAME_BORDER * 2,
+    height: stage.height - FRAME_BORDER * 2,
+  });
+
   return (
-    <section className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
+    /*
+      ワークベンチ型。判断の材料である絵に高さを全部渡し、操作は幅の決まった
+      右の列へ寄せる。絵の上下に操作を積むと、積んだぶんだけ絵が縮む。
+    */
+    <section className="flex min-h-0 flex-1 flex-col gap-2">
+      {/* いま何を見ているか。1 行に収め、絵の取り分を削らない */}
+      <div className="flex shrink-0 items-center gap-2">
         <h2
-          className="text-[13px] font-semibold"
+          className="min-w-0 truncate text-[13px] font-semibold"
           data-testid="thumbnail-archive-name"
         >
           {archiveName ?? "表紙"}
@@ -160,7 +179,10 @@ export function CoverEditor({
             別のファイルを選ぶ
           </Button>
         ) : null}
-        <span className="text-[12px] text-ink-faint" data-testid="cover-name">
+        <span
+          className="shrink-0 text-[12px] text-ink-faint"
+          data-testid="cover-name"
+        >
           {cover.name}
         </span>
         <Badge tone="neutral" data-testid="cover-size">
@@ -168,152 +190,175 @@ export function CoverEditor({
             {cover.width}×{cover.height}
           </span>
         </Badge>
+        {/* 見開きの警告は、直す手立て（分割）の隣にある方が動きやすいので
+            右の列に置く。ここには枠に収まっているかどうかだけを出す */}
+        {cover.is_spread ? null : (
+          <p
+            className="shrink-0 text-[12px] text-ink-faint"
+            data-testid="fits-frame"
+          >
+            {fitsFrame ? "枠に合っています" : "枠と縦横比が異なります"}
+          </p>
+        )}
+        {/* 枠は掴めると分かって初めて使われる。説明は枠のある作業面の
+            すぐ上に、常時出しておく */}
+        <span className="shrink-0 text-[12px] text-ink-faint">
+          枠を掴んで動かせます（2:3 固定）
+        </span>
         <div className="flex-1" />
-        <span className="text-[12px] text-ink-muted" data-testid="cover-status">
+        <span
+          className="shrink-0 text-[12px] text-ink-muted"
+          data-testid="cover-status"
+        >
           {status}
         </span>
       </div>
 
-      {cover.is_spread ? (
-        <Alert tone="warn" data-testid="spread-warning">
-          <TriangleAlert />
-          <span>
-            見開きです。分割しないと viewer の表紙が正しく表示されません
-          </span>
-        </Alert>
-      ) : (
-        <p className="text-[12px] text-ink-faint" data-testid="fits-frame">
-          {fitsFrame ? "枠に合っています" : "枠と縦横比が異なります"}
-        </p>
-      )}
-
-      <Card>
-        <CardBody className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="secondary"
-            data-testid="choose-page"
-            disabled={running}
-            onClick={() => setChoosing((open) => !open)}
-          >
-            <Images />
-            {choosing ? "候補を閉じる" : "サムネイルにする画像を選ぶ"}
-          </Button>
-          <Button
-            variant="secondary"
-            data-testid="crop-reset"
-            disabled={running}
-            onClick={() => setCrop(null)}
-          >
-            <RotateCcw />
-            枠を戻す
-          </Button>
-          <Button
-            variant="secondary"
-            data-testid="split-right"
-            disabled={running}
-            onClick={() => apply({ split: "right" })}
-          >
-            <SplitSquareHorizontal />
-            右半分を表紙にする
-          </Button>
-          <Button
-            variant="secondary"
-            data-testid="split-left"
-            disabled={running}
-            onClick={() => apply({ split: "left" })}
-          >
-            左半分を表紙にする
-          </Button>
-          <Button
-            variant="secondary"
-            data-testid="rotate"
-            disabled={running}
-            onClick={() => apply({ rotate: 90 })}
-          >
-            <RotateCw />
-            90 度回す
-          </Button>
-          <div className="flex-1" />
-          <Button
-            variant="primary"
-            size="lg"
-            data-testid="apply-thumbnail"
-            disabled={running}
-            onClick={() => apply({ crop: frame, makeFirst: true })}
-          >
-            <Check />
-            この範囲をサムネイルにする
-          </Button>
-        </CardBody>
-      </Card>
-
-      {choosing ? (
-        <Card data-testid="page-candidates">
-          <CardHeader>
-            <span className="text-[12px] text-ink-muted">
-              サムネイルにする 1 枚を選ぶと、確定したときに先頭ページへ移ります
-            </span>
-          </CardHeader>
-          <ul className="flex max-h-72 flex-wrap gap-2 overflow-y-auto p-2">
-            {pages.map((name) => (
-              <li key={name}>
-                <button
-                  type="button"
-                  data-testid="thumbnail-candidate"
-                  data-name={name}
-                  aria-pressed={name === cover.name}
-                  className="flex w-28 flex-col items-center gap-1 rounded border border-line p-1 hover:border-brand"
-                  onClick={() => {
-                    setSelected(name);
-                    setChoosing(false);
-                  }}
-                >
-                  <img
-                    className="max-h-28 rounded"
-                    src={`${client.thumbnailUrl(archive, name, CANDIDATE_WIDTH)}&v=${reloadKey}`}
-                    alt={name}
-                  />
-                  <span className="w-full truncate text-[11px] text-ink-muted">
-                    {name}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      ) : null}
-
-      <div className="flex flex-wrap items-start gap-6">
-        <figure className="m-0 flex flex-col gap-1.5">
-          <figcaption className="text-[12px] font-medium text-ink-muted">
-            切り抜く範囲（枠は 2:3 固定。掴んで動かせます）
-          </figcaption>
-          {/* 枠の位置を画像そのものに合わせるため、枠線は外側の箱に持たせる */}
-          <div className="relative self-start overflow-hidden rounded border border-line">
-            <img
-              data-testid="cover-image"
-              className="block max-h-96"
-              src={imageUrl}
-              alt={cover.name}
-            />
-            <CropFrame image={cover} crop={frame} onChange={setCrop} />
-          </div>
-        </figure>
-        <figure className="m-0 flex flex-col gap-1.5">
-          <figcaption className="text-[12px] font-medium text-ink-muted">
-            viewer での見え方（2:3 中央クロップ）
-          </figcaption>
+      <div className="flex min-h-0 flex-1 gap-3">
+        {/* 作業面。絵と、選んでいる間だけ出る候補一覧 */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+          {/* 絵は上端を揃える。候補一覧の開け閉てで面の高さが変わっても、
+              見ている絵が上下に泳がない */}
           <div
-            className="aspect-2/3 w-56 overflow-hidden rounded border border-line bg-canvas"
-            data-testid="cover-frame"
+            ref={stageRef}
+            className="flex min-h-0 flex-1 justify-center overflow-hidden"
           >
-            <img
-              className="size-full object-cover"
-              src={imageUrl}
-              alt="viewer での見え方"
-            />
+            {/* 枠の位置を画像そのものに合わせるため、枠線は外側の箱に持たせる */}
+            <div
+              className="relative self-start overflow-hidden rounded border border-line"
+              style={{
+                width: display.width + FRAME_BORDER * 2,
+                height: display.height + FRAME_BORDER * 2,
+              }}
+            >
+              <img
+                data-testid="cover-image"
+                className="block size-full"
+                src={imageUrl}
+                alt={cover.name}
+              />
+              <CropFrame image={cover} crop={frame} onChange={setCrop} />
+            </div>
           </div>
-        </figure>
+
+          {choosing ? (
+            <CoverCandidates
+              client={client}
+              archive={archive}
+              pages={pages}
+              current={cover.name}
+              reloadKey={reloadKey}
+              onSelect={(name) => {
+                setSelected(name);
+                setChoosing(false);
+              }}
+            />
+          ) : null}
+        </div>
+
+        {/*
+          操作の列。幅を 280px に固定するのは、ボタンも見え方の見本も
+          広げて得をするものではないため。溢れたらこの列だけがスクロールし、
+          絵は巻き添えにしない。
+        */}
+        <aside className="flex w-[280px] shrink-0 flex-col gap-2 overflow-y-auto">
+          <section className="flex flex-col gap-1">
+            <SectionTitle>viewer での見え方（2:3 中央クロップ）</SectionTitle>
+            <div
+              className="aspect-2/3 overflow-hidden rounded border border-line bg-canvas"
+              style={{ width: PREVIEW_WIDTH }}
+              data-testid="cover-frame"
+            >
+              <img
+                className="size-full object-cover"
+                src={imageUrl}
+                alt="viewer での見え方"
+              />
+            </div>
+          </section>
+
+          {cover.is_spread ? (
+            <Alert tone="warn" data-testid="spread-warning">
+              <TriangleAlert />
+              <span>
+                見開きです。分割しないと viewer の表紙が正しく表示されません
+              </span>
+            </Alert>
+          ) : null}
+
+          <section className="flex flex-col gap-1.5">
+            <SectionTitle>加工</SectionTitle>
+            <Button
+              variant="secondary"
+              className="w-full"
+              data-testid="choose-page"
+              disabled={running}
+              onClick={() => setChoosing((open) => !open)}
+            >
+              <Images />
+              {choosing ? "候補を閉じる" : "画像を選ぶ"}
+            </Button>
+            {/* 2 つ 1 組の操作なので横に並べる。列の幅に収まる短い名前にし、
+                言い足りないぶんは title で補う */}
+            <div className="grid grid-cols-2 gap-1.5">
+              <Button
+                variant="secondary"
+                data-testid="crop-reset"
+                title="切り抜く枠を初期状態に戻す"
+                disabled={running}
+                onClick={() => setCrop(null)}
+              >
+                <RotateCcw />
+                枠を戻す
+              </Button>
+              <Button
+                variant="secondary"
+                data-testid="rotate"
+                disabled={running}
+                onClick={() => apply({ rotate: 90 })}
+              >
+                <RotateCw />
+                90 度回す
+              </Button>
+              <Button
+                variant="secondary"
+                data-testid="split-right"
+                title="右半分を表紙にする"
+                disabled={running}
+                onClick={() => apply({ split: "right" })}
+              >
+                <SplitSquareHorizontal />
+                右半分
+              </Button>
+              <Button
+                variant="secondary"
+                data-testid="split-left"
+                title="左半分を表紙にする"
+                disabled={running}
+                onClick={() => apply({ split: "left" })}
+              >
+                <SplitSquareHorizontal />
+                左半分
+              </Button>
+            </div>
+          </section>
+
+          {/* 主操作は列の最下部に固定する。操作の数で位置が上下すると、
+              押す場所を毎回探すことになる */}
+          <div className="mt-auto pt-2">
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full"
+              data-testid="apply-thumbnail"
+              disabled={running}
+              onClick={() => apply({ crop: frame, makeFirst: true })}
+            >
+              <Check />
+              この範囲をサムネイルにする
+            </Button>
+          </div>
+        </aside>
       </div>
     </section>
   );
