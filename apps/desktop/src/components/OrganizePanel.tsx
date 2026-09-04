@@ -37,6 +37,9 @@ type AuthorSource = "" | "library" | "search";
 /** 何文字目から自動で著者を探しに行くか。元の実装と同じ */
 const MIN_SEARCH_LENGTH = 2;
 
+/** 打つたびに問い合わせないための待ち時間 */
+const SEARCH_DELAY_MS = 400;
+
 /**
  * 実行し終わったときの状態の文言。
  *
@@ -51,9 +54,6 @@ function organizeSummary(producedCount: number, failedCount: number): string {
     return `整理できませんでした（${failedCount} 件失敗）`;
   return `${producedCount} 冊を整理しました（${failedCount} 件失敗）`;
 }
-
-/** 打つたびに問い合わせないための待ち時間 */
-const SEARCH_DELAY_MS = 400;
 
 type OrganizePanelProps = {
   client: SidecarClient;
