@@ -5,8 +5,8 @@ import { cn } from "../lib/utils";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
+import { OrganizeLog } from "./OrganizeLog";
 import { Button } from "./ui/button";
-import { Card, CardBody } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import {
   Dialog,
@@ -271,7 +271,12 @@ export function OrganizePanel({
     progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
 
   return (
-    <div className="flex flex-col gap-2">
+    /*
+      ワークベンチ型。設定は幅の決まった左の列に置き、残りは全部
+      処理対象の一覧へ渡す。設定は一度決めれば見るだけのもので、
+      画面の高さを分け合う相手ではない。
+    */
+    <div className="flex min-h-0 flex-1 gap-3">
       {/* 入力欄の候補。辞書に記録済みの作品と著者を出す */}
       <datalist id="known-titles">
         {entries.map((entry) => (
@@ -291,9 +296,14 @@ export function OrganizePanel({
           ))}
       </datalist>
 
-      <Card>
-        <CardBody className="flex flex-wrap items-end gap-2">
-          <div className="flex w-full items-center gap-2">
+      {/*
+        設定の列。幅を 360px に固定するのは、入力欄が窓幅まで伸びても
+        読みやすさが上がらないため。中身が溢れたらこの列だけがスクロールし、
+        右の作業面は巻き添えにしない。
+      */}
+      <aside className="flex w-[360px] shrink-0 flex-col gap-4 overflow-y-auto pr-1">
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
             <SectionTitle>作品情報</SectionTitle>
             <div className="flex-1" />
             <Button
@@ -305,7 +315,7 @@ export function OrganizePanel({
             </Button>
           </div>
 
-          <label className="flex min-w-[240px] flex-[2] flex-col gap-1">
+          <label className="flex flex-col gap-1">
             <span className="text-[11.5px] font-medium text-ink-muted">
               作品名
             </span>
@@ -318,7 +328,7 @@ export function OrganizePanel({
             />
           </label>
 
-          <label className="flex min-w-[200px] flex-1 flex-col gap-1">
+          <label className="flex flex-col gap-1">
             <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink-muted">
               著者
               {searching ? (
@@ -348,7 +358,7 @@ export function OrganizePanel({
 
           {candidates.length > 0 ? (
             <div
-              className="flex w-full flex-wrap items-center gap-1.5"
+              className="flex flex-wrap items-center gap-1.5"
               data-testid="author-candidates"
             >
               <span className="text-[11.5px] text-ink-faint">検索結果</span>
@@ -377,12 +387,15 @@ export function OrganizePanel({
               ))}
             </div>
           ) : null}
-        </CardBody>
-      </Card>
+        </section>
 
-      <Card>
-        <CardBody className="flex flex-col gap-2">
+        <section className="flex flex-col gap-2">
           <SectionTitle>オプション</SectionTitle>
+          <DirectoryPicker
+            client={client}
+            value={outputDirectory}
+            onChange={onOutputDirectoryChange}
+          />
           <label className="flex w-fit cursor-pointer items-center gap-2 text-[12.5px] text-ink-muted">
             <Checkbox
               data-testid="keep-originals"
@@ -391,27 +404,18 @@ export function OrganizePanel({
             />
             元のファイルを残す
           </label>
-          <DirectoryPicker
-            client={client}
-            value={outputDirectory}
-            onChange={onOutputDirectoryChange}
-          />
-        </CardBody>
-      </Card>
+        </section>
 
-      <FilePicker
-        client={client}
-        selected={sources}
-        onChange={onSourcesChange}
-        disabled={running}
-      />
-
-      <Card>
-        <CardBody className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
+        {/*
+          主操作は列の最下部に固定する。設定の量で位置が上下すると、
+          押す場所を毎回探すことになる。右で何が起きても動かない。
+        */}
+        <div className="mt-auto flex flex-col gap-1.5 pt-2">
+          <div className="flex items-center gap-2">
             <Button
               variant="primary"
               size="lg"
+              className="flex-1"
               data-testid="confirm"
               disabled={running || sources.length === 0}
               onClick={run}
@@ -425,7 +429,9 @@ export function OrganizePanel({
                 中断する
               </Button>
             ) : null}
-            <div className="flex-1" />
+          </div>
+
+          <div className="flex items-center gap-2">
             <span
               className="text-[12px] text-ink-muted"
               data-testid="organize-status"
@@ -433,6 +439,7 @@ export function OrganizePanel({
             >
               {status}
             </span>
+            <div className="flex-1" />
             {progress.total > 0 ? (
               <span className="tabular text-[12px] text-ink-faint">
                 {progress.current} / {progress.total}
@@ -441,20 +448,23 @@ export function OrganizePanel({
           </div>
 
           <Progress data-testid="progress" value={percent} />
-        </CardBody>
-      </Card>
+        </div>
+      </aside>
 
-      <Card>
-        <CardBody className="flex flex-col gap-1">
-          <SectionTitle>処理ログ</SectionTitle>
-          <pre
-            className="max-h-40 overflow-y-auto font-mono text-[11.5px] leading-relaxed text-ink-muted"
-            data-testid="organize-log"
-          >
-            {log.length > 0 ? log.join("\n") : "まだ実行していません"}
-          </pre>
-        </CardBody>
-      </Card>
+      {/*
+        作業面。処理対象の一覧が高さいっぱいを取り、処理ログだけが
+        下に居場所を持つ。
+      */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+        <FilePicker
+          client={client}
+          selected={sources}
+          onChange={onSourcesChange}
+          disabled={running}
+          fill
+        />
+        <OrganizeLog lines={log} />
+      </div>
 
       {/*
         辞書は整理の途中で覗きに行くものなので、画面を切り替えず重ねて出す。

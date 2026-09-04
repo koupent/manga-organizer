@@ -1,6 +1,4 @@
 import {
-  ChevronUp,
-  Folder,
   FolderOpen,
   GripVertical,
   Package,
@@ -26,15 +24,16 @@ import { CSS } from "@dnd-kit/utilities";
 import { parentDirectory } from "../path";
 import { resolveDroppedPaths } from "../lib/dropped";
 import { cn } from "../lib/utils";
+import {
+  FileBrowser,
+  type BrowseEntry,
+  type BrowseLocation,
+} from "./FileBrowser";
 import { Alert } from "./ui/alert";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Card, CardHeader } from "./ui/card";
 import { Empty } from "./ui/empty";
 import { SectionTitle } from "./ui/section-title";
 import type { SidecarClient } from "../api/client";
-
-type Entry = { name: string; path: string; is_directory: boolean };
 
 /** 掴んだ行を送るキーと向き */
 const MOVE_KEYS: Record<string, number> = { ArrowUp: -1, ArrowDown: 1 };
@@ -58,6 +57,13 @@ type FilePickerProps = {
   single?: boolean;
   /** 見出し。何のために選ぶのかは呼び出し側の機能でしか分からない */
   title?: string;
+  /**
+   * 与えられた高さいっぱいまで一覧を伸ばす。
+   *
+   * ファイル整理では処理対象が画面の主役なので作業面を全部渡す。
+   * 対象が 1 冊だけの画面では一覧そのものが無く、伸ばす意味も無い。
+   */
+  fill?: boolean;
 };
 
 type SelectedItemProps = {
@@ -167,11 +173,13 @@ function SelectedItem({
         {position + 1}
       </span>
       <Package className="size-3.5 shrink-0 text-ink-faint" />
-      <span className="shrink-0 text-[12.5px] font-medium">
+      {/* 名前と場所は一組の情報。名前の幅は中身で決め、余った幅は場所へ渡す。
+          名前を伸ばして場所を右端へ飛ばすと、目が行の端から端まで往復する */}
+      <span className="min-w-0 truncate text-[12.5px] font-medium">
         {path.split("/").pop()}
       </span>
       <span
-        className="min-w-0 flex-1 truncate text-right text-[11px] text-ink-faint"
+        className="min-w-0 flex-1 truncate text-[11px] text-ink-faint"
         title={path}
       >
         {directory}
@@ -211,16 +219,14 @@ export function FilePicker({
   disabled = false,
   single = false,
   title,
+  fill = false,
 }: FilePickerProps) {
   const [browsing, setBrowsing] = useState(false);
-  const [location, setLocation] = useState<{
-    path: string;
-    parent: string | null;
-  }>({
+  const [location, setLocation] = useState<BrowseLocation>({
     path: "",
     parent: null,
   });
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<BrowseEntry[]>([]);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
 
@@ -236,7 +242,7 @@ export function FilePicker({
       .browse(path)
       .then((result) => {
         setLocation({ path: result.path, parent: result.parent ?? null });
-        setEntries(result.entries as Entry[]);
+        setEntries(result.entries as BrowseEntry[]);
         setError("");
       })
       .catch((reason) => setError(String(reason.message ?? reason)));
@@ -303,12 +309,12 @@ export function FilePicker({
     setError(reason);
   };
 
-  const addFolder = (folder: Entry) => {
+  const addFolder = (folder: BrowseEntry) => {
     client
       .browse(folder.path)
       .then((result) =>
         add(
-          (result.entries as Entry[])
+          (result.entries as BrowseEntry[])
             .filter((entry) => !entry.is_directory)
             .map((entry) => entry.path),
         ),
@@ -321,7 +327,12 @@ export function FilePicker({
 
   const list = (
     <ul
-      className="max-h-64 divide-y divide-line/60 overflow-y-auto p-1"
+      className={cn(
+        "divide-y divide-line/60 overflow-y-auto p-1",
+        // 溢れた行はこの箱の中でスクロールする。利用者が一覧として
+        // 見ている面と、実際にスクロールする面を一致させる
+        fill ? "min-h-0 flex-1" : "max-h-64",
+      )}
       data-testid="selected-list"
     >
       {selected.map((path, index) => (
@@ -340,8 +351,79 @@ export function FilePicker({
     </ul>
   );
 
+  const dropzone = (
+    <div
+      className={cn(
+        "flex flex-col rounded-card border transition-colors",
+        // 点線は「まだ何も入っていない」の合図。中身が入った後も囲い続けると、
+        // 置いた物を包む箱がもう 1 枚増えるだけで、何も伝えていない
+        selected.length === 0 && "border-dashed",
+        dragging
+          ? "border-brand bg-brand/8"
+          : selected.length === 0
+            ? "border-line-strong bg-surface/50"
+            : "border-line bg-surface/50",
+        fill && "min-h-0 flex-1",
+      )}
+      data-testid="dropzone"
+      onDragOver={(event) => {
+        event.preventDefault();
+        // 受け取れないときに受け取れそうな見た目にしない
+        setDragging(!disabled);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        void handleDrop(event.dataTransfer);
+      }}
+    >
+      {selected.length === 0 ? (
+        <Empty
+          className="m-auto"
+          icon={<Upload />}
+          title="ここにアーカイブをドラッグ&ドロップ"
+        >
+          または「ファイルを選ぶ」から辿ってください。zip / cbz / rar / 7z
+          を扱えます。
+          {single ? "まとめて落としたときは先頭の 1 件を対象にします。" : null}
+        </Empty>
+      ) : sortable ? (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={reorder}
+        >
+          <SortableContext
+            items={selected}
+            strategy={verticalListSortingStrategy}
+            disabled={disabled}
+          >
+            {list}
+          </SortableContext>
+        </DndContext>
+      ) : (
+        list
+      )}
+    </div>
+  );
+
+  const browser = (
+    <FileBrowser
+      location={location}
+      entries={entries}
+      selected={selected}
+      single={single}
+      disabled={disabled}
+      fill={fill}
+      onOpen={load}
+      onAdd={add}
+      onAddFolder={addFolder}
+    />
+  );
+
   return (
-    <section className="flex flex-col gap-2">
+    <section className={cn("flex flex-col gap-2", fill && "min-h-0 flex-1")}>
       <div className="flex items-center gap-2">
         <SectionTitle>
           {title ?? (single ? "並べ替えるアーカイブ" : "処理対象ファイル")}
@@ -386,131 +468,15 @@ export function FilePicker({
         )}
       </div>
 
-      <div
-        className={cn(
-          "rounded-card border border-dashed transition-colors",
-          dragging
-            ? "border-brand bg-brand/8"
-            : "border-line-strong bg-surface/50",
-        )}
-        data-testid="dropzone"
-        onDragOver={(event) => {
-          event.preventDefault();
-          // 受け取れないときに受け取れそうな見た目にしない
-          setDragging(!disabled);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragging(false);
-          void handleDrop(event.dataTransfer);
-        }}
-      >
-        {selected.length === 0 ? (
-          <Empty icon={<Upload />} title="ここにアーカイブをドラッグ&ドロップ">
-            または「ファイルを選ぶ」から辿ってください。zip / cbz / rar / 7z
-            を扱えます。
-            {single
-              ? "まとめて落としたときは先頭の 1 件を対象にします。"
-              : null}
-          </Empty>
-        ) : sortable ? (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={reorder}
-          >
-            <SortableContext
-              items={selected}
-              strategy={verticalListSortingStrategy}
-              disabled={disabled}
-            >
-              {list}
-            </SortableContext>
-          </DndContext>
-        ) : (
-          list
-        )}
-      </div>
+      {/* 一覧とファイルブラウザは同じ作業面を奪い合う。両方を積むと
+          どちらも半分の高さになるので、開いている方だけをここに置く */}
+      {browsing ? browser : dropzone}
 
       {error ? (
         <Alert tone="danger" data-testid="picker-error">
           <TriangleAlert />
           <span>{error}</span>
         </Alert>
-      ) : null}
-
-      {browsing ? (
-        <Card data-testid="file-browser">
-          <CardHeader>
-            <Button
-              variant="ghost"
-              data-testid="browse-up"
-              disabled={!location.parent}
-              onClick={() => location.parent && load(location.parent)}
-            >
-              <ChevronUp />
-              上へ
-            </Button>
-            <code className="max-w-[52ch] truncate rounded bg-canvas px-2 py-0.5 text-[11.5px] text-ink-muted">
-              {location.path}
-            </code>
-            <div className="flex-1" />
-            {/* 単一選択では、まとめて追加しても 1 件しか残らず操作が嘘になる */}
-            {single ? null : (
-              <Button
-                variant="secondary"
-                data-testid="add-all-here"
-                disabled={disabled}
-                onClick={() =>
-                  add(
-                    entries
-                      .filter((entry) => !entry.is_directory)
-                      .map((e) => e.path),
-                  )
-                }
-              >
-                ここのアーカイブを全部追加
-              </Button>
-            )}
-          </CardHeader>
-          <ul className="max-h-72 overflow-y-auto p-1">
-            {entries.map((entry) => (
-              <li
-                key={entry.path}
-                data-testid="browse-entry"
-                data-name={entry.name}
-                className="flex items-center gap-2 rounded px-2 py-1 hover:bg-surface-2"
-              >
-                {entry.is_directory ? (
-                  <Folder className="size-3.5 shrink-0 text-brand/80" />
-                ) : (
-                  <Package className="size-3.5 shrink-0 text-ink-faint" />
-                )}
-                <button
-                  type="button"
-                  className="browser-name flex-1 truncate text-left text-[12.5px] hover:text-brand"
-                  onClick={() =>
-                    entry.is_directory ? load(entry.path) : add([entry.path])
-                  }
-                >
-                  {entry.name}
-                </button>
-                {entry.is_directory && !single ? (
-                  <Button
-                    variant="ghost"
-                    disabled={disabled}
-                    onClick={() => addFolder(entry)}
-                  >
-                    中身を追加
-                  </Button>
-                ) : selected.includes(entry.path) ? (
-                  <Badge tone="ok">追加済み</Badge>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </Card>
       ) : null}
     </section>
   );

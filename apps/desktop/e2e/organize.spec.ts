@@ -99,6 +99,9 @@ async function openOrganizeWithoutOutput(page: Page) {
  *
  * directory を渡すとその下へ入ってから選ぶ。追加した順番が分かるよう、
  * selectArchives() と違って 1 件ずつ扱う。
+ *
+ * ファイルブラウザは処理対象の一覧と入れ替わりに出るので、開いている間は
+ * ブラウザ側の「追加済み」で、閉じてから一覧の行で、入ったことを確かめる。
  */
 async function addArchiveViaBrowser(
   page: Page,
@@ -119,10 +122,13 @@ async function addArchiveViaBrowser(
     .locator(`[data-testid="browse-entry"][data-name="${name}"] .browser-name`)
     .click();
   await expect(
-    page.locator(`[data-testid="selected-item"][data-path="${archive}"]`),
-  ).toBeVisible();
+    page.locator(`[data-testid="browse-entry"][data-name="${name}"]`),
+  ).toContainText("追加済み");
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeHidden();
+  await expect(
+    page.locator(`[data-testid="selected-item"][data-path="${archive}"]`),
+  ).toBeVisible();
 }
 
 /**

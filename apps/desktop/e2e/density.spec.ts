@@ -31,8 +31,21 @@ const PRIMARY_MAX_HEIGHT = 33;
 /** アプリのヘッダーの上限。端数のぶんだけ 40px から緩める */
 const HEADER_MAX_HEIGHT = 41;
 
-/** ファイル整理の内容を縦に収める上限（1280x860 で 3 件入れた状態） */
-const CONTENT_MAX_HEIGHT = 520;
+/**
+ * ファイル整理の内容を縦に収める上限（1280x860 で 3 件入れた状態）。
+ *
+ * 第 1 段階では 520px だった。カードを縦に積むだけの画面だったので、
+ * 積み上がった高さがそのまま箱代の量を表していたためである。
+ *
+ * 第 2 段階で内容はワークベンチになり、処理対象の一覧が余った高さを
+ * すべて受け取るようになった。内容が短いことはもう良い知らせではなく、
+ * むしろ作業面を使い切れていない印になる。測るべきは「短いか」ではなく
+ * 「窓に収まっているか」なので、上限をヘッダー 40px を引いた残りにする。
+ */
+const CONTENT_MAX_HEIGHT = 820;
+
+/** 内容が収まるべき窓の高さ。ここを超えると縦スクロールが出る */
+const VIEWPORT_HEIGHT = 860;
 
 /** 横幅の検証に使う窓幅と、左右に許す余白 */
 const WIDE_VIEWPORT_WIDTH = 1600;
@@ -305,6 +318,13 @@ test.describe("UI の密度", () => {
       measured!.height,
       `内容の高さが ${measured!.height}px`,
     ).toBeLessThanOrEqual(CONTENT_MAX_HEIGHT);
+
+    // Assert - 上端がどこにあっても、下端が窓からはみ出さない。
+    // 「高さが上限以下」だけだと、内容ごと下へずれた場合を見逃す
+    expect(
+      measured!.top + measured!.height,
+      `内容の下端が ${measured!.top + measured!.height}px（窓は ${VIEWPORT_HEIGHT}px）`,
+    ).toBeLessThanOrEqual(VIEWPORT_HEIGHT);
   });
 
   test("カードの見出しに背景の帯が付かない", async ({ page }) => {
