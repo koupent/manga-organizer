@@ -55,8 +55,27 @@ function organizeSummary(producedCount: number, failedCount: number): string {
   return `${producedCount} 冊を整理しました（${failedCount} 件失敗）`;
 }
 
+/**
+ * ジョブの結果から、出来たファイルと失敗を取り出す。
+ *
+ * 走り切ったジョブは結果を持たないこともある。受け取る側が毎回
+ * 空の場合を気にしなくて済むよう、ここで形を揃える。
+ */
+function organizeResult(result: unknown): {
+  produced: string[];
+  failed: OrganizeFailure[];
+} {
+  const value = result as {
+    produced?: string[];
+    failed?: OrganizeFailure[];
+  } | null;
+  return { produced: value?.produced ?? [], failed: value?.failed ?? [] };
+}
+
 type OrganizePanelProps = {
   client: SidecarClient;
+  /** いま見えている画面かどうか。隠れている間はジョブの監視を止める */
+  active?: boolean;
   sources: string[];
   onSourcesChange: (paths: string[]) => void;
   outputDirectory: string;
@@ -73,6 +92,7 @@ type OrganizePanelProps = {
  */
 export function OrganizePanel({
   client,
+  active = true,
   sources,
   onSourcesChange,
   outputDirectory,
@@ -114,9 +134,14 @@ export function OrganizePanel({
   // 中断はジョブ投入前にも押せる。押された事実を残し、番号が分かった直後に届ける
   const cancelRequested = useRef(false);
 
-  // アンマウント後のポーリングと state 更新を止める
+  // アンマウント後の state 更新を止める
   const unmounted = useRef<AbortController | null>(null);
   const isGone = () => unmounted.current?.signal.aborted === true;
+
+  // 隠れている間はジョブの監視を止める合図。別の画面を使っている間ずっと
+  // 裏で問い合わせが走らないようにする。見えたところで新しく作り直し、
+  // 走らせたままのジョブがあれば監視を引き継ぐ
+  const paused = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -126,6 +151,14 @@ export function OrganizePanel({
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    paused.current = controller;
+    // 隠れている間は最初から止まった状態にしておく
+    if (!active) controller.abort();
+    return () => controller.abort();
+  }, [active]);
 
   const loadEntries = useCallback(() => {
     client
@@ -207,6 +240,71 @@ export function OrganizePanel({
     return found;
   };
 
+  /**
+   * 投入済みのジョブを終わりまで見届け、結果を画面に出す。
+   *
+   * 画面から隠れると監視は止まる。そのときはジョブ番号も実行中の印も
+   * 残したままにして、戻ってきたところで同じジョブを引き継ぐ。ジョブ自体は
+   * サイドカー側で走り続けているので、見に行き直せば結果を拾える。
+   */
+  const watchJob = async (id: string) => {
+    // 見に行き始めた時点の合図を掴んでおく。隠れた後に新しい合図へ
+    // 差し替わっても、この監視を終わらせるかどうかは掴んだ方で決める
+    const signal = paused.current?.signal;
+    const stopped = () => isGone() || signal?.aborted === true;
+
+    try {
+      const job = await client.waitForJob(
+        id,
+        (snapshot) => {
+          setProgress({
+            current: snapshot.current,
+            total: snapshot.total || sources.length,
+          });
+          setLog(snapshot.log ?? []);
+        },
+        { signal },
+      );
+      setLog(job.log ?? []);
+
+      if (job.state === "cancelled") {
+        // 利用者が止めた場合は失敗として扱わない
+        setStatus("中断しました");
+        return;
+      }
+      if (job.state !== "succeeded") {
+        throw new Error(job.error ?? "整理に失敗しました");
+      }
+      // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
+      // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
+      const outcome = organizeResult(job.result);
+      setProgress({ current: sources.length, total: sources.length });
+      setProduced(outcome.produced);
+      setFailures(outcome.failed);
+      setStatus(
+        organizeSummary(outcome.produced.length, outcome.failed.length),
+      );
+      loadEntries();
+    } catch (error) {
+      // 画面が消えた・隠れたことによる打ち切りは、利用者に見せる失敗ではない
+      if (stopped()) return;
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      // 隠れて止まっただけなら、まだ終わっていない。番号も印も残す
+      if (!stopped()) {
+        jobId.current = null;
+        setRunning(false);
+      }
+    }
+  };
+
+  // 隠れている間に止めた監視を、戻ってきたところで引き継ぐ。
+  // 切っ掛けは active だけにする。watchJob は描画のたびに作り直されるので、
+  // 依存に入れると往復と関係なく二重に見に行く
+  useEffect(() => {
+    if (active && jobId.current) void watchJob(jobId.current);
+  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const run = async () => {
     const found = problems();
     if (found.length > 0) {
@@ -232,6 +330,7 @@ export function OrganizePanel({
       // ここまでに中断が押されていれば、そもそもジョブを投入しない
       if (cancelRequested.current) {
         setStatus("中断しました");
+        setRunning(false);
         return;
       }
 
@@ -249,47 +348,13 @@ export function OrganizePanel({
         await client.cancelJob(accepted.id).catch(() => undefined);
       }
 
-      const job = await client.waitForJob(
-        accepted.id,
-        (snapshot) => {
-          setProgress({
-            current: snapshot.current,
-            total: snapshot.total || sources.length,
-          });
-          setLog(snapshot.log ?? []);
-        },
-        { signal: unmounted.current?.signal },
-      );
-      setLog(job.log ?? []);
-
-      if (job.state === "cancelled") {
-        // 利用者が止めた場合は失敗として扱わない
-        setStatus("中断しました");
-        return;
-      }
-      if (job.state !== "succeeded") {
-        throw new Error(job.error ?? "整理に失敗しました");
-      }
-      // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
-      // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
-      const result = job.result as {
-        produced?: string[];
-        failed?: OrganizeFailure[];
-      } | null;
-      const producedPaths = result?.produced ?? [];
-      const failedEntries = result?.failed ?? [];
-      setProgress({ current: sources.length, total: sources.length });
-      setProduced(producedPaths);
-      setFailures(failedEntries);
-      setStatus(organizeSummary(producedPaths.length, failedEntries.length));
-      loadEntries();
+      await watchJob(accepted.id);
     } catch (error) {
       // 画面が消えたことによる打ち切りは、利用者に見せる失敗ではない
       if (isGone()) return;
       setStatus(error instanceof Error ? error.message : String(error));
-    } finally {
       jobId.current = null;
-      if (!isGone()) setRunning(false);
+      setRunning(false);
     }
   };
 

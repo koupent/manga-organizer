@@ -133,6 +133,8 @@ type PageGridProps = {
   archive: string;
   archiveName?: string;
   pages: { name: string; size: number; modified: string }[];
+  /** いま見えている画面かどうか。隠れている間は入力を受けない */
+  active?: boolean;
   onSaved?: (message: string) => void;
   /** 別のアーカイブを選び直す。渡さなければ選び直す導線を出さない */
   onChangeArchive?: () => void;
@@ -144,6 +146,7 @@ export function PageGrid({
   archive,
   archiveName,
   pages,
+  active = true,
   onSaved,
   onChangeArchive,
 }: PageGridProps) {
@@ -248,6 +251,9 @@ export function PageGrid({
   }, []);
 
   useEffect(() => {
+    // 隠れている間は窓ごとの押鍵を拾わない。別の画面で Ctrl+Z を押したとき、
+    // 見えていない格子の並べ替えが黙って巻き戻るのを防ぐ
+    if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setZoomed(null);
@@ -261,7 +267,7 @@ export function PageGrid({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undo]);
+  }, [undo, active]);
 
   const save = async () => {
     setSaving(true);

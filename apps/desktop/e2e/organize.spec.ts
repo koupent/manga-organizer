@@ -938,7 +938,10 @@ test.describe("整理後の受け渡し", () => {
     await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
       expected[1],
     );
-    await expect(page.getByTestId("dropzone")).toHaveCount(0);
+    // ファイル整理は隠れるだけで残る（#67）ので、その中のドロップ領域も
+    // DOM には居続ける。ここで見たいのは「移った先にドロップ領域が出ない」
+    // ことなので、数ではなく見えているかどうかで確かめる
+    await expect(page.getByTestId("dropzone")).toBeHidden();
 
     // Assert - 中身も 2 件目のもの。1 件目は 2 ページ、2 件目は 3 ページ
     await page.getByTestId("choose-page").click();
@@ -972,7 +975,8 @@ test.describe("整理後の受け渡し", () => {
     await expect(page.getByTestId("reorder-archive-name")).toHaveText(
       expected[1],
     );
-    await expect(page.getByTestId("dropzone")).toHaveCount(0);
+    // 上と同じ理由。隠れて残っているファイル整理のドロップ領域は数に入る
+    await expect(page.getByTestId("dropzone")).toBeHidden();
 
     // Assert - 中身も 2 件目のもの。ページ数で 1 件目と見分ける
     await expect(page.getByTestId("page-card")).toHaveCount(3);
