@@ -3,7 +3,7 @@ import type { ComponentProps } from "react";
 import { cn } from "../../lib/utils";
 
 const alertVariants = cva(
-  "flex items-start gap-2 rounded-md border px-3 py-2 text-[12.5px] [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:mt-0.5",
+  "flex items-start gap-2 rounded-control border px-2.5 py-1.5 text-[12.5px] [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:mt-0.5",
   {
     variants: {
       tone: {

@@ -127,7 +127,9 @@ export function App() {
 
   return (
     <main>
-      <header className="sticky top-0 z-20 flex items-center gap-4 border-b border-line bg-surface/95 px-4 py-2 backdrop-blur">
+      {/* 高さを 40px に固定する。中身の寸法に任せると、部品を 1 つ足すたびに
+          ヘッダーが伸びて作業面が削れる。作業面の取り分を先に決めておく */}
+      <header className="sticky top-0 z-20 flex h-10 items-center gap-4 border-b border-line bg-surface/95 px-4 backdrop-blur">
         <div className="flex items-center gap-2">
           <BookOpen className="size-4 text-brand" />
           <h1 className="text-[13.5px] font-semibold tracking-tight">
@@ -174,7 +176,9 @@ export function App() {
         </span>
       </header>
 
-      <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-3 p-4">
+      {/* 中央寄せの上限を置かない。広い窓では左右に余白が積み上がるだけで、
+          その間ずっと入力欄や一覧は狭いまま使うことになる */}
+      <div className="flex w-full flex-1 flex-col gap-2 p-3">
         {error ? (
           <Alert tone="danger" data-testid="error">
             <TriangleAlert />

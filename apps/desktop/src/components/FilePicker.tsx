@@ -31,6 +31,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardHeader } from "./ui/card";
 import { Empty } from "./ui/empty";
+import { SectionTitle } from "./ui/section-title";
 import type { SidecarClient } from "../api/client";
 
 type Entry = { name: string; path: string; is_directory: boolean };
@@ -126,7 +127,9 @@ function SelectedItem({
       data-position={position}
       tabIndex={0}
       className={cn(
-        "group flex items-center gap-2 rounded px-2 py-1.5 outline-none",
+        // 行の高さは中で一番背の高いもの（削除ボタン 24px）で決まる。
+        // 余白を 2px に絞り、1 行 28px に収める
+        "group flex items-center gap-2 rounded-control px-2 py-0.5 outline-none",
         "hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2",
         "focus-visible:ring-brand/40",
         isDragging && "opacity-40",
@@ -340,9 +343,9 @@ export function FilePicker({
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <h2 className="text-[13px] font-semibold">
+        <SectionTitle>
           {title ?? (single ? "並べ替えるアーカイブ" : "処理対象ファイル")}
-        </h2>
+        </SectionTitle>
         {/* 単一選択は一覧を持たない。件数も一括操作も指すものが無い */}
         {single ? null : (
           <>
@@ -364,7 +367,6 @@ export function FilePicker({
         <div className="flex-1" />
         <Button
           variant={browsing ? "primary" : "secondary"}
-          size="sm"
           data-testid="open-browser"
           disabled={disabled}
           onClick={() => setBrowsing((open) => !open)}
@@ -375,7 +377,6 @@ export function FilePicker({
         {single ? null : (
           <Button
             variant="ghost"
-            size="sm"
             data-testid="clear-selection"
             disabled={disabled || selected.length === 0}
             onClick={() => replace([])}
@@ -444,7 +445,6 @@ export function FilePicker({
           <CardHeader>
             <Button
               variant="ghost"
-              size="sm"
               data-testid="browse-up"
               disabled={!location.parent}
               onClick={() => location.parent && load(location.parent)}
@@ -460,7 +460,6 @@ export function FilePicker({
             {single ? null : (
               <Button
                 variant="secondary"
-                size="sm"
                 data-testid="add-all-here"
                 disabled={disabled}
                 onClick={() =>
@@ -500,7 +499,6 @@ export function FilePicker({
                 {entry.is_directory && !single ? (
                   <Button
                     variant="ghost"
-                    size="sm"
                     disabled={disabled}
                     onClick={() => addFolder(entry)}
                   >

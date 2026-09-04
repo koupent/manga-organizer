@@ -20,7 +20,11 @@
   --color-danger: oklch(0.68 0.17 22);
   --color-ok: oklch(0.75 0.14 155);
 
-  --radius-card: 0.625rem;
+  /* 角丸は 2 段だけにする。段が増えるほど、同じ画面の中で丸みが揃わなくなり
+     部品ごとに別の由来があるように見える。コントロール（ボタン・入力）は
+     小さいので 4px、面（カード・ダイアログ）は 6px で止める。 */
+  --radius-control: 0.25rem;
+  --radius-card: 0.375rem;
 }
 
 @layer base {

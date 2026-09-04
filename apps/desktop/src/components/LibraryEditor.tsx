@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { Card, CardBody, CardHeader } from "./ui/card";
 import { Empty } from "./ui/empty";
 import { Input } from "./ui/input";
+import { SectionTitle } from "./ui/section-title";
 
 type Entry = { title: string; author: string };
 
@@ -88,7 +89,7 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <h2 className="text-[13px] font-semibold">辞書</h2>
+        <SectionTitle>辞書</SectionTitle>
         <span
           className="tabular text-[12px] text-ink-faint"
           data-testid="entry-count"
@@ -134,7 +135,12 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
             <Search />
             著者を調べる
           </Button>
-          <Button variant="primary" data-testid="library-save" onClick={save}>
+          <Button
+            variant="primary"
+            size="lg"
+            data-testid="library-save"
+            onClick={save}
+          >
             <Plus />
             記録する
           </Button>
@@ -164,7 +170,7 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
           <CardHeader className="text-[11.5px] font-medium text-ink-muted">
             <span className="flex-[2]">作品名</span>
             <span className="flex-1">著者</span>
-            <span className="w-8" />
+            <span className="w-6" />
           </CardHeader>
           <ul className="max-h-[26rem] divide-y divide-line/50 overflow-y-auto">
             {entries.map((entry) => (
@@ -172,7 +178,7 @@ export function LibraryEditor({ client }: { client: SidecarClient }) {
                 key={entry.title}
                 data-testid="library-entry"
                 data-title={entry.title}
-                className="group flex items-center gap-2 px-3 py-1.5 hover:bg-surface-2"
+                className="group flex items-center gap-2 px-2 py-0.5 hover:bg-surface-2"
               >
                 <span className="flex-[2] truncate text-[12.5px]">
                   {entry.title}

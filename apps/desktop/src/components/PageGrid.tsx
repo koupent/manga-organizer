@@ -274,7 +274,6 @@ export function PageGrid({
         {onChangeArchive ? (
           <Button
             variant="ghost"
-            size="sm"
             data-testid="change-archive"
             onClick={onChangeArchive}
           >
@@ -300,7 +299,6 @@ export function PageGrid({
         </span>
         <Button
           variant="secondary"
-          size="sm"
           data-testid="undo"
           disabled={history.length === 0}
           onClick={undo}
@@ -310,7 +308,7 @@ export function PageGrid({
         </Button>
         <Button
           variant="primary"
-          size="sm"
+          size="lg"
           data-testid="save"
           disabled={!dirty || saving}
           onClick={save}

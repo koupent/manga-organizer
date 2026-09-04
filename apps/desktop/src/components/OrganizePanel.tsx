@@ -6,7 +6,7 @@ import { DirectoryPicker } from "./DirectoryPicker";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
 import { Button } from "./ui/button";
-import { Card, CardBody, CardHeader } from "./ui/card";
+import { Card, CardBody } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import {
   Dialog,
@@ -17,6 +17,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Progress } from "./ui/progress";
+import { SectionTitle } from "./ui/section-title";
 
 type Entry = { title: string; author: string };
 
@@ -270,7 +271,7 @@ export function OrganizePanel({
     progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       {/* 入力欄の候補。辞書に記録済みの作品と著者を出す */}
       <datalist id="known-titles">
         {entries.map((entry) => (
@@ -291,19 +292,19 @@ export function OrganizePanel({
       </datalist>
 
       <Card>
-        <CardHeader>
-          <h2 className="text-[13px] font-semibold">作品情報</h2>
-          <div className="flex-1" />
-          <Button
-            size="sm"
-            data-testid="open-library"
-            onClick={() => changeLibraryOpen(true)}
-          >
-            <BookMarked />
-            辞書
-          </Button>
-        </CardHeader>
-        <CardBody className="flex flex-wrap items-end gap-3">
+        <CardBody className="flex flex-wrap items-end gap-2">
+          <div className="flex w-full items-center gap-2">
+            <SectionTitle>作品情報</SectionTitle>
+            <div className="flex-1" />
+            <Button
+              data-testid="open-library"
+              onClick={() => changeLibraryOpen(true)}
+            >
+              <BookMarked />
+              辞書
+            </Button>
+          </div>
+
           <label className="flex min-w-[240px] flex-[2] flex-col gap-1">
             <span className="text-[11.5px] font-medium text-ink-muted">
               作品名
@@ -380,10 +381,8 @@ export function OrganizePanel({
       </Card>
 
       <Card>
-        <CardHeader>
-          <h2 className="text-[13px] font-semibold">オプション</h2>
-        </CardHeader>
-        <CardBody className="flex flex-col gap-3">
+        <CardBody className="flex flex-col gap-2">
+          <SectionTitle>オプション</SectionTitle>
           <label className="flex w-fit cursor-pointer items-center gap-2 text-[12.5px] text-ink-muted">
             <Checkbox
               data-testid="keep-originals"
@@ -412,6 +411,7 @@ export function OrganizePanel({
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="primary"
+              size="lg"
               data-testid="confirm"
               disabled={running || sources.length === 0}
               onClick={run}
@@ -445,12 +445,10 @@ export function OrganizePanel({
       </Card>
 
       <Card>
-        <CardHeader>
-          <h2 className="text-[13px] font-semibold">処理ログ</h2>
-        </CardHeader>
-        <CardBody className="p-0">
+        <CardBody className="flex flex-col gap-1">
+          <SectionTitle>処理ログ</SectionTitle>
           <pre
-            className="max-h-48 overflow-y-auto p-3 font-mono text-[11.5px] leading-relaxed text-ink-muted"
+            className="max-h-40 overflow-y-auto font-mono text-[11.5px] leading-relaxed text-ink-muted"
             data-testid="organize-log"
           >
             {log.length > 0 ? log.join("\n") : "まだ実行していません"}

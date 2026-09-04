@@ -69,7 +69,6 @@ export function DirectoryPicker({
           <CardHeader>
             <Button
               variant="ghost"
-              size="sm"
               data-testid="output-up"
               disabled={!location.parent}
               onClick={() => location.parent && load(location.parent)}
@@ -83,7 +82,6 @@ export function DirectoryPicker({
             <div className="flex-1" />
             <Button
               variant="primary"
-              size="sm"
               data-testid="use-this-directory"
               // 読み込み前に押されると出力先が空になってしまう
               disabled={!location.path}

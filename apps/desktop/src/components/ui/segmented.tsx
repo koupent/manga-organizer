@@ -13,7 +13,7 @@ export function Segmented<T extends string>({
   return (
     <div
       role="group"
-      className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-canvas p-0.5"
+      className="inline-flex items-center gap-0.5 rounded-card border border-line bg-canvas p-0.5"
     >
       {items.map((item) => (
         <button
@@ -23,7 +23,8 @@ export function Segmented<T extends string>({
           aria-pressed={value === item.id}
           onClick={() => onChange(item.id)}
           className={cn(
-            "rounded-md px-3 py-1 text-[12.5px] font-medium transition-colors",
+            // 外枠（p-0.5 + border）を合わせて 30px。ヘッダー 40px に収める
+            "h-6 rounded-control px-2.5 text-[12.5px] font-medium transition-colors",
             value === item.id
               ? "bg-brand text-brand-ink"
               : "text-ink-muted hover:bg-surface-2 hover:text-ink",
