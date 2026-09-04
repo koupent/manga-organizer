@@ -18,9 +18,10 @@ type CoverCandidatesProps = {
 /**
  * サムネイルにする 1 枚を選ぶ候補一覧。
  *
- * 絵の上ではなく作業面の下に、高さの決まった帯として敷く。候補は絵と
- * 見比べるためのものなので、開いた瞬間に肝心の絵が押し下げられたり
- * 縮んだりしては選べない。横に流し、縦は絵に譲る。
+ * 切り抜きの面と入れ替わりで、同じ作業面を丸ごと受け取って格子に並べる。
+ * 単行本は 150〜200 ページある。1 行の帯では中ほどのページへ辿り着けず、
+ * 横へ流しても目的の 1 枚がどこにあるか見当が付かない。
+ * 選んでいる間は切り抜きを触れないが、見比べる必要は薄い。
  */
 export function CoverCandidates({
   client,
@@ -32,22 +33,27 @@ export function CoverCandidates({
 }: CoverCandidatesProps) {
   return (
     <section
-      className="flex h-28 shrink-0 flex-col gap-1"
+      className="flex min-h-0 flex-1 flex-col gap-1"
       data-testid="page-candidates"
     >
-      <span className="text-[11.5px] text-ink-muted">
+      <span className="shrink-0 text-[11.5px] text-ink-muted">
         サムネイルにする 1 枚を選ぶと、確定したときに先頭ページへ移ります
       </span>
-      <ul className="flex min-h-0 flex-1 gap-2 overflow-x-auto">
+      <ul
+        className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto"
+        style={{
+          gridTemplateColumns: `repeat(auto-fill, minmax(${CANDIDATE_WIDTH}px, 1fr))`,
+        }}
+      >
         {pages.map((name) => (
-          <li key={name} className="h-full">
+          <li key={name}>
             <button
               type="button"
               data-testid="thumbnail-candidate"
               data-name={name}
               aria-pressed={name === current}
               className={cn(
-                "flex h-full w-20 flex-col items-center gap-1 rounded border p-1",
+                "flex w-full flex-col items-center gap-1 rounded border p-1",
                 name === current
                   ? "border-brand bg-brand/10"
                   : "border-line hover:border-line-strong",
@@ -55,9 +61,10 @@ export function CoverCandidates({
               onClick={() => onSelect(name)}
             >
               <img
-                className="min-h-0 w-full flex-1 rounded object-contain"
+                className="aspect-2/3 w-full rounded bg-canvas object-contain"
                 src={`${client.thumbnailUrl(archive, name, CANDIDATE_WIDTH)}&v=${reloadKey}`}
                 alt={name}
+                loading="lazy"
               />
               <span className="w-full truncate text-[11px] text-ink-muted">
                 {name}

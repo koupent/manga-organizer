@@ -33,10 +33,10 @@ const MIN_PATH_TEXT = 4;
 /** 600x900 の原稿を出す高さの下限。現状は max-h-96（384px）で頭打ち */
 const COVER_MIN_HEIGHT = 700;
 
-/** 候補一覧を開いている間の下限。フィルムストリップのぶんだけ緩める */
-const COVER_MIN_HEIGHT_WHILE_CHOOSING = 600;
+/** 候補一覧に渡す高さの下限。表紙と入れ替わり、同じ作業面を受け取る */
+const CANDIDATES_MIN_HEIGHT = 600;
 
-/** 候補一覧の開閉で画像がずれてよい量 */
+/** 候補一覧が表紙の場所から下へずれてよい量 */
 const COVER_SHIFT_TOLERANCE = 8;
 
 /** 一覧を高さいっぱいに広げたときに測る件数 */
@@ -391,6 +391,21 @@ async function coverPlace(page: Page) {
   return place!;
 }
 
+/** 候補一覧の場所と大きさ。表紙と同じ作業面を受け取れているかを見る */
+async function candidatesPlace(page: Page) {
+  const place = await page.evaluate(() => {
+    const area = document.querySelector<HTMLElement>(
+      '[data-testid="page-candidates"]',
+    );
+    if (!area) return null;
+    const rect = area.getBoundingClientRect();
+    // 文書座標で見る。窓がスクロールしただけの見かけの移動と区別する
+    return { height: rect.height, top: rect.top + window.scrollY };
+  });
+  expect(place, "page-candidates が描画されていない").not.toBeNull();
+  return place!;
+}
+
 test.describe("ワークベンチ: ファイル整理", () => {
   test("処理対象が 0 件でも縦スクロールが出ない", async ({ page }) => {
     // Arrange - 何も入れていない、開いた直後の状態
@@ -577,25 +592,25 @@ test.describe("ワークベンチ: サムネイル作成", () => {
     expect(Math.abs(cover.width / cover.height - 600 / 900)).toBeLessThan(0.02);
   });
 
-  test("候補一覧を開いても表紙が押し下げられない", async ({ page }) => {
+  test("候補一覧は表紙と同じ場所を受け取る", async ({ page }) => {
     // Arrange
     await openThumbnail(page, join(sidecar.workDir, COVER_ARCHIVE));
     const before = await coverPlace(page);
 
-    // Act - 候補一覧を開く
+    // Act - 候補一覧を開く。表紙と入れ替わる
     await page.getByTestId("choose-page").click();
     await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(3);
     await settleImages(page);
 
-    // Assert - 候補は絵の上に割り込まない。見ている絵の位置が変わらない
-    const after = await coverPlace(page);
+    // Assert - 絵の下に足すのではなく、絵のあった場所から始まる
+    const area = await candidatesPlace(page);
     expect(
-      Math.abs(after.top - before.top),
-      `表紙の上端が ${Math.round(before.top)}px から ${Math.round(after.top)}px へ動いた`,
-    ).toBeLessThanOrEqual(COVER_SHIFT_TOLERANCE);
+      area.top,
+      `候補一覧の上端が ${Math.round(area.top)}px、表紙の上端は ${Math.round(before.top)}px`,
+    ).toBeLessThanOrEqual(before.top + COVER_SHIFT_TOLERANCE);
   });
 
-  test(`候補一覧を開いても表紙が ${COVER_MIN_HEIGHT_WHILE_CHOOSING}px 以上を保つ`, async ({
+  test(`候補一覧が ${CANDIDATES_MIN_HEIGHT}px 以上の高さで出る`, async ({
     page,
   }) => {
     // Arrange
@@ -606,11 +621,12 @@ test.describe("ワークベンチ: サムネイル作成", () => {
     await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(3);
     await settleImages(page);
 
-    // Assert - 候補を見比べている間も、選ぶ判断は絵の大きさが要る
-    const cover = await coverPlace(page);
+    // Assert - 200 ページから 1 枚を探せる大きさが要る。
+    // 1 行の帯では、中ほどのページへ辿り着けない
+    const area = await candidatesPlace(page);
     expect(
-      cover.height,
-      `候補一覧を開いた表紙の表示高が ${Math.round(cover.height)}px`,
-    ).toBeGreaterThanOrEqual(COVER_MIN_HEIGHT_WHILE_CHOOSING);
+      area.height,
+      `候補一覧の表示高が ${Math.round(area.height)}px`,
+    ).toBeGreaterThanOrEqual(CANDIDATES_MIN_HEIGHT);
   });
 });

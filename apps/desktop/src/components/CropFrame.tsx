@@ -14,6 +14,66 @@ export type CropRect = {
 /** 画像の寸法（元画像の画素） */
 export type ImageSize = { width: number; height: number };
 
+/** 90 度単位の時計回りの回転。サイドカーもこの 4 つしか受け付けない */
+export type QuarterTurn = 0 | 90 | 180 | 270;
+
+/** 時計回りに 1 つ進めた角度 */
+export function nextTurn(angle: QuarterTurn): QuarterTurn {
+  return ((angle + 90) % 360) as QuarterTurn;
+}
+
+/** 打ち消す角度。回した後の座標を元へ戻すときに使う */
+export function oppositeTurn(angle: QuarterTurn): QuarterTurn {
+  return ((360 - angle) % 360) as QuarterTurn;
+}
+
+/** 回した後の寸法。90 度と 270 度では縦横が入れ替わる */
+export function rotatedSize(image: ImageSize, angle: QuarterTurn): ImageSize {
+  if (angle % 180 === 0) return { width: image.width, height: image.height };
+  return { width: image.height, height: image.width };
+}
+
+/**
+ * 枠を、画像を時計回りに angle だけ回した後の座標へ移す。
+ *
+ * 回転が 90 度単位である限り、長方形は回しても長方形のままなので、四隅を
+ * 追わずに寸法の入れ替えと平行移動だけで書ける。
+ *
+ * 逆向きへ戻すときは、回した後の寸法と oppositeTurn(angle) を渡す。
+ * 画面では回した後の座標で枠を持ち、サイドカーへ渡すときだけ元へ戻す。
+ */
+export function rotateCrop(
+  crop: CropRect,
+  image: ImageSize,
+  angle: QuarterTurn,
+): CropRect {
+  if (angle === 90) {
+    return {
+      x: image.height - crop.y - crop.height,
+      y: crop.x,
+      width: crop.height,
+      height: crop.width,
+    };
+  }
+  if (angle === 180) {
+    return {
+      x: image.width - crop.x - crop.width,
+      y: image.height - crop.y - crop.height,
+      width: crop.width,
+      height: crop.height,
+    };
+  }
+  if (angle === 270) {
+    return {
+      x: crop.y,
+      y: image.width - crop.x - crop.width,
+      width: crop.height,
+      height: crop.width,
+    };
+  }
+  return { ...crop };
+}
+
 /** 枠を小さくできる下限。元画像に対する割合で決め、画像の大小に付いていかせる */
 const MIN_WIDTH_FRACTION = 0.1;
 
