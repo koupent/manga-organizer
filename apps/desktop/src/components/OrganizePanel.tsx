@@ -278,7 +278,13 @@ export function OrganizePanel({
       // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
       // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
       const outcome = organizeResult(job.result);
-      setProgress({ current: sources.length, total: sources.length });
+      // 総数はサイドカーが投入時に決める。フォルダは中身へ展開されるので、
+      // 一覧の件数（フォルダなら 1 件）で上書きすると走り切った所で
+      // 1 / 1 に戻ってしまう。報告された総数をそのまま使い切る
+      setProgress((shown) => {
+        const total = shown.total || sources.length;
+        return { current: total, total };
+      });
       setProduced(outcome.produced);
       setFailures(outcome.failed);
       setStatus(

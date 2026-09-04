@@ -21,7 +21,6 @@ type FileBrowserProps = {
   fill: boolean;
   onOpen: (path: string) => void;
   onAdd: (paths: string[]) => void;
-  onAddFolder: (folder: BrowseEntry) => void;
 };
 
 /**
@@ -39,7 +38,6 @@ export function FileBrowser({
   fill,
   onOpen,
   onAdd,
-  onAddFolder,
 }: FileBrowserProps) {
   return (
     <Card
@@ -105,13 +103,16 @@ export function FileBrowser({
             >
               {entry.name}
             </button>
+            {/* フォルダは丸ごと 1 回で入れる。中を 1 階層だけ足していた頃は、
+                サブフォルダの中まで届かず手で辿るしかなかった。何を入れたかは
+                サイドカーが投入時に展開して確かめる */}
             {entry.is_directory && !single ? (
               <Button
                 variant="ghost"
                 disabled={disabled}
-                onClick={() => onAddFolder(entry)}
+                onClick={() => onAdd([entry.path])}
               >
-                中身を追加
+                フォルダごと追加
               </Button>
             ) : selected.includes(entry.path) ? (
               <Badge tone="ok">追加済み</Badge>
