@@ -780,6 +780,85 @@ class FixedTokenTest(unittest.TestCase):
         self.assertGreater(len(first), 20)
 
 
+class OrganizeProgressTest(ApiTestBase):
+    """整理ジョブが実行中に何冊目かを示すことを見る（#65）。
+
+    進捗の報告とログの出力は同じ報告経路を通る。ログが件数を 0 で
+    上書きすると、実行中はずっと 0 / N が出続ける。実機（4 件）では
+    処理中ずっと 0 / 4 のままだった。
+    """
+
+    def setUp(self):
+        super().setUp()
+        # 実機と同じ 4 冊。1 冊では「進んでいない」ことが見えない
+        self.archives = [self.archive]
+        for index in (2, 3, 4):
+            path = self.work_dir / f"volume{index}.zip"
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for name in ("001.jpg", "002.jpg"):
+                    archive.writestr(name, make_page())
+            self.archives.append(path)
+
+    def visible_progress(self) -> tuple[int, int]:
+        """実行中の進捗を、画面が読むのと同じ内容で覗く。
+
+        ジョブは同期実行されるので、終わってから読むと最後の値しか見えない。
+        HTTP を入れ子にすると止まるため、一覧が返すのと同じ値を直に取る。
+        """
+        organizing = [
+            job for job in self.app.state.jobs.list_jobs() if job.kind == "organize"
+        ]
+        latest = organizing[0]
+        return latest.current, latest.total
+
+    def test_organize_job_counts_archives_while_running(self):
+        # Arrange - 1 冊を処理し終えるたびに、そのときの進捗を控える。
+        # 控える位置はその冊のログが出きった直後で、実機で 0 / 4 に
+        # 見えていた瞬間と同じ
+        from manga_core.file_organizer import FileOrganizer
+
+        observed: list[tuple[int, int]] = []
+        process_single_archive = FileOrganizer.process_single_archive
+
+        def watched(organizer, archive_path):
+            results = process_single_archive(organizer, archive_path)
+            observed.append(self.visible_progress())
+            return results
+
+        # Act
+        with mock.patch.object(FileOrganizer, "process_single_archive", watched):
+            accepted = self.client.post(
+                "/api/jobs/organize",
+                params=self.auth(),
+                json={
+                    "archives": [str(archive) for archive in self.archives],
+                    "output_directory": str(self.work_dir / "out-progress"),
+                    "title": "作品",
+                    "author": "著者",
+                    "keep_originals": True,
+                },
+            )
+        self.assertEqual(202, accepted.status_code, accepted.text)
+        job_id = accepted.json()["id"]
+        job = self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
+
+        # Assert - 4 冊とも処理された。途中を 4 回見られている前提を確かめる
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual(4, len(observed), f"途中を 4 回観測できていない: {observed}")
+
+        # Assert - 実行中の進捗が何冊目かを示す。ログで 0 に戻らない。
+        # 「処理に入るとき」に報告しても「1 冊終えるごと」に報告しても、
+        # この位置での見え方は同じ並びになる
+        self.assertEqual(
+            [(1, 4), (2, 4), (3, 4), (4, 4)],
+            observed,
+            f"実行中の進捗が何冊目を示していない: {observed}",
+        )
+
+        # Assert - 完了時に 4 / 4 になるだけでは足りないが、そこも崩さない
+        self.assertEqual((4, 4), (job["current"], job["total"]), job)
+
+
 class OrganizeFailureReportTest(ApiTestBase):
     """整理ジョブが失敗の内訳を返すことを見る（#62）。
 

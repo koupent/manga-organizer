@@ -150,6 +150,57 @@ class JobStoreTest(unittest.TestCase):
         self.assertEqual("展開中", running.message)
         released.set()
 
+    def test_logging_does_not_reset_the_progress(self):
+        """ログを出しても、設定済みの件数が保たれる（#65）。
+
+        整理は 1 冊につき数行のログを出す。ログのたびに件数が 0 で
+        上書きされると、画面には 0 / N が出続ける。
+        """
+        # Arrange
+        job_id = self.store.submit("organize", {})
+        during: list[jobs.Job] = []
+
+        def work(report):
+            # 2 冊目に入ったことを伝える
+            report(current=2, total=4, message="2 冊目")
+            # その 1 冊を処理する間に出るログ。件数は触っていない
+            report(message="  Processing archive structure...")
+            report(message="  Created: 2 冊目.zip")
+            # 実行中の見え方をその場で控える
+            during.append(self.store.get(job_id))
+            return "ok"
+
+        # Act
+        self.store.run(job_id, work)
+
+        # Assert
+        observed = during[0]
+        self.assertEqual(2, observed.current, f"ログで件数が失われた: {observed}")
+        self.assertEqual(4, observed.total, f"ログで総数が失われた: {observed}")
+
+    def test_keeps_both_the_progress_and_the_log(self):
+        """進捗とログは互いを壊さない（#65）"""
+        # Arrange
+        job_id = self.store.submit("organize", {})
+
+        def work(report):
+            report(current=1, total=3, message="1 冊目")
+            report(message="  展開中")
+            report(message="  書き出し中")
+            return "ok"
+
+        # Act
+        self.store.run(job_id, work)
+
+        # Assert - 進捗は残る
+        job = self.store.get(job_id)
+        self.assertEqual((1, 3), (job.current, job.total), f"進捗がログで消えた: {job}")
+
+        # Assert - ログも残る。進捗を守るためにログを捨ててはいけない
+        self.assertEqual(
+            ["1 冊目", "  展開中", "  書き出し中"], self.store.log_of(job_id)
+        )
+
     def test_failure_records_the_reason_without_losing_the_job(self):
         # Arrange
         job_id = self.store.submit("organize", {})
