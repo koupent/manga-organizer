@@ -69,22 +69,15 @@ class FileOrganizer:
     def _detect_volume_number(
         self, image_dir: Path, archive_path: Path, vol_idx: int, total_dirs: int
     ) -> int | None:
-        """Detect volume number using priority-based detection"""
-        # Priority 1: Try to get volume from the image directory name first
-        volume = self.volume_detector.detect_volume(image_dir)
+        """Detect volume number using priority-based detection.
 
-        # Priority 2: For single directory archives only, try archive name
-        if volume is None and total_dirs == 1:
-            volume_from_archive = self.volume_detector.detect_volume_from_archive(
-                archive_path
-            )
-            if volume_from_archive is not None:
-                volume = volume_from_archive
-        # Priority 3: If multiple dirs and no volume number, use index
-        elif volume is None and total_dirs > 1:
-            volume = vol_idx
-
-        return volume
+        優先順位そのものは VolumeDetector に置く。実行前の解析（#70）が同じ
+        番号を出す必要があり、規則を 2 か所に書くと片方だけ直したときに
+        予告した名前と実際に出来る名前が食い違うため。
+        """
+        return self.volume_detector.resolve_volume(
+            image_dir, archive_path, vol_idx, total_dirs
+        ).number
 
     def _process_volume(
         self,
