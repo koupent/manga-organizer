@@ -34,6 +34,7 @@ manifest の向き
 
 import hashlib
 import json
+import logging
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -41,12 +42,28 @@ from pathlib import Path, PurePosixPath
 
 from manga_core.viewer_contract import is_page_source
 
+logger = logging.getLogger(__name__)
+
 # 元画像の置き場と紐づけの記録。画面側もこの名前を直接見る
 ORIGINALS_PREFIX = ".manga-organizer/originals/"
 MANIFEST_ENTRY = ".manga-organizer/manifest.json"
 
 # manifest の形式が変わったときに見分けるための版番号
 MANIFEST_VERSION = 1
+
+# 展開する前に拒む大きさの上限。ZIP は同じ並びをほとんど無に圧縮できるので、
+# 数百 KB の書庫が展開すると数百 MiB になる。利用者は書庫をどこからでも
+# 手に入れるうえ、サムネイル画面は開いただけで manifest と元画像を読む。
+# 展開してから大きさを見たのでは、その一瞬で確保してしまい遅い。
+# ここは「まっとうな本ならまず超えない」値で、記録の JSON は数十 KB、
+# 1 ページの画像は数 MiB に収まる
+MANIFEST_SIZE_LIMIT = 4 * 1024 * 1024
+ORIGINAL_SIZE_LIMIT = 64 * 1024 * 1024
+
+# 読み出せなかったときに外へ出す説明。ZIP 内のどのエントリを読もうとしたかは
+# 混ぜない。書き換えられた manifest から、アーカイブ内の何が読めたかを
+# 画面越しに探れてしまう。診断に要る名前はログへ残す
+_UNREADABLE_MESSAGE = "元画像を読み出せません"
 
 _ORIGINALS_KEY = "originals"
 _DERIVED_KEY = "derived"
@@ -183,12 +200,52 @@ def find_original(archive_path: Path, image: bytes) -> OriginalRef | None:
 
 
 def read_original(archive_path: Path, ref: OriginalRef) -> bytes:
-    """元画像そのもののバイト列を読み出す"""
+    """元画像そのもののバイト列を読み出す。
+
+    読み出したバイト列が記録どおりのハッシュになることを、ここで確かめる。
+    紐づけは中身のハッシュで決まると謳っている以上、引く側が確かめないと
+    誰も確かめない。manifest は ZIP の中にあり、本を配る側が自由に書ける。
+    参照先だけを別のエントリへ向ければ、利用者が一度も見ていない絵が
+    「加工前の画像」として画面に出るうえ、from_original を立てた確定は
+    その画素へ切り抜きを当てて本文を上書きする。元は残らない。
+    """
+    path = Path(archive_path)
+    data = _read_member(path, ref.entry, ORIGINAL_SIZE_LIMIT)
+    if content_hash(data) != ref.hash:
+        logger.warning(
+            "元画像の中身が記録と食い違います: %s (%s)", ref.entry, path.name
+        )
+        raise OriginalStoreError(_UNREADABLE_MESSAGE)
+    return data
+
+
+def _read_member(path: Path, entry: str, limit: int) -> bytes:
+    """アーカイブ内の 1 エントリを、申告された大きさを見てから読み出す。
+
+    外へ出す説明はどの場合も同じにする。読めた・読めなかったの違いから
+    ZIP の中身を探れないようにするため。捕まえる例外を絞っているのは、
+    OriginalStoreError 自身が RuntimeError だから。広く捕まえると、
+    上限で拒んだ判断まで握り潰す。
+    """
     try:
-        with zipfile.ZipFile(Path(archive_path), "r") as archive:
-            return archive.read(ref.entry)
+        with zipfile.ZipFile(path, "r") as archive:
+            declared = archive.getinfo(entry).file_size
+            if declared > limit:
+                logger.warning(
+                    "展開後 %d バイトの申告で上限を超えています: %s (%s)",
+                    declared,
+                    entry,
+                    path.name,
+                )
+                raise OriginalStoreError(_UNREADABLE_MESSAGE)
+            try:
+                return archive.read(entry)
+            except (RuntimeError, NotImplementedError) as error:
+                # 暗号化されたエントリ、zipfile が知らない圧縮方式。
+                # ZIP としては整合しているので、開くまで分からない
+                raise OriginalStoreError(_UNREADABLE_MESSAGE) from error
     except (OSError, KeyError, zipfile.BadZipFile) as error:
-        raise OriginalStoreError(f"元画像を読み出せません: {ref.entry}") from error
+        raise OriginalStoreError(_UNREADABLE_MESSAGE) from error
 
 
 def _reject_page_entries(extras: Mapping[str, bytes]) -> None:
@@ -231,11 +288,14 @@ def _load_document(archive_path: Path) -> dict:
 
     manifest が読めないからといって加工そのものを止めると、既存のアーカイブを
     一切編集できなくなる。読めない記録は無かったことにして書き直す。
+
+    読めない理由は JSON の壊れ方だけではない。暗号化された 1 エントリや
+    知らない圧縮方式、展開すると膨れ上がる中身も「読めない」に含める。
+    ページ自体は完全に読める本が、サムネイル画面を開いただけで落ちてしまう。
     """
     try:
-        with zipfile.ZipFile(archive_path, "r") as archive:
-            raw = archive.read(MANIFEST_ENTRY)
-    except (OSError, KeyError, zipfile.BadZipFile):
+        raw = _read_member(Path(archive_path), MANIFEST_ENTRY, MANIFEST_SIZE_LIMIT)
+    except OriginalStoreError:
         return {}
     try:
         document = json.loads(raw.decode("utf-8"))

@@ -59,20 +59,31 @@ export function CoverPreview({
     // 読み込みを待つ他の仕組みを巻き込まない
     const loading = new Image();
     let live = true;
+    // 前の絵は、もう別の 1 枚のもの。持ち越すと、新しい絵が届くまでの間
+    // 「前のページの画素を、新しい寸法と枠で切った絵」を見え方として出す。
+    // 読み込みに失敗したときは、その間違った見本が出たまま残る
+    setSource(null);
     loading.onload = () => {
       if (live) setSource(loading);
+    };
+    loading.onerror = () => {
+      if (live) setSource(null);
     };
     loading.src = src;
     return () => {
       live = false;
+      // 用済みの読み込みを手放す。後から届いても描かせない
+      loading.onload = null;
+      loading.onerror = null;
+      loading.src = "";
     };
   }, [src]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !source) return;
+    if (!canvas) return;
     const context = canvas.getContext("2d");
-    if (!context || crop.width <= 0 || crop.height <= 0) return;
+    if (!context) return;
 
     // 画面の画素密度に合わせて実画素を持つ。CSS 上の大きさは style で決める
     const density = window.devicePixelRatio || 1;
@@ -81,6 +92,9 @@ export function CoverPreview({
 
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvas.width, canvas.height);
+    // 描く絵が無い間は空にしておく。前の絵を残すと、それが今の 1 枚の
+    // 見え方だと読めてしまう
+    if (!source || crop.width <= 0 || crop.height <= 0) return;
     // viewer と同じ置き方。短い辺を枠に合わせ、余った側は中央で切る
     const scale = Math.max(
       canvas.width / crop.width,

@@ -271,7 +271,9 @@ class OriginalView(BaseModel):
 
     width: int
     height: int
-    operations: list[OperationView] = Field(default_factory=list)
+    # 既定値を持たせない。持たせると生成される画面側の型で任意項目になり、
+    # 常に載せているという実装と食い違う
+    operations: list[OperationView]
 
 
 class CoverView(BaseModel):
@@ -287,8 +289,9 @@ class CoverView(BaseModel):
     height: int
     is_spread: bool
     target_aspect_ratio: float
+    # 既定値を持たせない。載せ忘れと「元画像が無い」を、画面側が null で
+    # 見分けられるようにする
     original: OriginalView | None = Field(
-        default=None,
         description="加工前の画像。一度も加工していなければ null",
     )
 
@@ -358,11 +361,25 @@ def _media_type(name: str) -> str:
     return IMAGE_MEDIA_TYPES.get(Path(name).suffix.lower(), FALLBACK_MEDIA_TYPE)
 
 
+def _weak_form(candidate: str) -> str:
+    """W/ を外した検証子。弱い比較はこの形どうしで照合する"""
+    return candidate[2:] if candidate.startswith("W/") else candidate
+
+
 def _matches_tag(header: str | None, tag: str) -> bool:
-    """ブラウザが持っている版が、いまの中身と同じかどうか"""
+    """ブラウザが持っている版が、いまの中身と同じかどうか。
+
+    If-None-Match の書き方はブラウザが決めるもので、こちらでは選べない
+    （RFC 9110 13.1.2）。W/ 付き・`*`・複数並べのどれかを読み落とすと、
+    持っている版を名乗られても丸ごと送り直すことになり、200 ページの本を
+    開き直すたびに全ページが再送される。
+    """
     if not header:
         return False
-    return tag in {candidate.strip() for candidate in header.split(",")}
+    candidates = {candidate.strip() for candidate in header.split(",")}
+    if "*" in candidates:
+        return True
+    return _weak_form(tag) in {_weak_form(candidate) for candidate in candidates}
 
 
 def _image_response(request: Request, body: bytes, media_type: str) -> Response:

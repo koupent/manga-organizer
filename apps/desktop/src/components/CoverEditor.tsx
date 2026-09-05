@@ -52,8 +52,8 @@ type Cover = {
   height: number;
   is_spread: boolean;
   target_aspect_ratio: number;
-  /** 加工前の画像。一度も加工していなければ無い */
-  original?: CoverOriginal | null;
+  /** 加工前の画像。一度も加工していなければ null */
+  original: CoverOriginal | null;
 };
 
 /**
@@ -163,16 +163,26 @@ export function CoverEditor({
 
   useEffect(() => {
     if (!selected) return;
+    // 選び直すと問い合わせが重なり、返る順は保証されない。遅れて届いた
+    // 古い応答を採ると、画面は選び直す前の 1 枚に戻る。そのまま確定すれば
+    // 利用者が選んでいない 1 枚が切り抜かれ、元の絵は失われる
+    let alive = true;
     client
       .cover(archive, selected)
       .then((payload) => {
+        if (!alive) return;
         const next = payload as Cover;
         setCover(next);
         // 別の絵になれば加工の意味も変わる。持ち越さず、その 1 枚の初期状態から
         // 始める。確定した直後もここを通り、書き込み済みの加工が二重に残らない
         startFrom(next);
       })
-      .catch((reason) => setStatus(String(reason.message ?? reason)));
+      .catch((reason) => {
+        if (alive) setStatus(String(reason.message ?? reason));
+      });
+    return () => {
+      alive = false;
+    };
   }, [client, archive, selected, reloadKey]);
 
   /**
@@ -272,6 +282,13 @@ export function CoverEditor({
             別のファイルを選ぶ
           </Button>
         ) : null}
+        {/* この行に並ぶ名前・寸法・枠の判定は、いま保存されている 1 枚の値。
+            見えている絵と枠は加工前の画像なので、見出しを付けないと
+            1600×1200 の見開きを見ながら「800×1200」「枠に合っています」と
+            書かれた画面になり、矛盾しているようにしか読めない */}
+        <span className="shrink-0 text-[12px] text-ink-faint">
+          保存されている表紙
+        </span>
         <span
           className="shrink-0 text-[12px] text-ink-faint"
           data-testid="cover-name"
@@ -386,8 +403,11 @@ export function CoverEditor({
           {cover.is_spread ? (
             <Alert tone="warn" data-testid="spread-warning">
               <TriangleAlert />
+              {/* 判定の相手は保存されている 1 枚。見えている絵が見開きでも、
+                  保存済みが片側だけならこの警告は出ない。どちらの話かを
+                  文面で言っておかないと、出ない理由が分からない */}
               <span>
-                見開きです。使いたい側へ枠を寄せると、その半分が表紙になります
+                保存されている表紙は見開きです。使いたい側へ枠を寄せると、その半分が表紙になります
               </span>
             </Alert>
           ) : null}

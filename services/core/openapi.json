@@ -1292,7 +1292,8 @@
           "width",
           "height",
           "is_spread",
-          "target_aspect_ratio"
+          "target_aspect_ratio",
+          "original"
         ],
         "title": "CoverView",
         "description": "表紙の状態。\n\n寸法と見開き判定は「いま保存されている 1 枚」を指す。original は、その\n1 枚が加工の結果なら加工前の姿を添える。画面は加工前を対象にして枠を\n置き直すので、両方を 1 回の問い合わせで受け取る必要がある。"
@@ -1658,7 +1659,8 @@
         "type": "object",
         "required": [
           "width",
-          "height"
+          "height",
+          "operations"
         ],
         "title": "OriginalView",
         "description": "いま見ている 1 枚の、加工前の姿。\n\nZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた\nmanifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。\n画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。"

@@ -546,7 +546,7 @@ export interface components {
       /** Target Aspect Ratio */
       target_aspect_ratio: number;
       /** @description 加工前の画像。一度も加工していなければ null */
-      original?: components["schemas"]["OriginalView"] | null;
+      original: components["schemas"]["OriginalView"] | null;
     };
     /**
      * DroppedFile
@@ -732,7 +732,7 @@ export interface components {
       /** Height */
       height: number;
       /** Operations */
-      operations?: components["schemas"]["OperationView"][];
+      operations: components["schemas"]["OperationView"][];
     };
     /**
      * PageList

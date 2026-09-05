@@ -20,6 +20,8 @@
 """
 
 import io
+import json
+import struct
 import sys
 import unittest
 import zipfile
@@ -32,7 +34,10 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from manga_api.app import create_app  # noqa: E402
-from manga_core.original_store import ORIGINALS_PREFIX  # noqa: E402
+from manga_core.original_store import (  # noqa: E402
+    MANIFEST_ENTRY,
+    ORIGINALS_PREFIX,
+)
 
 # 加工前のページの寸法。切り抜き後と必ず食い違う大きさにする
 PAGE_SIZE = (800, 1200)
@@ -252,6 +257,201 @@ class OriginalImageTest(OriginalApiTestBase):
             "/api/original", params=self.auth({"archive": "/etc/passwd", "name": "x"})
         )
         self.assertEqual(400, response.status_code, response.text)
+
+
+# 隠されているはずのエントリ名。応答に出れば一目で分かる文字列にする
+HIDDEN_ENTRY = f"{ORIGINALS_PREFIX}himitsu-no-entry.jpg"
+
+
+def replace_manifest(archive: Path, raw: bytes) -> None:
+    """manifest だけを差し替える。他のエントリは触らない"""
+    with zipfile.ZipFile(archive) as opened:
+        kept = [
+            (item.filename, opened.read(item.filename))
+            for item in opened.infolist()
+            if item.filename != MANIFEST_ENTRY
+        ]
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as opened:
+        for name, data in kept:
+            opened.writestr(name, data)
+        opened.writestr(MANIFEST_ENTRY, raw)
+
+
+def repoint_originals(archive: Path, entry: str) -> None:
+    """元画像の参照先だけを書き換える。加工の記録はそのまま残す。
+
+    ZIP は誰でも開いて書き換えられる。指した先が無いときに何を答えるかが、
+    ここで見たいこと。
+    """
+    with zipfile.ZipFile(archive) as opened:
+        document = json.loads(opened.read(MANIFEST_ENTRY).decode("utf-8"))
+    document["originals"] = {key: entry for key in document["originals"]}
+    replace_manifest(archive, json.dumps(document).encode("utf-8"))
+
+
+def damage_member(
+    archive: Path, name: str, *, encrypted: bool = False, method: int | None = None
+) -> None:
+    """エントリ 1 つだけを読めなくする。他のエントリはそのまま読める。
+
+    zipfile が読めないのは JSON の壊れ方だけではない。暗号化されていれば
+    RuntimeError、知らない圧縮方式なら NotImplementedError を投げる。
+    どちらも zipfile が作れない形なので、ヘッダを直接書き換えて作る。
+    """
+    with zipfile.ZipFile(archive) as opened:
+        header = opened.getinfo(name).header_offset
+    raw = bytearray(archive.read_bytes())
+    encoded = name.encode("utf-8")
+
+    def patch(at: int, flag_at: int, method_at: int) -> None:
+        if encrypted:
+            flag = struct.unpack_from("<H", raw, at + flag_at)[0] | 0x1
+            struct.pack_into("<H", raw, at + flag_at, flag)
+        if method is not None:
+            struct.pack_into("<H", raw, at + method_at, method)
+
+    # ローカルヘッダ
+    assert raw[header : header + 4] == b"PK\x03\x04"
+    patch(header, 6, 8)
+    # 中央ディレクトリ。同じ値を両方に書かないと ZIP として整合しない
+    at = 0
+    while True:
+        at = raw.find(b"PK\x01\x02", at)
+        assert at != -1, f"中央ディレクトリに {name} が無い"
+        length = struct.unpack_from("<H", raw, at + 28)[0]
+        if raw[at + 46 : at + 46 + length] == encoded:
+            patch(at, 8, 10)
+            break
+        at += 4
+    archive.write_bytes(bytes(raw))
+
+
+class UnreadableManifestTest(OriginalApiTestBase):
+    """manifest のエントリだけが読めない本でも、画面はそのまま開く。
+
+    manifest は ZIP の中にあり、本を配る側が自由に作れる。暗号化された 1
+    エントリや、zipfile が知らない圧縮方式で入れられた 1 エントリは、読もうと
+    した瞬間に RuntimeError / NotImplementedError になる。壊れた JSON は
+    読み飛ばしているのに、ここで落ちると、ページ自体は完全に読める本が
+    サムネイル画面を開いただけで 500 になり、二度と加工できない。
+    """
+
+    def setUp(self):
+        super().setUp()
+        # 例外がそのまま外へ出る形だと 500 かどうかを見られない。
+        # 利用者の画面から見えるのは応答の方なので、応答で確かめる
+        self.browser = TestClient(self.app, raise_server_exceptions=False)
+        self.addCleanup(self.browser.close)
+        self.crop(self.edited, "page-a.jpg", FIRST_CROP)
+
+    def open_cover(self):
+        return self.browser.get(
+            "/api/cover", params=self.auth({"archive": str(self.edited)})
+        )
+
+    def assert_screen_still_opens(self):
+        # Assert - 画面は開く。記録が読めないだけで、ページは完全に読める
+        response = self.open_cover()
+        self.assertEqual(200, response.status_code, response.text)
+        payload = response.json()
+        self.assertEqual("001.jpg", payload["name"])
+        self.assertEqual(list(FIRST_CROP_SIZE), [payload["width"], payload["height"]])
+
+        # Assert - 元画像は「無い」ものとして扱う。読めない記録は捨てる
+        self.assertIsNone(payload["original"], f"読めない記録を使っている: {payload}")
+
+        # Assert - バイト列を求める経路も落ちない
+        missing = self.browser.get(
+            "/api/original",
+            params=self.auth({"archive": str(self.edited), "name": "001.jpg"}),
+        )
+        self.assertEqual(404, missing.status_code, missing.text)
+
+    def test_opens_a_book_whose_manifest_member_is_encrypted(self):
+        # Arrange - manifest だけがパスワード付きで入っている
+        damage_member(self.edited, MANIFEST_ENTRY, encrypted=True)
+
+        # Arrange - 仕掛けが本物であること。ページは今までどおり読める
+        with zipfile.ZipFile(self.edited) as opened:
+            self.assertTrue(opened.read("001.jpg"))
+            with self.assertRaises(RuntimeError):
+                opened.read(MANIFEST_ENTRY)
+
+        # Act / Assert
+        self.assert_screen_still_opens()
+
+    def test_opens_a_book_whose_manifest_member_uses_an_unknown_method(self):
+        # Arrange - zipfile が知らない圧縮方式で manifest が入っている
+        damage_member(self.edited, MANIFEST_ENTRY, method=99)
+
+        # Arrange - 仕掛けが本物であること
+        with zipfile.ZipFile(self.edited) as opened:
+            self.assertTrue(opened.read("001.jpg"))
+            with self.assertRaises(NotImplementedError):
+                opened.read(MANIFEST_ENTRY)
+
+        # Act / Assert
+        self.assert_screen_still_opens()
+
+
+class HiddenEntryNameTest(OriginalApiTestBase):
+    """元画像の ZIP 内エントリ名は、失敗したときも外へ出さない。
+
+    エントリ名を返さないのは、書き換えられた manifest 経由でアーカイブ内の
+    任意のエントリを画面から読ませる道を作らないため。読み出しに失敗したときの
+    説明文に混ぜれば、名指ししないと決めた意味が無くなる。ジョブの失敗理由は
+    そのまま画面に文字として出るので、そちらも同じ扱いになる。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.crop(self.edited, "page-a.jpg", FIRST_CROP)
+        # 記録の参照先だけを、同梱されていないエントリへ向ける
+        repoint_originals(self.edited, HIDDEN_ENTRY)
+        with zipfile.ZipFile(self.edited) as opened:
+            self.assertNotIn(HIDDEN_ENTRY, opened.namelist(), "指した先が実在している")
+
+    def assert_hides_the_entry(self, text: str) -> None:
+        self.assertTrue(text, "何が起きたのか一言も伝えていない")
+        self.assertNotIn(HIDDEN_ENTRY, text, f"エントリ名が漏れている: {text}")
+        self.assertNotIn(ORIGINALS_PREFIX, text, f"置き場が漏れている: {text}")
+
+    def test_does_not_leak_the_entry_name_when_serving_the_bytes(self):
+        # Act - 画面が元画像そのものを求める
+        response = self.client.get(
+            "/api/original",
+            params=self.auth({"archive": str(self.edited), "name": "001.jpg"}),
+        )
+
+        # Assert - 読み出せないことは伝わる
+        self.assertEqual(404, response.status_code, response.text)
+
+        # Assert - どのエントリを読もうとしたのかは伝えない
+        self.assert_hides_the_entry(response.json()["detail"])
+
+    def test_does_not_leak_the_entry_name_through_a_failed_job(self):
+        # Act - 加工前の画像を対象にして確定する。読み出しはここで失敗する
+        submitted = self.client.post(
+            "/api/jobs/cover",
+            params=self.auth(),
+            json={
+                "archive": str(self.edited),
+                "name": "001.jpg",
+                "crop": SECOND_CROP,
+                "make_first": True,
+                "from_original": True,
+            },
+        )
+        self.assertEqual(202, submitted.status_code, submitted.text)
+        job = self.client.get(
+            f"/api/jobs/{submitted.json()['id']}", params=self.auth()
+        ).json()
+
+        # Assert - 失敗そのものは画面に伝わる
+        self.assertEqual("failed", job["state"], job)
+
+        # Assert - 失敗理由はそのまま画面に出る。ここにエントリ名を混ぜない
+        self.assert_hides_the_entry(job["error"] or "")
 
 
 if __name__ == "__main__":

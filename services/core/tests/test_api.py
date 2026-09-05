@@ -231,6 +231,77 @@ class ImageFreshnessTest(ApiTestBase):
         self.assertEqual(b"", again.content)
 
 
+class ConditionalRequestTest(ApiTestBase):
+    """ブラウザが送ってくる If-None-Match の書き方を、規格どおりに読む。
+
+    /api/image と /api/original は同じ判定を通る。ここが厳しすぎると、
+    ブラウザは同じ画像を何度でも丸ごと受け取り直す。200 ページの本を
+    開き直すたびに全ページが再送されるので、no-cache にした前提が崩れる。
+
+    規格（RFC 9110 13.1.2）で決まっているのは 3 つ。
+
+        W/"..."   弱い検証子。If-None-Match は弱い比較で照合する
+        *         版を問わず、表現があるなら一致とみなす
+        a, b, c   どれか 1 つに当たれば一致
+
+    どれもブラウザが実際に送る形で、こちらが選べるものではない。
+    """
+
+    def image(self, headers: dict | None = None):
+        return self.client.get(
+            "/api/image",
+            params=self.auth({"archive": str(self.archive), "name": "001.jpg"}),
+            headers=headers or {},
+        )
+
+    def current_tag(self) -> str:
+        """いま届く版の目印。中身そのもののハッシュから決まる"""
+        first = self.image()
+        self.assertEqual(200, first.status_code, first.text)
+        return first.headers["etag"]
+
+    def assert_not_modified(self, header: str) -> None:
+        response = self.image({"If-None-Match": header})
+        self.assertEqual(
+            304, response.status_code, f"{header} を持っているのに送り直している"
+        )
+        self.assertEqual(b"", response.content)
+
+    def assert_sends_the_image(self, header: str) -> None:
+        """持っていない版を名乗ったときは中身が届く。常に 304 では困る"""
+        response = self.image({"If-None-Match": header})
+        self.assertEqual(200, response.status_code, f"{header} で送ってこない")
+        self.assertTrue(response.content)
+
+    def test_accepts_a_weak_validator_for_the_current_version(self):
+        # Arrange - 同じ版を弱い検証子として名乗る。中身は 1 バイトも変えない
+        tag = self.current_tag()
+
+        # Act / Assert
+        self.assert_not_modified(f"W/{tag}")
+
+        # Assert - 別の版を名乗れば届く。いつでも 304 では中身が古いままになる
+        # （ヘッダは ASCII しか通らないので、名乗る版は英字で書く）
+        self.assert_sends_the_image('W/"other-version"')
+
+    def test_accepts_the_wildcard(self):
+        # Arrange - 版を問わない書き方。表現がある限り一致する
+        self.current_tag()
+
+        # Act / Assert
+        self.assert_not_modified("*")
+
+    def test_accepts_a_list_that_contains_the_current_version(self):
+        # Arrange - 複数の版を並べて送ってくる。当たりは弱い検証子で混ざる
+        tag = self.current_tag()
+
+        # Act / Assert
+        self.assert_not_modified(f'"other-version", W/{tag}, "yet-another"')
+
+        # Assert - 並べても当たりが無ければ届く
+        self.assert_sends_the_image('"other-version", W/"yet-another"')
+
+
 class JobTest(ApiTestBase):
     def test_job_detail_carries_the_processing_log(self):
         # Arrange - 整理を 1 件走らせる
