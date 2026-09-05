@@ -74,6 +74,33 @@ print(json.dumps({
   return JSON.parse(output);
 }
 
+/**
+ * ページ名ごとの寸法を viewer と同じ辞書順で返す。
+ *
+ * 切り抜きを広げられたか（#66）は、枠が動いたことではなく出来上がった画像が
+ * 大きくなったことでしか確かめられない。ページ以外のエントリは画像ではないので
+ * 除く。manifest.json を Image.open すると、そこで落ちて比較まで届かない。
+ */
+export function pageSizesOf(archive: string): Record<string, [number, number]> {
+  const output = runPython(
+    `
+import io, json, sys, zipfile
+from PIL import Image
+${VIEWER_CONTRACT_IMPORT}
+result = {}
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    for name in sorted(archive.namelist()):
+        if not is_viewer_page(name):
+            continue
+        with Image.open(io.BytesIO(archive.read(name))) as image:
+            result[name] = list(image.size)
+print(json.dumps(result))
+`,
+    archive,
+  );
+  return JSON.parse(output);
+}
+
 /** ページの中身（色）を読み出し、加工や並べ替えが実際に効いたか確かめる */
 export function coloursOf(archive: string): Record<string, string> {
   const output = runPython(

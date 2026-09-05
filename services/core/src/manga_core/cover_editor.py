@@ -23,7 +23,13 @@ from pathlib import Path
 from PIL import Image
 
 from manga_core.file_times import capture_file_times, restore_file_times
-from manga_core.original_store import Operation, plan_record
+from manga_core.original_store import (
+    Operation,
+    OriginalStoreError,
+    find_original,
+    plan_record,
+    read_original,
+)
 from manga_core.page_reorder import (
     DEFLATE_LEVEL,
     PageEntry,
@@ -183,11 +189,33 @@ def _plan_original(
     )
 
 
+def _source_pixels(archive_path: Path, stored: bytes, from_original: bool) -> bytes:
+    """加工の元にする画素を選ぶ。
+
+    保存済みの画像は既に切り抜かれていることがあり、それを対象にする限り
+    範囲は縮める方向にしか動かせない。同梱された加工前の画像を対象にすれば、
+    一度捨てた画素まで戻せる（#66）。
+
+    無いのに求められたら断る。黙って保存済みの画像へ当てると、加工前の画素で
+    選ばれた範囲が別の絵に当たり、利用者が選んでいない場所が切り出される。
+    """
+    if not from_original:
+        return stored
+    ref = find_original(archive_path, stored)
+    if ref is None:
+        raise CoverEditError("加工前の画像が同梱されていません")
+    try:
+        return read_original(archive_path, ref)
+    except OriginalStoreError as error:
+        raise CoverEditError(str(error)) from error
+
+
 def apply_to_archive(
     archive_path: Path,
     name: str,
     transform: CoverTransform,
     make_first: bool = False,
+    from_original: bool = False,
 ) -> CoverResult:
     """アーカイブ内の 1 枚を加工して差し替える。
 
@@ -195,16 +223,22 @@ def apply_to_archive(
     どちらの経路でも、元を捨てる前に書き上げた ZIP を読み直して確かめ、
     原子的に置き換える。
 
+    from_original を立てると、差し替える位置は name のままで、加工は同梱された
+    加工前の画像に当たる。transform の座標もその画像の画素で解釈される。
+
     加工前の画像は失われると戻せないので、同じ書き直しの中で ZIP へ残す（#66）。
     """
     archive_path = Path(archive_path)
     if make_first:
-        return _move_to_front(archive_path, name, transform)
-    return _replace_in_place(archive_path, name, transform)
+        return _move_to_front(archive_path, name, transform, from_original)
+    return _replace_in_place(archive_path, name, transform, from_original)
 
 
 def _replace_in_place(
-    archive_path: Path, name: str, transform: CoverTransform
+    archive_path: Path,
+    name: str,
+    transform: CoverTransform,
+    from_original: bool = False,
 ) -> CoverResult:
     """加工した 1 枚を、同じ位置のまま差し替える"""
     with zipfile.ZipFile(archive_path, "r") as source:
@@ -212,8 +246,9 @@ def _replace_in_place(
             info = source.getinfo(name)
         except KeyError as error:
             raise CoverEditError(f"アーカイブに存在しません: {name}") from error
-        original = source.read(info)
+        stored = source.read(info)
 
+    original = _source_pixels(archive_path, stored, from_original)
     # 加工に失敗したらここで止まる。元のアーカイブには触れていない
     produced = transform_image(original, transform, name)
     _, suffix = _output_format(name)
@@ -253,7 +288,10 @@ def _front_first_order(name: str, pages: tuple[PageEntry, ...]) -> tuple[str, ..
 
 
 def _move_to_front(
-    archive_path: Path, name: str, transform: CoverTransform
+    archive_path: Path,
+    name: str,
+    transform: CoverTransform,
+    from_original: bool = False,
 ) -> CoverResult:
     """加工した 1 枚を先頭ページへ移し、画像エントリの連番を振り直す。
 
@@ -270,7 +308,8 @@ def _move_to_front(
         raise CoverEditError(str(error)) from error
 
     try:
-        original = editor.read_entry(name)
+        stored = editor.read_entry(name)
+        original = _source_pixels(archive_path, stored, from_original)
         # 加工に失敗したらここで止まる。元のアーカイブには触れていない
         produced = transform_image(original, transform, name)
         extras = _plan_original(archive_path, name, original, produced, transform)

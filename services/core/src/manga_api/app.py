@@ -30,6 +30,12 @@ from manga_core.cover_editor import (
 from manga_core.input_expander import ARCHIVE_SUFFIXES, expand_inputs
 from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
+from manga_core.original_store import (
+    OriginalStoreError,
+    content_hash,
+    find_original,
+    read_original,
+)
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
 from manga_core.toc_analyzer import analyze_inputs, locate_books
 
@@ -41,6 +47,22 @@ HOST = "127.0.0.1"
 
 # 作品名として妥当な長さ。これを超えるものは打ち間違いか攻撃とみなす
 MAX_TITLE_LENGTH = 200
+
+# 拡張子から media type を決める。画像として名指しできる形式だけを並べ、
+# 知らない拡張子はブラウザに画像として解釈させない
+IMAGE_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+FALLBACK_MEDIA_TYPE = "application/octet-stream"
+
+# サムネイルは描き直したもの。名前ではなく描き出した形式で決まる
+THUMBNAIL_MEDIA_TYPE = "image/jpeg"
 
 # Tauri の WebView と、開発・検証で使う Vite の dev server
 DEFAULT_ALLOWED_ORIGINS = (
@@ -223,16 +245,52 @@ class CoverRequest(BaseModel):
         default=False,
         description="加工した 1 枚を先頭ページ（サムネイル）へ移すかどうか",
     )
+    from_original: bool = Field(
+        default=False,
+        description=(
+            "加工前の画像を対象にするかどうか。"
+            "立てると crop は加工前の画像の画素で解釈される"
+        ),
+    )
+
+
+class OperationView(BaseModel):
+    """元画像に施した加工 1 つ分。params の形は kind ごとに決まる"""
+
+    kind: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class OriginalView(BaseModel):
+    """いま見ている 1 枚の、加工前の姿。
+
+    ZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた
+    manifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。
+    画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。
+    """
+
+    width: int
+    height: int
+    operations: list[OperationView] = Field(default_factory=list)
 
 
 class CoverView(BaseModel):
-    """表紙の状態"""
+    """表紙の状態。
+
+    寸法と見開き判定は「いま保存されている 1 枚」を指す。original は、その
+    1 枚が加工の結果なら加工前の姿を添える。画面は加工前を対象にして枠を
+    置き直すので、両方を 1 回の問い合わせで受け取る必要がある。
+    """
 
     name: str
     width: int
     height: int
     is_spread: bool
     target_aspect_ratio: float
+    original: OriginalView | None = Field(
+        default=None,
+        description="加工前の画像。一度も加工していなければ null",
+    )
 
 
 class JobAccepted(BaseModel):
@@ -293,6 +351,67 @@ class HealthView(BaseModel):
 
     status: str
     version: str
+
+
+def _media_type(name: str) -> str:
+    """エントリ名から media type を決める。知らない拡張子は画像として扱わない"""
+    return IMAGE_MEDIA_TYPES.get(Path(name).suffix.lower(), FALLBACK_MEDIA_TYPE)
+
+
+def _matches_tag(header: str | None, tag: str) -> bool:
+    """ブラウザが持っている版が、いまの中身と同じかどうか"""
+    if not header:
+        return False
+    return tag in {candidate.strip() for candidate in header.split(",")}
+
+
+def _image_response(request: Request, body: bytes, media_type: str) -> Response:
+    """画像を返す。取り直すかどうかは、中身が変わったかどうかで決めさせる。
+
+    max-age で日持ちさせると、加工でページの中身が変わっても URL が同じなので
+    ブラウザは取りに行かず、加工前の絵を出し続ける。実際、同じ窓で本を開き直すと
+    サイドカーは新しい画像を返しているのに画面は古い画像を描いていた。
+
+    no-cache は「保存するな」ではなく「使う前に必ず確かめろ」なので、中身が
+    変わっていなければ 304 で済み、日持ちさせていたときの転送量とほぼ変わらない。
+    版の目印は中身そのもののハッシュにする。加工はファイルの日時を元に戻すので、
+    日時を目印にすると変わったことに気づけない。
+    """
+    tag = f'"{content_hash(body)}"'
+    headers = {
+        "Cache-Control": "no-cache",
+        "ETag": tag,
+        "X-Content-Type-Options": "nosniff",
+    }
+    if _matches_tag(request.headers.get("if-none-match"), tag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return Response(content=body, media_type=media_type, headers=headers)
+
+
+def _describe_original(archive_path: Path, image: bytes) -> OriginalView | None:
+    """加工後の 1 枚から、加工前の姿を引く。記録が無ければ None。
+
+    寸法は PIL が見出しだけ読んで返すので、画素まで展開しない。
+    """
+    ref = find_original(archive_path, image)
+    if ref is None:
+        return None
+    try:
+        with Image.open(io.BytesIO(read_original(archive_path, ref))) as opened:
+            width, height = opened.size
+    except (OriginalStoreError, OSError):
+        # 記録はあるが読めない。同梱が失われた古いアーカイブでも画面が
+        # 開けるよう、元画像が無いものとして扱う
+        logger.warning("元画像を読めませんでした: %s", archive_path)
+        return None
+    return OriginalView(
+        width=width,
+        height=height,
+        operations=[
+            OperationView(kind=operation.kind, params=dict(operation.params))
+            for operation in ref.operations
+        ],
+    )
 
 
 def _to_view(job: Job) -> JobView:
@@ -470,7 +589,9 @@ def create_app(
             editor.close()
 
     @app.get("/api/thumb", dependencies=guarded, response_class=Response)
-    def thumbnail(archive: str, name: str, width: int = 240) -> Response:
+    def thumbnail(
+        request: Request, archive: str, name: str, width: int = 240
+    ) -> Response:
         """ページのサムネイルを返す"""
         editor = open_editor(archive)
         resolved = thumbnails.nearest_width(width)
@@ -490,14 +611,7 @@ def create_app(
             ) from error
         finally:
             editor.close()
-        return Response(
-            content=body,
-            media_type="image/jpeg",
-            headers={
-                "Cache-Control": "max-age=3600",
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
+        return _image_response(request, body, THUMBNAIL_MEDIA_TYPE)
 
     @app.post("/api/resolve", dependencies=guarded, response_model=ResolveResult)
     def resolve(request: ResolveRequest) -> ResolveResult:
@@ -668,7 +782,7 @@ def create_app(
         )
 
     @app.get("/api/image", dependencies=guarded, response_class=Response)
-    def image(archive: str, name: str) -> Response:
+    def image(request: Request, archive: str, name: str) -> Response:
         """ページを原寸で返す。拡大表示に使う"""
         editor = open_editor(archive)
         try:
@@ -679,16 +793,42 @@ def create_app(
             ) from error
         finally:
             editor.close()
-        suffix = Path(name).suffix.lower().lstrip(".")
-        media_type = f"image/{'jpeg' if suffix in ('jpg', 'jpeg') else suffix}"
-        return Response(
-            content=body,
-            media_type=media_type,
-            headers={
-                "Cache-Control": "max-age=3600",
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
+        return _image_response(request, body, _media_type(name))
+
+    @app.get("/api/original", dependencies=guarded, response_class=Response)
+    def original(request: Request, archive: str, name: str) -> Response:
+        """いま見ている 1 枚の、加工前の画像そのものを返す。
+
+        求めるのは加工後のページ名だけで、元画像が ZIP のどのエントリに
+        入っているかは受け取らない。エントリ名を外から取ると、書き換えられた
+        manifest 経由でアーカイブ内の任意のエントリを読ませる道ができる。
+
+        バイト列を /api/cover と分けているのは、画像が JSON に載らないうえ、
+        /api/cover は画面を描き直すたびに引かれる軽い経路であってほしいため。
+        """
+        editor = open_editor(archive)
+        path = editor.zip_path
+        try:
+            body = editor.read_entry(name)
+        except PageReorderError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+            ) from error
+        finally:
+            editor.close()
+
+        ref = find_original(path, body)
+        if ref is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="元画像がありません"
+            )
+        try:
+            data = read_original(path, ref)
+        except OriginalStoreError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+            ) from error
+        return _image_response(request, data, _media_type(ref.entry))
 
     @app.get("/api/cover", dependencies=guarded, response_model=CoverView)
     def cover(archive: str, name: str | None = None) -> CoverView:
@@ -700,28 +840,35 @@ def create_app(
         寸法と見開き判定をここで返すのは、UI が切り抜き枠を元画像の画素へ
         写すのに必要だから。画面側で画像から測り直すと、判定の基準が
         サーバーと二重になり、片方だけずれても気づけない。
+
+        元画像の有無も同じ応答に載せる。画面は「どれだけ広い絵を出すか」と
+        「枠をどこに置くか」を 1 度に決める。別の入口に分けると、2 回
+        問い合わせる間に片方だけ古い値を見た状態が作れてしまう。
         """
         editor = open_editor(archive)
+        path = editor.zip_path
         try:
             if not editor.pages:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail="ページがありません"
                 )
             target = name or editor.pages[0].name
-            with Image.open(io.BytesIO(editor.read_entry(target))) as image:
-                width, height = image.size
+            body = editor.read_entry(target)
         except PageReorderError as error:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
             ) from error
         finally:
             editor.close()
+        with Image.open(io.BytesIO(body)) as image:
+            width, height = image.size
         return CoverView(
             name=target,
             width=width,
             height=height,
             is_spread=is_spread(width, height),
             target_aspect_ratio=COVER_ASPECT_RATIO,
+            original=_describe_original(path, body),
         )
 
     @app.post(
@@ -747,6 +894,7 @@ def create_app(
                         split=request.split, crop=request.crop, rotate=request.rotate
                     ),
                     make_first=request.make_first,
+                    from_original=request.from_original,
                 )
             except CoverEditError as error:
                 raise RuntimeError(str(error)) from error

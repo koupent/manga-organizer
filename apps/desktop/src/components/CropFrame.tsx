@@ -98,6 +98,109 @@ export function defaultCrop(image: ImageSize): CropRect {
   };
 }
 
+/** 元画像に施した加工 1 つ分。サイドカーが記録している形をそのまま受ける */
+export type Operation = {
+  kind: string;
+  params?: { [key: string]: unknown };
+};
+
+/** 前回の加工から復元した、枠と向き */
+export type RestoredEdit = { crop: CropRect; angle: QuarterTurn };
+
+/** 数の並びを読む。壊れていれば null */
+function numbers(value: unknown, count: number): number[] | null {
+  if (!Array.isArray(value) || value.length !== count) return null;
+  const parsed = value.map(Number);
+  return parsed.every(Number.isFinite) ? parsed : null;
+}
+
+/** 90 度単位の回転だけを受ける。それ以外は枠に写せない */
+function turnOf(value: unknown): QuarterTurn | null {
+  const degrees = Number(value);
+  if (!Number.isFinite(degrees)) return null;
+  const normalised = ((degrees % 360) + 360) % 360;
+  return normalised % 90 === 0 ? (normalised as QuarterTurn) : null;
+}
+
+/**
+ * 加工 1 つが、加工前の絵のどこを取るか。取らないもの（回転）は null。
+ *
+ * shown は、その加工を受ける時点で出来ている絵の寸法。
+ */
+function takenRegion(operation: Operation, shown: ImageSize): CropRect | null {
+  const params = operation.params ?? {};
+  if (operation.kind === "crop") {
+    const box = numbers(params.box, 4);
+    if (!box) return null;
+    const [left, upper, right, lower] = box;
+    if (right <= left || lower <= upper) return null;
+    return { x: left, y: upper, width: right - left, height: lower - upper };
+  }
+  if (operation.kind === "split") {
+    // サイドカーと同じ割り方。中央から左右へ分ける
+    const middle = Math.floor(shown.width / 2);
+    if (params.side === "left") {
+      return { x: 0, y: 0, width: middle, height: shown.height };
+    }
+    if (params.side === "right") {
+      return {
+        x: middle,
+        y: 0,
+        width: shown.width - middle,
+        height: shown.height,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * 元画像に施した加工の並びから、前回選んだ範囲と向きを復元する。
+ *
+ * 記録は「元画像に対して、この順で加工した」という並びなので、逆から解かずに
+ * 順に辿る。辿りながら「いま出来ている絵が元画像のどこか（region）」と
+ * 「どちらを向いているか（angle）」を持てば、最後に残った region がそのまま
+ * 前回の枠になる。
+ *
+ * 読めない記録が混ざったら、そこで諦めて null を返す。中途半端に解いた枠は、
+ * 利用者から見ると前回の範囲と区別が付かない。
+ */
+export function restoredEdit(
+  operations: Operation[],
+  original: ImageSize,
+): RestoredEdit | null {
+  let angle: QuarterTurn = 0;
+  let region: CropRect = {
+    x: 0,
+    y: 0,
+    width: original.width,
+    height: original.height,
+  };
+  for (const operation of operations) {
+    if (operation.kind === "rotate") {
+      const degrees = turnOf(operation.params?.degrees);
+      if (degrees === null) return null;
+      angle = ((angle + degrees) % 360) as QuarterTurn;
+      continue;
+    }
+    // その時点の絵は region を angle だけ回したもの。範囲もその座標で書かれている
+    const shown = rotatedSize(region, angle);
+    const taken = takenRegion(operation, shown);
+    if (!taken) return null;
+    // 回す前へ戻してから元画像の座標へ足す。回転を挟んでも位置がずれない
+    const upright = rotateCrop(taken, shown, oppositeTurn(angle));
+    region = {
+      x: region.x + upright.x,
+      y: region.y + upright.y,
+      width: upright.width,
+      height: upright.height,
+    };
+  }
+  if (region.width <= 0 || region.height <= 0) return null;
+  // 画面は回した後の座標で枠を持つ。元画像の座標から、その向きへ移して返す
+  return { crop: rotateCrop(region, original, angle), angle };
+}
+
 /** 枠を画像の中に収めたまま動かす */
 function movedCrop(start: CropRect, dx: number, dy: number, image: ImageSize) {
   return {

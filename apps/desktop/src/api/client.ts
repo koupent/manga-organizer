@@ -197,6 +197,16 @@ export class SidecarClient {
     return this.url("/api/image", { archive, name });
   }
 
+  /**
+   * そのページの加工前の画像の URL。
+   *
+   * 求めるのは加工後のページ名だけ。元画像が ZIP のどのエントリに入っているかは
+   * サイドカーが決め、こちらへは出さない。
+   */
+  originalUrl(archive: string, name: string): string {
+    return this.url("/api/original", { archive, name });
+  }
+
   thumbnailUrl(archive: string, name: string, width: number): string {
     return this.url("/api/thumb", { archive, name, width });
   }

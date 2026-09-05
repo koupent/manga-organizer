@@ -183,6 +183,33 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/original": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Original
+     * @description いま見ている 1 枚の、加工前の画像そのものを返す。
+     *
+     *     求めるのは加工後のページ名だけで、元画像が ZIP のどのエントリに
+     *     入っているかは受け取らない。エントリ名を外から取ると、書き換えられた
+     *     manifest 経由でアーカイブ内の任意のエントリを読ませる道ができる。
+     *
+     *     バイト列を /api/cover と分けているのは、画像が JSON に載らないうえ、
+     *     /api/cover は画面を描き直すたびに引かれる軽い経路であってほしいため。
+     */
+    get: operations["original_api_original_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/cover": {
     parameters: {
       query?: never;
@@ -200,6 +227,10 @@ export interface paths {
      *     寸法と見開き判定をここで返すのは、UI が切り抜き枠を元画像の画素へ
      *     写すのに必要だから。画面側で画像から測り直すと、判定の基準が
      *     サーバーと二重になり、片方だけずれても気づけない。
+     *
+     *     元画像の有無も同じ応答に載せる。画面は「どれだけ広い絵を出すか」と
+     *     「枠をどこに置くか」を 1 度に決める。別の入口に分けると、2 回
+     *     問い合わせる間に片方だけ古い値を見た状態が作れてしまう。
      */
     get: operations["cover_api_cover_get"];
     put?: never;
@@ -488,10 +519,20 @@ export interface components {
        * @default false
        */
       make_first: boolean;
+      /**
+       * From Original
+       * @description 加工前の画像を対象にするかどうか。立てると crop は加工前の画像の画素で解釈される
+       * @default false
+       */
+      from_original: boolean;
     };
     /**
      * CoverView
-     * @description 表紙の状態
+     * @description 表紙の状態。
+     *
+     *     寸法と見開き判定は「いま保存されている 1 枚」を指す。original は、その
+     *     1 枚が加工の結果なら加工前の姿を添える。画面は加工前を対象にして枠を
+     *     置き直すので、両方を 1 回の問い合わせで受け取る必要がある。
      */
     CoverView: {
       /** Name */
@@ -504,6 +545,8 @@ export interface components {
       is_spread: boolean;
       /** Target Aspect Ratio */
       target_aspect_ratio: number;
+      /** @description 加工前の画像。一度も加工していなければ null */
+      original?: components["schemas"]["OriginalView"] | null;
     };
     /**
      * DroppedFile
@@ -625,6 +668,18 @@ export interface components {
       author: string;
     };
     /**
+     * OperationView
+     * @description 元画像に施した加工 1 つ分。params の形は kind ごとに決まる
+     */
+    OperationView: {
+      /** Kind */
+      kind: string;
+      /** Params */
+      params?: {
+        [key: string]: unknown;
+      };
+    };
+    /**
      * OrganizeRequest
      * @description アーカイブ整理の依頼
      */
@@ -662,6 +717,22 @@ export interface components {
        * @description 作る本。省くと投入されたものを全部作る。与えると、その本だけを作る（空の配列は 1 冊も作らない）
        */
       books?: components["schemas"]["BookRef"][] | null;
+    };
+    /**
+     * OriginalView
+     * @description いま見ている 1 枚の、加工前の姿。
+     *
+     *     ZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた
+     *     manifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。
+     *     画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。
+     */
+    OriginalView: {
+      /** Width */
+      width: number;
+      /** Height */
+      height: number;
+      /** Operations */
+      operations?: components["schemas"]["OperationView"][];
     };
     /**
      * PageList
@@ -1100,6 +1171,38 @@ export interface operations {
     };
   };
   image_api_image_get: {
+    parameters: {
+      query: {
+        archive: string;
+        name: string;
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  original_api_original_get: {
     parameters: {
       query: {
         archive: string;

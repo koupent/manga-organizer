@@ -164,6 +164,73 @@ class PagesTest(ApiTestBase):
         self.assertEqual(404, response.status_code)
 
 
+class ImageFreshnessTest(ApiTestBase):
+    """加工でページの中身が変わったら、同じ URL でも古い絵を出させない。
+
+    加工しても名前は変わらないことがあるので、URL は加工の前後で同じになる。
+    日持ちさせて返すと、ブラウザは取りに行かず加工前の絵を描き続ける。
+    ファイルの日時は加工が元に戻すため、日時では変わったことを見分けられない。
+    """
+
+    def image(self, headers: dict | None = None):
+        return self.client.get(
+            "/api/image",
+            params=self.auth({"archive": str(self.archive), "name": "001.jpg"}),
+            headers=headers or {},
+        )
+
+    def crop_first_page(self) -> None:
+        """画面と同じ経路で 1 枚を切り抜く。名前は 001.jpg のまま変わらない"""
+        submitted = self.client.post(
+            "/api/jobs/cover",
+            params=self.auth(),
+            json={
+                "archive": str(self.archive),
+                "name": "001.jpg",
+                "crop": [0, 0, 400, 600],
+            },
+        )
+        self.assertEqual(202, submitted.status_code, submitted.text)
+        job = self.client.get(
+            f"/api/jobs/{submitted.json()['id']}", params=self.auth()
+        ).json()
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+
+    def test_asks_the_browser_to_check_before_reusing_an_image(self):
+        # Act
+        response = self.image()
+
+        # Assert - 「使う前に必ず確かめる」。日持ちさせない
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("no-cache", response.headers["cache-control"])
+        self.assertTrue(response.headers.get("etag"), response.headers)
+
+    def test_serves_the_new_image_after_an_edit_at_the_same_url(self):
+        # Arrange - 加工前の版を持っている状態
+        before = self.image()
+        self.crop_first_page()
+
+        # Act - ブラウザが持っている版を添えて、同じ URL を引き直す
+        after = self.image({"If-None-Match": before.headers["etag"]})
+
+        # Assert - 取り直しになり、届くのは加工後の 1 枚
+        self.assertEqual(200, after.status_code)
+        self.assertNotEqual(before.headers["etag"], after.headers["etag"])
+        with Image.open(io.BytesIO(after.content)) as image:
+            self.assertEqual((400, 600), image.size)
+
+    def test_answers_304_while_the_image_is_unchanged(self):
+        # Arrange
+        first = self.image()
+
+        # Act - 何も加工していないので、持っている版がそのまま使える
+        again = self.image({"If-None-Match": first.headers["etag"]})
+
+        # Assert - 中身を送り直さない。日持ちを外しても転送量は増えない
+        self.assertEqual(304, again.status_code)
+        self.assertEqual(b"", again.content)
+
+
 class JobTest(ApiTestBase):
     def test_job_detail_carries_the_processing_log(self):
         # Arrange - 整理を 1 件走らせる

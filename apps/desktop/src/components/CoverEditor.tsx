@@ -19,10 +19,13 @@ import {
   defaultCrop,
   nextTurn,
   oppositeTurn,
+  restoredEdit,
   rotateCrop,
   rotatedSize,
   toCropBox,
   type CropRect,
+  type ImageSize,
+  type Operation,
   type QuarterTurn,
 } from "./CropFrame";
 import { Empty } from "./ui/empty";
@@ -36,13 +39,51 @@ const FRAME_BORDER = 1;
 /** viewer での見え方に使う幅。2:3 なので高さは 300px になる */
 const PREVIEW_WIDTH = 200;
 
+/** いま保存されている 1 枚の、加工前の姿 */
+type CoverOriginal = {
+  width: number;
+  height: number;
+  operations: Operation[];
+};
+
 type Cover = {
   name: string;
   width: number;
   height: number;
   is_spread: boolean;
   target_aspect_ratio: number;
+  /** 加工前の画像。一度も加工していなければ無い */
+  original?: CoverOriginal | null;
 };
+
+/**
+ * 枠を置く相手の寸法。
+ *
+ * 加工前の画像が残っているならそちらを対象にする。保存済みの画像は既に
+ * 切り抜かれていることがあり、それを対象にする限り枠は縮める方向にしか
+ * 動かせない。利用者から見れば同じ 1 枚で、「元画像」と「加工後」の区別は
+ * 画面に出さない。
+ */
+function sourceOf(cover: Cover): ImageSize {
+  return cover.original ?? cover;
+}
+
+/**
+ * 開いたときに置く枠と向き。
+ *
+ * 前回の加工が記録されていればその範囲を復元する。無ければ、触っていない
+ * 状態（枠は画像の寸法から毎回導く）で始める。
+ */
+function initialEdit(cover: Cover): {
+  crop: CropRect | null;
+  angle: QuarterTurn;
+} {
+  const original = cover.original;
+  const restored = original
+    ? restoredEdit(original.operations, original)
+    : null;
+  return { crop: restored?.crop ?? null, angle: restored?.angle ?? 0 };
+}
 
 type CoverEditorProps = {
   client: SidecarClient;
@@ -78,16 +119,25 @@ export function CoverEditor({
   const [choosing, setChoosing] = useState(false);
   const [status, setStatus] = useState("");
   const [running, setRunning] = useState(false);
-  // 加工しても名前は変わらないことがある。ブラウザの画像キャッシュを外す鍵
+  // 加工しても名前は変わらないことがある。src が同じままだと img は取りに
+  // 行かないので、確定のたびにここを進めて読み直させる。
+  // これは「同じ画面で加工した」ときの合図でしかない。開き直したときに古い絵を
+  // 出さないことは、サイドカー側の ETag による再確認が受け持つ
   const [reloadKey, setReloadKey] = useState(0);
 
   // 絵を置ける面の実寸。候補一覧の開け閉てや窓の大きさで変わる
   const [stageRef, stage] = useBoxSize<HTMLDivElement>();
 
-  /** 保留中の加工をすべて捨てる */
+  /** 開いたときの状態から始める。前回の範囲があれば、そこへ枠を置き直す */
+  const startFrom = (target: Cover) => {
+    const start = initialEdit(target);
+    setCrop(start.crop);
+    setAngle(start.angle);
+  };
+
+  /** 保留中の加工をすべて捨て、開いたときの状態へ戻す */
   const resetEdits = () => {
-    setCrop(null);
-    setAngle(0);
+    if (cover) startFrom(cover);
   };
 
   /** 時計回りに 90 度回す。枠は回った絵に対して選び直す */
@@ -116,10 +166,11 @@ export function CoverEditor({
     client
       .cover(archive, selected)
       .then((payload) => {
-        setCover(payload as Cover);
-        // 別の絵になれば加工の意味も変わる。持ち越さず初期状態から始める。
-        // 確定した直後もここを通り、書き込み済みの加工が二重に残らない
-        resetEdits();
+        const next = payload as Cover;
+        setCover(next);
+        // 別の絵になれば加工の意味も変わる。持ち越さず、その 1 枚の初期状態から
+        // 始める。確定した直後もここを通り、書き込み済みの加工が二重に残らない
+        startFrom(next);
       })
       .catch((reason) => setStatus(String(reason.message ?? reason)));
   }, [client, archive, selected, reloadKey]);
@@ -132,7 +183,8 @@ export function CoverEditor({
    */
   const applyPending = async (frame: CropRect, turn: QuarterTurn) => {
     if (!cover) return;
-    const shown = rotatedSize(cover, turn);
+    const source = sourceOf(cover);
+    const shown = rotatedSize(source, turn);
     const upright = rotateCrop(frame, shown, oppositeTurn(turn));
     setRunning(true);
     setStatus("加工しています...");
@@ -141,9 +193,12 @@ export function CoverEditor({
         archive,
         name: cover.name,
         split: null,
-        crop: toCropBox(upright, cover),
+        crop: toCropBox(upright, source),
         rotate: turn,
         make_first: true,
+        // 枠は加工前の画像の上で選んでいる。サイドカーにも同じ画素へ当てさせないと、
+        // 保存済みの狭い画像に当たり、選んだとおりの範囲が切り出されない
+        from_original: Boolean(cover.original),
       });
       const job = await client.waitForJob(accepted.id);
       if (job.state !== "succeeded") {
@@ -169,12 +224,21 @@ export function CoverEditor({
     );
   }
 
+  // 寸法の表示と見開きの判定は、いま保存されている 1 枚を指す。
+  // 枠を置く相手（加工前の画像）とは別物なので混ぜない
   const ratio = cover.width / cover.height;
   const fitsFrame = Math.abs(ratio - TARGET_RATIO) < 0.05;
+  const source = sourceOf(cover);
   // 保留の回転を織り込んだ、いま画面に見えている絵。枠もこの座標で持つ
-  const shown = rotatedSize(cover, angle);
+  const shown = rotatedSize(source, angle);
   const frame = crop ?? defaultCrop(shown);
-  const imageUrl = `${client.imageUrl(archive, cover.name)}&v=${reloadKey}`;
+  // v は「同じ名前のまま中身が変わった」ときに img へ取り直させるための鍵。
+  // 中身が変わったかどうかの判定そのものはサイドカーの ETag が担う
+  const imageUrl = `${
+    cover.original
+      ? client.originalUrl(archive, cover.name)
+      : client.imageUrl(archive, cover.name)
+  }&v=${reloadKey}`;
 
   // 絵は枠線の内側に入る。枠線のぶんを先に引いてから収める大きさを決める
   const display = fitInside(shown, {
@@ -340,7 +404,7 @@ export function CoverEditor({
                   分からない */}
               <CoverPreview
                 src={imageUrl}
-                image={cover}
+                image={source}
                 angle={angle}
                 crop={frame}
                 width={PREVIEW_WIDTH}
