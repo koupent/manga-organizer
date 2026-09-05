@@ -7,22 +7,61 @@ import { CoverEditor } from "./components/CoverEditor";
 import { FilePicker } from "./components/FilePicker";
 import { PageGrid } from "./components/PageGrid";
 import { OrganizePanel } from "./components/OrganizePanel";
+import { SplitEditor } from "./components/SplitEditor";
 import type { HandoffMode } from "./components/ProducedList";
 import { onFilesDropped, resolveConnection } from "./connection";
 import { Alert } from "./components/ui/alert";
 import { Segmented } from "./components/ui/segmented";
 
 type Page = { name: string; size: number; modified: string };
-type Mode = "organize" | "reorder" | "thumbnail";
+type Mode = "organize" | "reorder" | "thumbnail" | "split";
 
 // 対象物ではなく、そこで何ができるかでタブを名付ける
 // 使う順に並べる。整理はほぼ必ず通り、サムネイルは良し悪しが一目で分かる。
-// ページ順の異常は読んで初めて気づくもので、後から戻ってくる使い方が主になる
+// ページ順の異常は読んで初めて気づくもので、後から戻ってくる使い方が主になる。
+// 見開きを割るのは、順序を直し終えてから最後に通る
 const MODES: { id: Mode; label: string }[] = [
   { id: "organize", label: "ファイル整理" },
   { id: "thumbnail", label: "サムネイル作成" },
   { id: "reorder", label: "ページ並べ替え" },
+  { id: "split", label: "ページ分割" },
 ];
+
+/** 1 冊を読み込んで使う画面。アーカイブが書き換わると中身が古くなる */
+type ArchiveMode = "thumbnail" | "reorder" | "split";
+
+/**
+ * 画面ごとの「読み直しの世代」。
+ *
+ * どれか 1 つがアーカイブを書き換えると、ページ名もページ数も変わる。他の画面が
+ * 抱えているページは、その瞬間に別の本のものになる。世代を進めて作り直させる。
+ *
+ * 書いた画面自身は進めない。自分の結果は自分で読み直しているうえ、作り直すと
+ * 「何をしたか」の報告ごと消える。利用者は押した結果を確かめられなくなる。
+ */
+type ArchiveVersions = Record<ArchiveMode, number>;
+
+const FIRST_VERSIONS: ArchiveVersions = { thumbnail: 0, reorder: 0, split: 0 };
+
+function staleAfter(
+  current: ArchiveVersions,
+  writer: ArchiveMode,
+): ArchiveVersions {
+  return {
+    thumbnail: current.thumbnail + (writer === "thumbnail" ? 0 : 1),
+    reorder: current.reorder + (writer === "reorder" ? 0 : 1),
+    split: current.split + (writer === "split" ? 0 : 1),
+  };
+}
+
+/** 対象を選ぶ画面の見出し。どの作業のために選ぶのかを言う */
+const PICKER_TITLES: Record<ArchiveMode, string> = {
+  reorder: "並べ替えるアーカイブ",
+  thumbnail: "サムネイルを作るアーカイブ",
+  split: "ページを分割するアーカイブ",
+};
+
+const isArchiveMode = (mode: Mode): mode is ArchiveMode => mode !== "organize";
 
 const isMode = (value: string | null): value is Mode =>
   MODES.some((item) => item.id === value);
@@ -53,7 +92,7 @@ function Panel({ active, children }: { active: boolean; children: ReactNode }) {
   return <div className={active ? "contents" : "hidden"}>{children}</div>;
 }
 
-/** ファイル整理・ページ並べ替え・サムネイル作成を切り替えて使う */
+/** ファイル整理・サムネイル作成・ページ並べ替え・ページ分割を切り替えて使う */
 export function App() {
   const [client, setClient] = useState<SidecarClient | null>(null);
   const [mode, setMode] = useState<Mode>(() => {
@@ -66,6 +105,7 @@ export function App() {
   const [pages, setPages] = useState<Page[]>([]);
   const [error, setError] = useState("");
   const [health, setHealth] = useState("");
+  const [versions, setVersions] = useState<ArchiveVersions>(FIRST_VERSIONS);
 
   /**
    * 一度でも開いた画面。開いた画面は隠すだけで捨てず、状態を残す。
@@ -102,6 +142,15 @@ export function App() {
     }
     setSources(paths);
   };
+
+  /**
+   * どれかの画面がアーカイブを書き換えた。
+   *
+   * ページ名もページ数も変わるので、他の画面が抱えているページは古い。
+   * 世代を進めて作り直させる。
+   */
+  const archiveChanged = (writer: ArchiveMode) =>
+    setVersions((current) => staleAfter(current, writer));
 
   /** 画面を移る。移った先は初回だけ作り、以後は隠すだけで捨てない */
   const changeMode = (next: Mode) => {
@@ -167,8 +216,8 @@ export function App() {
     // ネイティブ側で受けたドロップは、いま見ている画面の入力にする。
     // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直
     const pending = onFilesDropped((paths) => {
-      if (modeRef.current === "reorder" || modeRef.current === "thumbnail") {
-        // どちらも 1 冊ずつしか扱えない。まとめて落とされたら先頭を採る
+      if (isArchiveMode(modeRef.current)) {
+        // どれも 1 冊ずつしか扱えない。まとめて落とされたら先頭を採る
         if (paths.length > 0) changeArchive(paths[0]);
         return;
       }
@@ -182,14 +231,27 @@ export function App() {
     };
   }, []);
 
+  /**
+   * ページ並べ替えが使う一覧を読み込む。
+   *
+   * 切っ掛けは「その画面が在るか」であって「いま見ているか」ではない。見ている
+   * 画面で絞ると、他の画面が本を書き換えて世代が進んでも一覧は古いままで、
+   * 作り直された格子が消えたページ名を抱えたまま立ち上がる。世代と同じ切っ掛けで
+   * 読み直せば、新しい一覧は格子が出来た直後に追い付く。
+   *
+   * 逆に、画面を移っただけでは読み直さない。読み直すと並べ替えの途中経過を
+   * 捨てることになり、覗いて戻るたびに利用者の手が消える。
+   */
+  const hasReorder = opened.includes("reorder");
+
   useEffect(() => {
-    if (!client || !archive || mode !== "reorder") return;
+    if (!client || !archive || !hasReorder) return;
     setError("");
     client
       .listPages(archive)
       .then((payload) => setPages(payload.pages as Page[]))
       .catch((reason) => setError(String(reason.message ?? reason)));
-  }, [client, archive, mode]);
+  }, [client, archive, hasReorder, versions.reorder]);
 
   const archiveName = archive ? (archive.split("/").pop() ?? archive) : "";
 
@@ -260,12 +322,14 @@ export function App() {
         {opened.includes("thumbnail") && client && archive ? (
           <Panel active={mode === "thumbnail"}>
             <CoverEditor
-              // 対象が変われば別の表紙。選んだ 1 枚も切り抜き枠も作り直す
-              key={archive}
+              // 対象が変われば別の表紙。選んだ 1 枚も切り抜き枠も作り直す。
+              // 別の画面が本を書き換えたときも、抱えている 1 枚は別物になる
+              key={`${archive}:${versions.thumbnail}`}
               client={client}
               archive={archive}
               archiveName={archiveName}
               onChangeArchive={() => changeArchive("")}
+              onArchiveChanged={() => archiveChanged("thumbnail")}
             />
           </Panel>
         ) : null}
@@ -274,28 +338,38 @@ export function App() {
           <Panel active={mode === "reorder"}>
             <PageGrid
               // 対象が変われば別の本。並べ替えの途中経過ごと作り直す
-              key={archive}
+              key={`${archive}:${versions.reorder}`}
               active={mode === "reorder"}
               client={client}
               archive={archive}
               archiveName={archiveName}
               pages={pages}
               onChangeArchive={() => changeArchive("")}
+              onArchiveChanged={() => archiveChanged("reorder")}
             />
           </Panel>
         ) : null}
 
-        {/* 並べ替えとサムネイル作成は同じ 1 冊を投入する。入り口も同じものを使い、
-            実パスの引き当てのような壊れやすい所を二重に抱えない */}
-        {(mode === "reorder" || mode === "thumbnail") && client && !archive ? (
+        {opened.includes("split") && client && archive ? (
+          <Panel active={mode === "split"}>
+            <SplitEditor
+              key={`${archive}:${versions.split}`}
+              client={client}
+              archive={archive}
+              archiveName={archiveName}
+              onChangeArchive={() => changeArchive("")}
+              onArchiveChanged={() => archiveChanged("split")}
+            />
+          </Panel>
+        ) : null}
+
+        {/* 1 冊を読み込んで使う 3 つの画面は、同じ入り口から投入する。
+            実パスの引き当てのような壊れやすい所を三重に抱えない */}
+        {isArchiveMode(mode) && client && !archive ? (
           <FilePicker
             client={client}
             single
-            title={
-              mode === "reorder"
-                ? "並べ替えるアーカイブ"
-                : "サムネイルを作るアーカイブ"
-            }
+            title={PICKER_TITLES[mode]}
             selected={[]}
             onChange={(paths) => changeArchive(paths[0] ?? "")}
           />

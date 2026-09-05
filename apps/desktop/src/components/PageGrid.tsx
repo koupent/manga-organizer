@@ -1,5 +1,5 @@
 import { FolderOpen, Save, Undo2, ZoomIn } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -18,7 +18,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { SidecarClient } from "../api/client";
+import { sidecarReason, type SidecarClient } from "../api/client";
 import { useStoredNumber } from "../lib/setting";
 
 const MAX_HISTORY = 100;
@@ -128,16 +128,22 @@ function PageCard({
   );
 }
 
+type Page = { name: string; size: number; modified: string };
+
+const namesOf = (pages: Page[]) => pages.map((page) => page.name);
+
 type PageGridProps = {
   client: SidecarClient;
   archive: string;
   archiveName?: string;
-  pages: { name: string; size: number; modified: string }[];
+  pages: Page[];
   /** いま見えている画面かどうか。隠れている間は入力を受けない */
   active?: boolean;
   onSaved?: (message: string) => void;
   /** 別のアーカイブを選び直す。渡さなければ選び直す導線を出さない */
   onChangeArchive?: () => void;
+  /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
+  onArchiveChanged?: () => void;
 };
 
 /** サムネイルを並べ、ドラッグで順番を入れ替えて保存する */
@@ -149,8 +155,8 @@ export function PageGrid({
   active = true,
   onSaved,
   onChangeArchive,
+  onArchiveChanged,
 }: PageGridProps) {
-  const original = useMemo(() => pages.map((page) => page.name), [pages]);
   // 表示サイズはこの画面だけの設定なので、この画面が持つ。
   // 対象を選び直すとこの部品ごと作り直されるが、保存された値から始まるので
   // 置き場所に関わらず利用者が決めた見え方に戻る
@@ -158,17 +164,67 @@ export function PageGrid({
     CARD_WIDTH_KEY,
     CARD_WIDTH_DEFAULT,
   );
+  /**
+   * 開いたときの並び。これと見比べて「未保存の変更」が決まる。
+   *
+   * プロップをそのまま使わないのは、書き込みの後は自分で読み直すため。
+   * 書き込むと ZIP の連番は振り直され、同じ名前が別の絵を指す。プロップの
+   * 更新を待っていると、その間に押した保存は消えた名前を並べて送ることになる。
+   */
+  const [original, setOriginal] = useState<string[]>(() => namesOf(pages));
   const [order, setOrder] = useState<string[]>(original);
   const [selection, setSelection] = useState<string[]>([]);
   const [history, setHistory] = useState<string[][]>([]);
   const [zoomed, setZoomed] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  /**
+   * 絵の URL に添える世代。
+   *
+   * 並べ替えると ZIP の連番は振り直され、**名前は据え置きのまま中身だけが
+   * 入れ替わる**。URL が同じままだと、ブラウザは取り直しに行かない
+   * （/api/thumb の no-cache は、要求が飛んで初めて効く）。番号だけが新しく
+   * 絵が古い格子を渡された利用者は、直したはずの順序がまた崩れて見え、
+   * 並べ直してもう一度保存する。
+   */
+  const [reloadKey, setReloadKey] = useState(0);
   const lastClicked = useRef<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
+
+  /**
+   * 別のページ一覧を基準にして組み直す。
+   *
+   * 並べ替えの途中経過も履歴も選択も、前の一覧の名前でできている。新しい一覧に
+   * 無い名前を持ち越すと、次の保存で存在しないページを並べて送ることになる。
+   */
+  const rebase = useCallback((names: string[]) => {
+    setOriginal(names);
+    setOrder(names);
+    setHistory([]);
+    setSelection([]);
+    lastClicked.current = null;
+    // 組み直す切っ掛けは、いつも「本が書き換わった」こと。同じ名前がもう別の
+    // 絵を指しているので、絵も取り直させる
+    setReloadKey((key) => key + 1);
+  }, []);
+
+  /**
+   * 一覧が入れ替わったら組み直す。
+   *
+   * 部品を作り直させるだけでは足りない。別の画面が本を書き換えたとき、作り直しの
+   * 切っ掛け（世代）と新しい一覧が同時に届く保証は無く、先に作り直された格子は
+   * 古い一覧で組まれる。後から届く一覧をここで拾わないと、割って増えたページが
+   * 一生出てこない画面のまま、消えた名前で保存を押させることになる。
+   */
+  const applied = useRef(pages);
+  useEffect(() => {
+    if (applied.current === pages) return;
+    applied.current = pages;
+    rebase(namesOf(pages));
+  }, [pages, rebase]);
 
   const dirty = order.some((name, index) => name !== original[index]);
 
@@ -272,6 +328,9 @@ export function PageGrid({
   const save = async () => {
     setSaving(true);
     setStatus("保存しています...");
+    // 本へ書き終えたかどうかを、失敗を捌く所まで持ち越す。断られた保存と、
+    // 書き終えた後の読み直しの失敗とでは、その後に押させてよいかが逆になる
+    let written = "";
     try {
       const accepted = await client.reorder(archive, order);
       const job = await client.waitForJob(accepted.id);
@@ -282,13 +341,34 @@ export function PageGrid({
         typeof job.result === "object" && job.result !== null
           ? ((job.result as { pageCount?: number }).pageCount ?? order.length)
           : order.length;
-      const message = `${count} ページを並び替えました`;
-      setStatus(message);
-      setHistory([]);
-      onSaved?.(message);
+      written = `${count} ページを並び替えました`;
+      // 並べ替えると連番が振り直され、同じ名前が別の絵を指す。
+      // この本を抱えている他の画面は、そのままでは古い中身を見せ続ける
+      onArchiveChanged?.();
+      // 振り直された連番は、この画面にも要る。読み直さないと基準が書き込む前の
+      // ままで「未保存の変更があります」が消えず、画面が抱える名前も古い。
+      // 利用者はもう一度保存を押し、覚えの無い並びを本へ書き込むことになる
+      const listed = await client.listPages(archive);
+      rebase(namesOf(listed.pages as Page[]));
+      setStatus(written);
+      onSaved?.(written);
+      setSaving(false);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    } finally {
+      const reason = sidecarReason(error);
+      if (written !== "") {
+        // 書き込みは通っていて、失敗したのはその後の読み直しだけ。押せる状態へ
+        // 戻さない。画面が抱えている名前は書き込む前のもので、その名前はもう
+        // 別の絵を指している。ここで押し直せると、利用者が並べた覚えのない
+        // 順序がそのまま本へ書かれる。読み直せる見込みは無いので、
+        // 開き直してもらうしかない
+        setStatus(
+          `${written}。ページ一覧を読み直せませんでした（${reason}）。` +
+            "別のファイルを選び直すか、開き直してください",
+        );
+        return;
+      }
+      // 断られた保存は 1 バイトも書いていない。並びはそのままで押し直せる
+      setStatus(reason);
       setSaving(false);
     }
   };
@@ -312,8 +392,10 @@ export function PageGrid({
             別のファイルを選ぶ
           </Button>
         ) : null}
+        {/* 数えるのは、いま並べているページ。プロップの数を出すと、自分で
+            書き込んで読み直した直後だけ画面と数が食い違う */}
         <span className="tabular text-[12px] text-ink-faint">
-          {pages.length} ページ
+          {order.length} ページ
         </span>
         <Badge tone={dirty ? "warn" : "neutral"} data-testid="dirty-state">
           {dirty ? "未保存の変更があります" : "変更はありません"}
@@ -391,7 +473,7 @@ export function PageGrid({
                 position={index + 1}
                 moved={original[index] !== name}
                 selected={selection.includes(name)}
-                thumbnailUrl={client.thumbnailUrl(archive, name, cardWidth)}
+                thumbnailUrl={`${client.thumbnailUrl(archive, name, cardWidth)}&v=${reloadKey}`}
                 onSelect={select}
                 onZoom={setZoomed}
               />
@@ -409,7 +491,9 @@ export function PageGrid({
           <img
             data-testid="lightbox-image"
             className="max-h-[82vh] max-w-[92vw] rounded shadow-2xl"
-            src={client.imageUrl(archive, zoomed)}
+            // 原寸も同じ。開いたまま本が書き換わったとき、同じ名前で
+            // 書き換わる前の絵を出し続けない
+            src={`${client.imageUrl(archive, zoomed)}&v=${reloadKey}`}
             alt={zoomed}
           />
           <span className="text-[12px] text-ink-faint">
