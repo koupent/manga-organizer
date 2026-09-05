@@ -231,14 +231,27 @@ export function App() {
     };
   }, []);
 
+  /**
+   * ページ並べ替えが使う一覧を読み込む。
+   *
+   * 切っ掛けは「その画面が在るか」であって「いま見ているか」ではない。見ている
+   * 画面で絞ると、他の画面が本を書き換えて世代が進んでも一覧は古いままで、
+   * 作り直された格子が消えたページ名を抱えたまま立ち上がる。世代と同じ切っ掛けで
+   * 読み直せば、新しい一覧は格子が出来た直後に追い付く。
+   *
+   * 逆に、画面を移っただけでは読み直さない。読み直すと並べ替えの途中経過を
+   * 捨てることになり、覗いて戻るたびに利用者の手が消える。
+   */
+  const hasReorder = opened.includes("reorder");
+
   useEffect(() => {
-    if (!client || !archive || mode !== "reorder") return;
+    if (!client || !archive || !hasReorder) return;
     setError("");
     client
       .listPages(archive)
       .then((payload) => setPages(payload.pages as Page[]))
       .catch((reason) => setError(String(reason.message ?? reason)));
-  }, [client, archive, mode, versions.reorder]);
+  }, [client, archive, hasReorder, versions.reorder]);
 
   const archiveName = archive ? (archive.split("/").pop() ?? archive) : "";
 

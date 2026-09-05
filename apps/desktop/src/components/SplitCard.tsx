@@ -61,6 +61,9 @@ export function SplitCard({
     { width: boxWidth, height: boxHeight },
   );
 
+  const splitLabel = `${label} ページを 2 ページに分ける`;
+  const zoomLabel = `${label} ページを大きく表示`;
+
   return (
     <div
       className={cn(
@@ -102,10 +105,14 @@ export function SplitCard({
       </div>
 
       <div className="flex items-center gap-1.5 border-t border-line px-2 py-1.5">
+        {/* 名乗るのは番号。同じ形の操作がページの数だけ並ぶので、
+            「2 ページに分ける」だけでは読み上げの操作一覧でどのページの
+            ものか永久に分からない。名前ではなく番号にするのは、
+            割る前の 1 枚と割った半分の区別を出さないため */}
         <Checkbox
           data-testid="split-check"
-          title="2 ページに分ける"
-          aria-label="2 ページに分ける"
+          title={splitLabel}
+          aria-label={splitLabel}
           checked={checked}
           onCheckedChange={onToggle}
         />
@@ -123,8 +130,8 @@ export function SplitCard({
         <button
           type="button"
           data-testid="split-zoom"
-          title="大きく表示"
-          aria-label="大きく表示"
+          title={zoomLabel}
+          aria-label={zoomLabel}
           className="rounded p-0.5 text-ink-faint opacity-0 transition-opacity hover:bg-surface-2 hover:text-ink group-hover:opacity-100 focus-visible:opacity-100"
           onClick={onZoom}
         >

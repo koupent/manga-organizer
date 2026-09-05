@@ -1,26 +1,22 @@
 import { FolderOpen, Loader2, Scissors, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { sidecarReason, type SidecarClient } from "../api/client";
+import type { SidecarClient } from "../api/client";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Empty } from "./ui/empty";
 import { SplitCard } from "./SplitCard";
 import { SplitDialog } from "./SplitDialog";
 import { useStoredNumber } from "../lib/setting";
+import { useSplitJob } from "../lib/split-job";
 import { useBoxSize } from "../lib/stage";
 import { cn } from "../lib/utils";
 import {
-  confirmResultOf,
-  doneMessage,
   isCandidate,
   isPending,
   isWide,
   numberLabel,
   pageNumbers,
   replaceRow,
-  restoredRows,
-  rowsFrom,
-  scanResultOf,
   summaryOf,
   type SplitRow,
 } from "../lib/split";
@@ -44,12 +40,6 @@ const GRID_GAP = 12;
 
 /** 絵の箱の高さ／列の幅。縦長ページ（2:3）がちょうど収まる比 */
 const PICTURE_RATIO = 1.5;
-
-/** 状態欄の状態。画面の外（E2E）からも読めるようにしておく */
-type ReportState = "idle" | "running" | "done" | "error";
-type Report = { state: ReportState; message: string };
-
-const NOTHING: Report = { state: "idle", message: "" };
 
 type SplitEditorProps = {
   client: SidecarClient;
@@ -79,106 +69,31 @@ export function SplitEditor({
   onChangeArchive,
   onArchiveChanged,
 }: SplitEditorProps) {
-  const [rows, setRows] = useState<SplitRow[] | null>(null);
-  // 走査が返した印とページ数。確定はこの印を添えて投げる
-  const [scan, setScan] = useState<{ token: string; pageCount: number }>({
-    token: "",
-    pageCount: 0,
-  });
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [report, setReport] = useState<Report>(NOTHING);
+  const {
+    rows,
+    pageCount,
+    progress,
+    report,
+    busy,
+    reloadKey,
+    editRows,
+    restore,
+    confirm,
+  } = useSplitJob({ client, archive, onArchiveChanged });
+
   const [overlay, setOverlay] = useState<number | null>(null);
   const [cardWidth, setCardWidth] = useStoredNumber(
     CARD_WIDTH_KEY,
     CARD_WIDTH_DEFAULT,
   );
-  // 書き込むと連番が振り直され、同じ URL が別の絵を指す。ここを進めて読み直させる
-  const [reloadKey, setReloadKey] = useState(0);
   // 列の幅は auto-fill が決める。実測してから絵の箱の寸法を導く
   const [gridRef, gridSize] = useBoxSize<HTMLDivElement>();
 
+  // 読み直すと行が減ることがある。開いたままの重ね枠が、もう無い行を
+  // 指したままにならないよう閉じる
   useEffect(() => {
-    const controller = new AbortController();
-    let alive = true;
-    setProgress({ current: 0, total: 0 });
-    client
-      .splitScan(archive)
-      .then((accepted) =>
-        client.waitForJob(
-          accepted.id,
-          (job) => {
-            if (alive) setProgress({ current: job.current, total: job.total });
-          },
-          { signal: controller.signal },
-        ),
-      )
-      .then((job) => {
-        if (!alive) return;
-        if (job.state !== "succeeded") {
-          throw new Error(job.error ?? "見開きを調べられませんでした");
-        }
-        const result = scanResultOf(job.result);
-        setScan({ token: result.token, pageCount: result.page_count });
-        setRows(rowsFrom(result));
-        // 読み直すと行が減ることがある。開いたままの重ね枠が、もう無い行を
-        // 指したままにならないよう閉じる
-        setOverlay(null);
-      })
-      .catch((error: unknown) => {
-        if (alive) setReport({ state: "error", message: sidecarReason(error) });
-      });
-    return () => {
-      // 画面を離れた後も問い合わせが続くと、戻ってきたときに同じ本へ
-      // 二重にジョブを投入できてしまう
-      alive = false;
-      controller.abort();
-    };
-  }, [client, archive, reloadKey]);
-
-  /**
-   * 保留中の内容を入れ替える。
-   *
-   * 書き込みの報告は、次の編集を始めた時点で古くなる。そのまま残すと
-   * 「5 枚を分割しました」と出たままチェックを変えられ、いま押すと何が
-   * 起きるのかが読めなくなる。
-   */
-  const editRows = (next: SplitRow[]) => {
-    setRows(next);
-    setReport((current) => (current.state === "idle" ? current : NOTHING));
-  };
-
-  const confirm = async () => {
-    if (!rows) return;
-    setReport({ state: "running", message: "分割しています..." });
-    try {
-      const accepted = await client.applySplit({
-        archive,
-        token: scan.token,
-        // 行は差分ではなくページ順に全部を送る。サイドカーが
-        // 「名前を並べたもの＝いまのページ順」を照合できる
-        rows: rows.map((row) => ({
-          names: row.names,
-          split: row.checked ? { x: row.x } : null,
-        })),
-      });
-      const job = await client.waitForJob(accepted.id);
-      if (job.state !== "succeeded") {
-        throw new Error(job.error ?? "分割に失敗しました");
-      }
-      setReport({
-        state: "done",
-        message: doneMessage(confirmResultOf(job.result)),
-      });
-      onArchiveChanged?.();
-      // 割った対はまた 1 行に畳まれて戻ってくる。読み直して、確定した直後と
-      // 開き直したときが同じ画面になるようにする
-      setReloadKey((key) => key + 1);
-    } catch (error: unknown) {
-      // 断られた確定は 1 バイトも書いていない。保留中のチェックと線は
-      // そのまま残し、直して押し直せるようにする
-      setReport({ state: "error", message: sidecarReason(error) });
-    }
-  };
+    setOverlay(null);
+  }, [reloadKey]);
 
   if (rows === null) {
     return (
@@ -214,7 +129,6 @@ export function SplitEditor({
   const master =
     chosen === 0 ? false : chosen === detected.length ? true : "indeterminate";
   const pending = rows.some(isPending);
-  const running = report.state === "running";
   const status = report.state === "idle" ? summaryOf(rows) : report.message;
 
   // 列の幅は auto-fill が決める。同じ規則で数えてから、絵の箱をそこへ合わせる
@@ -247,9 +161,18 @@ export function SplitEditor({
     .map((row, index) => (isCandidate(row) ? index : -1))
     .filter((index) => index >= 0);
 
+  /**
+   * 前後の候補へ移る。-1 が前、+1 が次。
+   *
+   * 選ぶのは「開いている行より後ろ／前にある最初の候補」で、候補の並びの中での
+   * 位置ではない。候補でない行からも拡大表示は開くので、その行が候補の並びに
+   * 居ないことを勘定に入れないと、→ を押した利用者が本の先頭側へ飛ばされる。
+   */
   const walk = (delta: number) => {
     if (overlay === null) return;
-    const next = candidates[candidates.indexOf(overlay) + delta];
+    const behind = candidates.filter((index) => index < overlay);
+    const ahead = candidates.filter((index) => index > overlay);
+    const next = delta > 0 ? ahead[0] : behind[behind.length - 1];
     if (next !== undefined) setOverlay(next);
   };
 
@@ -288,7 +211,7 @@ export function SplitEditor({
           className="tabular shrink-0 text-[12px] text-ink-faint"
           data-testid="split-page-count"
         >
-          {scan.pageCount} ページ
+          {pageCount} ページ
         </span>
         <span
           className="flex shrink-0 items-center gap-1.5"
@@ -338,21 +261,22 @@ export function SplitEditor({
           className="shrink-0"
           data-testid="split-reset"
           title="チェックと分割位置を開いたときの状態に戻す"
-          disabled={!pending}
-          onClick={() => {
-            setRows(restoredRows(rows));
-            setReport(NOTHING);
-          }}
+          disabled={!pending || busy}
+          onClick={restore}
         >
           <Undo2 />
           変更を戻す
         </Button>
+        {/* 書き込みが終わって新しい行が並ぶまで押させない。報告が done に
+            なった時点で押せるようにすると、読み直しの最中に 2 つ目の指示が
+            飛ぶ。着いた順で結果が決まり、利用者は自分が最後に選んだ内容と
+            違う本を手にする */}
         <Button
           variant="primary"
           size="lg"
           className="shrink-0"
           data-testid="split-confirm"
-          disabled={!pending || running}
+          disabled={!pending || busy}
           onClick={confirm}
         >
           <Scissors />
