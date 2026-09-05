@@ -1,12 +1,12 @@
-"""展開せずに ZIP の目次を読み、出来上がる本を実行前に推定する（#70 第 2 段階）。
+"""展開せずにアーカイブの目次を読み、出来上がる本を実行前に推定する（#70）。
 
 利用者は「最終的にできる ZIP はこれ」という一覧を実行前に見たい。判定に要るのは
 「そのフォルダに画像があるか」「何巻か」「出来上がる名前」の 3 つだけで、どれも
 中央ディレクトリ（目次）に載っている。展開してから解析すると、数百 GB の蔵書で
 展開が 2 回になるため、ここではディスクへ 1 バイトも書かない。
 
-入れ子の ZIP だけは、内側の目次の位置を知るために内側のバイト列をメモリへ読む。
-読むだけで、展開先を作ることはしない。
+入れ子のアーカイブだけは、内側の目次の位置を知るために内側のバイト列をメモリへ
+読む。読むだけで、展開先を作ることはしない。
 
 **解析は実処理に一致させる。** 予告した名前と実際に出来る名前が違うほうが、
 巻数を賢く読めないことより害が大きい。そのため次の 2 つは実処理と共有する。
@@ -20,7 +20,16 @@
 第005巻ではなく並び順の第001巻になる。ここでもその名前を使って判定する
 （欠陥そのものは #74 で扱う）。
 
-RAR / 7z は目次の読み方が ZIP と異なるため対象外（第 5 段階）。
+**形式は ZIP・RAR・7z の 3 つ**（第 5 段階）。目次の読み方だけが形式ごとに違い、
+そこから先――どのフォルダが 1 冊になるか、何巻か、名前が衝突したらどうするか――は
+1 本の道筋を共有する（``_Toc`` → ``_build_tree`` → ``_scan_directory``）。形式ごとに
+たどり方を書き分けると、同じ中身の RAR と ZIP で予告が食い違う。
+
+**目次を読むのに外部ツールは要らない。** ``rarfile`` は RAR3 / RAR5 の解析器を
+自前で持ち、``py7zr`` は純 Python。外部ツール（unrar / 7-Zip）が要るのは展開の
+ほうで、そちらは ``archive_handler`` の担当。ここから ``UNRAR_TOOL`` を差したり
+子プロセスを起こしたりすると、7-Zip の入った開発機では通り、道具の無い利用者の
+機械と CI で落ちる。
 
 入口は 2 つある。``analyze_stream`` は「走査 → 1 つずつ目次を読む」を 1 件ずつ
 返し、``analyze_inputs`` はそれを最後まで畳む。畳んだ結果が 1 件でも変わると、
@@ -33,10 +42,15 @@ RAR / 7z は目次の読み方が ZIP と異なるため対象外（第 5 段階
 
 import logging
 import zipfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+
+import py7zr
+import rarfile
+from py7zr.io import BytesIOFactory
 
 from manga_core.input_expander import expand_inputs, is_archive_name
 from manga_core.naming import natural_sort_key
@@ -56,8 +70,12 @@ logger = logging.getLogger(__name__)
 VOLUME_UNKNOWN = "volume-unknown"
 VOLUME_UNCERTAIN = "volume-uncertain"
 
-# 目次を読める形式。ArchiveHandler が ZIP として展開するものと揃える
+# 目次の読み方ごとの拡張子。3 つ合わせて ``input_expander.ARCHIVE_SUFFIXES`` を
+# 覆う。覆い切れない拡張子が出ると、その形式だけ「読めたうえで本が 0 冊」に戻り、
+# #70 で無くしたかった silent skip が形式ごとに復活する
 ZIP_SUFFIXES = frozenset({".zip", ".cbz", ".epub"})
+RAR_SUFFIXES = frozenset({".rar", ".cbr"})
+SEVENZIP_SUFFIXES = frozenset({".7z", ".cb7"})
 
 # 実処理が入れ子アーカイブの展開先に付ける接頭辞
 EXTRACTED_PREFIX = "_extracted_"
@@ -301,6 +319,120 @@ def _volume_issues(
     return ()
 
 
+@dataclass(frozen=True)
+class _Toc:
+    """開いたアーカイブ 1 つ分の目次。形式ごとの違いはここで吸収する。
+
+    ``names`` はフォルダに ``/`` が付いた形。``read`` は要素 1 つをメモリへ
+    取り出す関数で、**取り出しに外部ツールが要る形式では None**。RAR がそれで、
+    圧縮された要素を読もうとすると ``rarfile`` が unrar を起こしにいく
+    （``RarCannotExec``）。入れ子を諦めるほうを選ぶ。目次が読めている以上、
+    その RAR 自身の本は必ず出したい。
+    """
+
+    names: tuple[str, ...]
+    read: Callable[[str], bytes] | None
+
+
+# 目次を開く関数。パスでも、入れ子のためにメモリへ読んだバイト列でも受ける
+_Opener = Callable[[Path | BytesIO], AbstractContextManager[_Toc]]
+
+
+@contextmanager
+def _open_zip(source: Path | BytesIO) -> Iterator[_Toc]:
+    """ZIP の目次を開く"""
+    with zipfile.ZipFile(source) as archive:
+        yield _Toc(names=tuple(archive.namelist()), read=archive.read)
+
+
+@contextmanager
+def _open_rar(source: Path | BytesIO) -> Iterator[_Toc]:
+    """RAR の目次を開く。
+
+    ``rarfile`` は RAR3 / RAR5 の解析器を自前で持つので、目次を読むだけなら
+    外部ツールは要らない。コメントの復号や分割ボリュームの継ぎ足しが要る
+    書庫では例外（``RarCannotExec`` / ``NeedFirstVolume``）が上がるが、
+    握りつぶさずに上へ返す。
+
+    **ヘッダごと暗号化された RAR だけは例外が上がらない。** 何事もなく開いて
+    目次が空で返るため、素直に書くと「読めたうえで本が 0 冊」になり、#70 で
+    無くしたかった silent skip がそのまま残る。鍵が無い以上、中身は実行時にも
+    永遠に取り出せないので、読めなかったこととして扱う。
+    """
+    with rarfile.RarFile(source) as archive:
+        names = tuple(archive.namelist())
+        if not names and archive.needs_password():
+            raise rarfile.PasswordRequired(
+                "目次ごと暗号化されているため、中身を読めません"
+            )
+        yield _Toc(names=names, read=None)
+
+
+@contextmanager
+def _open_7z(source: Path | BytesIO) -> Iterator[_Toc]:
+    """7z の目次を開く。
+
+    ``py7zr`` は純 Python で、目次も要素の取り出しもこの中で完結する。目次ごと
+    暗号化されていれば開く時点で ``PasswordRequired`` が上がるので、RAR のような
+    「静かに空で返る」経路は無い。
+    """
+    with py7zr.SevenZipFile(source) as archive:
+        # py7zr はフォルダに ``/`` を付けない。付けないまま渡すと ``_build_tree``
+        # がフォルダをファイルとして数え、``表紙.zip`` のような名前のフォルダを
+        # 入れ子アーカイブと取り違える
+        names = tuple(
+            f"{item.filename}/" if item.is_directory else item.filename
+            for item in archive.list()
+        )
+        yield _Toc(names=names, read=lambda stored: _read_7z_member(archive, stored))
+
+
+def _read_7z_member(archive: py7zr.SevenZipFile, stored_name: str) -> bytes:
+    """7z の要素 1 つを、ディスクを経由せずメモリへ取り出す。
+
+    上限を実処理（``ExtractionLimits``）と同じ値にしてあるのは、解析だけが
+    先に音を上げて「読めません」と出すのを避けるため。
+    """
+    # 目次を読んだあとは位置が進んでいる。巻き戻さないと取り出せない
+    archive.reset()
+    factory = BytesIOFactory(limit=DEFAULT_LIMITS.max_total_bytes)
+    archive.extract(targets=[stored_name], factory=factory)
+    buffer = factory.products.get(stored_name)
+    if buffer is None:
+        raise py7zr.exceptions.ArchiveError(f"要素を取り出せません: {stored_name}")
+    buffer.seek(0)
+    return buffer.read()
+
+
+# 拡張子から目次の読み手を選ぶ表
+_READERS: tuple[tuple[frozenset[str], _Opener], ...] = (
+    (ZIP_SUFFIXES, _open_zip),
+    (RAR_SUFFIXES, _open_rar),
+    (SEVENZIP_SUFFIXES, _open_7z),
+)
+
+# 入れ子 1 つを読めなかったときに受け止める例外。壊れている・暗号化されている・
+# 未対応の圧縮方式など。**外側の入れ物まで読めない扱いにはしない。** 入れ子が
+# 読めないだけなら、外側の目次から出た本は実行すればそのまま出来る
+_NESTED_READ_ERRORS = (
+    zipfile.BadZipFile,
+    OSError,
+    RuntimeError,
+    NotImplementedError,
+    rarfile.Error,
+    py7zr.exceptions.ArchiveError,
+)
+
+
+def _reader_for(name: str) -> _Opener | None:
+    """名前の拡張子から、目次の読み手を選ぶ。読み方を知らない名前には None"""
+    suffix = PurePosixPath(name).suffix.lower()
+    return next(
+        (opener for suffixes, opener in _READERS if suffix in suffixes),
+        None,
+    )
+
+
 def locate_books(archive_path: Path) -> list[BookLocation]:
     """アーカイブの目次から、1 冊になる場所を拾う。
 
@@ -310,24 +442,28 @@ def locate_books(archive_path: Path) -> list[BookLocation]:
     入れ物として既定で選ばれ、印も警告も無いまま整理の実行に載ってしまう
     （#70 第 4 段階）。読めなかったことは、握りつぶさずに上へ渡す。
 
-    目次の読み方が違うだけの形式（RAR・7z）は、読めなかったのではないので
-    空を返す。こちらは実行時に展開すれば 1 冊になる。
+    RAR / 7z も同じ扱いで、``RarCannotExec``・``NeedFirstVolume``・
+    ``PasswordRequired`` などはここを素通りして ``_read_container`` に届き、
+    画面の「目次を読めません」の印になる。
+
+    アーカイブでない名前（利用者が名指しした ``.txt`` など）は、読めなかったの
+    ではないので空を返す。
     """
-    if archive_path.suffix.lower() not in ZIP_SUFFIXES:
-        # RAR / 7z は目次の読み方が違う（第 5 段階）
+    opener = _reader_for(archive_path.name)
+    if opener is None:
         return []
-    with zipfile.ZipFile(archive_path) as archive:
+    with opener(archive_path) as toc:
         # 展開先は一時領域の「アーカイブ名」フォルダ。巻数はその名前から読まれる
-        return _scan(archive, _Place("", "", archive_path.stem), depth=0)
+        return _scan(toc, _Place("", "", archive_path.stem), depth=0)
 
 
-def _scan(archive: zipfile.ZipFile, place: _Place, depth: int) -> list[BookLocation]:
-    """1 つの ZIP の目次を、展開後のフォルダ構成として読む"""
-    return _scan_directory(archive, _build_tree(archive.namelist()), "", place, depth)
+def _scan(toc: _Toc, place: _Place, depth: int) -> list[BookLocation]:
+    """1 つのアーカイブの目次を、展開後のフォルダ構成として読む"""
+    return _scan_directory(toc, _build_tree(toc.names), "", place, depth)
 
 
 def _scan_directory(
-    archive: zipfile.ZipFile,
+    toc: _Toc,
     tree: _Tree,
     directory: str,
     place: _Place,
@@ -353,7 +489,7 @@ def _scan_directory(
         if is_archive_name(name):
             found.extend(
                 _scan_nested(
-                    archive,
+                    toc,
                     tree.stored_names[_join(directory, name)],
                     place.nested(name),
                     depth,
@@ -362,15 +498,13 @@ def _scan_directory(
 
     for name in sorted(tree.subdirs[directory], key=natural_sort_key):
         found.extend(
-            _scan_directory(
-                archive, tree, _join(directory, name), place.child(name), depth
-            )
+            _scan_directory(toc, tree, _join(directory, name), place.child(name), depth)
         )
     return found
 
 
 def _scan_nested(
-    archive: zipfile.ZipFile,
+    toc: _Toc,
     stored_name: str,
     place: _Place,
     depth: int,
@@ -384,14 +518,19 @@ def _scan_nested(
         # 実処理も同じ深さで打ち切る。ここだけ深く潜ると予告と結果がずれる
         logger.warning("入れ子が深すぎるため解析を打ち切りました: %s", stored_name)
         return []
-    if PurePosixPath(stored_name).suffix.lower() not in ZIP_SUFFIXES:
-        # RAR / 7z は目次の読み方が違う（第 5 段階）
+    if toc.read is None:
+        # 外側が RAR。要素を取り出すには外部ツールが要るので、入れ子は諦める。
+        # 読みに行くと ``rarfile`` が unrar を起こしにいき、道具の有無で解析の
+        # 結果が変わる。外側の目次から出る本のほうを守る
+        return []
+    opener = _reader_for(stored_name)
+    if opener is None:
         return []
 
     try:
-        with zipfile.ZipFile(BytesIO(archive.read(stored_name))) as nested:
+        with opener(BytesIO(toc.read(stored_name))) as nested:
             return _scan(nested, place, depth + 1)
-    except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError) as error:
+    except _NESTED_READ_ERRORS as error:
         # 壊れている・暗号化されている・未対応の圧縮方式。実行時に失敗として現れる
         logger.warning("入れ子の目次を読めませんでした: %s (%s)", stored_name, error)
         return []

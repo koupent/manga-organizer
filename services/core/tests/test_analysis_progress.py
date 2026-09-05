@@ -48,7 +48,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-import py7zr
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -505,37 +504,48 @@ class GrowingAnalysisResultTest(AnalysisJobTestBase):
 
 
 class SilentlySkippedArchiveTest(AnalysisJobTestBase):
-    """4. 目次を読めないアーカイブを、黙って落とさない（意図した振る舞いの変更）"""
+    """4. 本を 1 冊も持たないアーカイブを、黙って落とさない（意図した振る舞いの変更）"""
 
     def files_under(self, root: Path) -> list[str]:
         if not root.exists():
             return []
         return sorted(path.name for path in root.rglob("*") if path.is_file())
 
+    def write_bookless_archive(self, path: Path) -> Path:
+        """壊れてはいないが、画像を 1 枚も含まない ZIP。
+
+        ``CorruptArchiveIsNotSilentTest`` にも同じものがある。あちらは「壊れた
+        ものと、画像が無いだけのものを区別する」ために使い、こちらは「本が
+        0 冊でも行として残る」ために使う。目的が違うので別々に置いてある。
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("おまけ/memo.txt", "画像は 1 枚も入っていません")
+        return path
+
     def test_an_archive_with_no_readable_books_is_still_organized(self):
-        """目次を読めないアーカイブも、走査の行として残して整理する。
+        """本が 1 冊も出ないアーカイブも、走査の行として残して整理へ渡す。
 
         **これは意図した振る舞いの変更**。いままで画面の行は本
-        （``book.source``）からしか生えなかった。7z のように目次を読めない
-        アーカイブは 1 冊も本を出さないので行を持たず、`selectedBooks` にも
-        載らず、``app.py`` の整理投入が ``archives`` ごと外していた。利用者から
-        見ると「チェックを外していないのに、黙って整理されない」。
+        （``book.source``）からしか生えなかった。本を 1 冊も出さない
+        アーカイブは行を持たず、`selectedBooks` にも載らず、``app.py`` の
+        整理投入が ``archives`` ごと外していた。利用者から見ると
+        「チェックを外していないのに、黙って整理されない」。
 
         第 4 段階では走査（``containers``）が行を作るので、既定で選ばれ、
-        実際に整理される。ここではその新しい前提――走査は目次を読めなかった
-        入れ物も必ず挙げる――を固定する。
+        実際に整理へ渡る。ここではその新しい前提――走査は本の出ない入れ物も
+        必ず挙げ、選べば整理の対象数に入る――を固定する。
         """
-        # Arrange - ZIP は目次を読めるが、7z は読めない（第 5 段階）。
-        # それでも実処理は 7z を展開して 1 冊作れる
+        # Arrange - 2 冊出る ZIP と、読めるが画像が 1 枚も無い ZIP。後者は
+        # 目次を読めるので ``unreadable`` ではなく、ただ本が 0 冊
         folder = self.work_dir / "黙って落ちる"
         folder.mkdir(parents=True)
         self.write_archive(folder / "合本.zip", COMPOUND_ENTRIES)
-        opaque = folder / "謎_05.7z"
-        with py7zr.SevenZipFile(opaque, "w") as archive:
-            archive.writef(io.BytesIO(page()), "001.jpg")
-            archive.writef(io.BytesIO(page()), "002.jpg")
+        bookless = self.write_bookless_archive(folder / "画像なし_05.zip")
         self.assertEqual(
-            [], toc_analyzer.locate_books(opaque), "下準備の 7z から本が読めている"
+            [],
+            toc_analyzer.locate_books(bookless),
+            "下準備の ZIP から本が読めている",
         )
 
         # Act
@@ -544,14 +554,21 @@ class SilentlySkippedArchiveTest(AnalysisJobTestBase):
         # Assert - 本は出ないが、走査の一覧には必ず出る。ここが無いと画面に
         # 行が作れず、外した覚えのないアーカイブが黙って消える
         self.assertNotIn(
-            str(opaque),
+            str(bookless),
             [book["source"] for book in result["books"]],
-            f"読めないはずの 7z から本が出ている: {result['books']}",
+            f"本が無いはずの ZIP から本が出ている: {result['books']}",
         )
         self.assertIn(
-            str(opaque),
+            str(bookless),
             result["containers"],
             f"本が出ない入れ物が走査の一覧から抜けている: {result['containers']}",
+        )
+        # Assert - 読めてはいる。読めなかった扱いにすると、画像が無いだけの
+        # アーカイブにまで「目次を読めません」の印が出る
+        self.assertEqual(
+            [],
+            [item["source"] for item in result["unreadable"]],
+            f"読めている ZIP が読めなかった扱いになっている: {result['unreadable']}",
         )
 
         # Act - 画面が既定で選ぶのと同じ形。本の行に加えて、本を持たない
@@ -561,7 +578,7 @@ class SilentlySkippedArchiveTest(AnalysisJobTestBase):
             {"source": book["source"], "entry": book["entry"]}
             for book in result["books"]
         ]
-        chosen.append({"source": str(opaque), "entry": ""})
+        chosen.append({"source": str(bookless), "entry": ""})
         accepted = self.client.post(
             "/api/jobs/organize",
             params=self.auth(),
@@ -578,15 +595,23 @@ class SilentlySkippedArchiveTest(AnalysisJobTestBase):
         job = self.job(accepted.json()["id"])
         self.assertEqual("succeeded", job["state"], job.get("error"))
 
-        # Assert - 7z のぶんも出来ている
+        # Assert - 本を持たない入れ物も整理の対象数に入り、実際に処理される。
+        # ``app.py`` の ``_wanted_entries`` が外していれば総数は 1 になり、
+        # 経過にも名前が残らない。ここが黙って落ちることの正体
+        self.assertEqual(2, job["total"], f"整理の対象数が違う: {job}")
+        self.assertTrue(
+            any(bookless.name in line for line in job["log"]),
+            f"本を持たない入れ物が整理へ渡っていない: {job['log']}",
+        )
+
+        # Assert - 本の出るほうは今までどおり出来上がる
         self.assertEqual(
             [
                 f"[{AUTHOR}] {TITLE} 第001巻.zip",
                 f"[{AUTHOR}] {TITLE} 第002巻.zip",
-                f"[{AUTHOR}] {TITLE} 第005巻.zip",
             ],
             self.files_under(output),
-            "目次を読めないアーカイブが黙って整理されないままになっている",
+            "本を持たない入れ物を混ぜたせいで、他の本まで出来なくなっている",
         )
 
 
