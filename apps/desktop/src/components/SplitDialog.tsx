@@ -139,6 +139,7 @@ export function SplitDialog({
             />
             {checked ? (
               <SplitLine
+                label={label}
                 x={x}
                 width={width}
                 displayWidth={display.width}

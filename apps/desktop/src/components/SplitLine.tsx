@@ -11,6 +11,13 @@ const KEY_STEP = 1;
 const KEY_STEP_FAST = 10;
 
 type SplitLineProps = {
+  /**
+   * 番号の札と同じ文字。"3" か "3–4"。
+   *
+   * 読み上げ名に混ぜて、どのページの線かを名乗る。ファイル名ではなく番号なのは、
+   * 割る前の 1 枚と割った半分の区別を利用者に見せない約束のため。
+   */
+  label: string;
   /** 割る位置。元画像の画素 */
   x: number;
   /** 元画像の幅。x はこの座標で読む */
@@ -32,6 +39,7 @@ type SplitLineProps = {
  * 狙い直すことになる。
  */
 export function SplitLine({
+  label,
   x,
   width,
   displayWidth,
@@ -81,7 +89,10 @@ export function SplitLine({
         data-testid={overlay ? "split-dialog-handle" : "split-handle"}
         role="slider"
         tabIndex={0}
-        aria-label="分割位置"
+        // 同じ形のつまみがページの数だけ並ぶ。「分割位置」だけでは、読み上げの
+        // 操作一覧に同じ名前が並び、目で見て選べない利用者はどのページの線を
+        // 動かしているのか分からないまま別のページを割ることになる
+        aria-label={`${label} ページの分割位置`}
         aria-valuemin={bounds.min}
         aria-valuemax={bounds.max}
         aria-valuenow={x}

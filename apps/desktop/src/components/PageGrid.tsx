@@ -18,7 +18,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { SidecarClient } from "../api/client";
+import { sidecarReason, type SidecarClient } from "../api/client";
 import { useStoredNumber } from "../lib/setting";
 
 const MAX_HISTORY = 100;
@@ -178,6 +178,16 @@ export function PageGrid({
   const [zoomed, setZoomed] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  /**
+   * 絵の URL に添える世代。
+   *
+   * 並べ替えると ZIP の連番は振り直され、**名前は据え置きのまま中身だけが
+   * 入れ替わる**。URL が同じままだと、ブラウザは取り直しに行かない
+   * （/api/thumb の no-cache は、要求が飛んで初めて効く）。番号だけが新しく
+   * 絵が古い格子を渡された利用者は、直したはずの順序がまた崩れて見え、
+   * 並べ直してもう一度保存する。
+   */
+  const [reloadKey, setReloadKey] = useState(0);
   const lastClicked = useRef<string | null>(null);
 
   const sensors = useSensors(
@@ -196,6 +206,9 @@ export function PageGrid({
     setHistory([]);
     setSelection([]);
     lastClicked.current = null;
+    // 組み直す切っ掛けは、いつも「本が書き換わった」こと。同じ名前がもう別の
+    // 絵を指しているので、絵も取り直させる
+    setReloadKey((key) => key + 1);
   }, []);
 
   /**
@@ -315,6 +328,9 @@ export function PageGrid({
   const save = async () => {
     setSaving(true);
     setStatus("保存しています...");
+    // 本へ書き終えたかどうかを、失敗を捌く所まで持ち越す。断られた保存と、
+    // 書き終えた後の読み直しの失敗とでは、その後に押させてよいかが逆になる
+    let written = "";
     try {
       const accepted = await client.reorder(archive, order);
       const job = await client.waitForJob(accepted.id);
@@ -325,7 +341,7 @@ export function PageGrid({
         typeof job.result === "object" && job.result !== null
           ? ((job.result as { pageCount?: number }).pageCount ?? order.length)
           : order.length;
-      const message = `${count} ページを並び替えました`;
+      written = `${count} ページを並び替えました`;
       // 並べ替えると連番が振り直され、同じ名前が別の絵を指す。
       // この本を抱えている他の画面は、そのままでは古い中身を見せ続ける
       onArchiveChanged?.();
@@ -334,11 +350,25 @@ export function PageGrid({
       // 利用者はもう一度保存を押し、覚えの無い並びを本へ書き込むことになる
       const listed = await client.listPages(archive);
       rebase(namesOf(listed.pages as Page[]));
-      setStatus(message);
-      onSaved?.(message);
+      setStatus(written);
+      onSaved?.(written);
+      setSaving(false);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    } finally {
+      const reason = sidecarReason(error);
+      if (written !== "") {
+        // 書き込みは通っていて、失敗したのはその後の読み直しだけ。押せる状態へ
+        // 戻さない。画面が抱えている名前は書き込む前のもので、その名前はもう
+        // 別の絵を指している。ここで押し直せると、利用者が並べた覚えのない
+        // 順序がそのまま本へ書かれる。読み直せる見込みは無いので、
+        // 開き直してもらうしかない
+        setStatus(
+          `${written}。ページ一覧を読み直せませんでした（${reason}）。` +
+            "別のファイルを選び直すか、開き直してください",
+        );
+        return;
+      }
+      // 断られた保存は 1 バイトも書いていない。並びはそのままで押し直せる
+      setStatus(reason);
       setSaving(false);
     }
   };
@@ -443,7 +473,7 @@ export function PageGrid({
                 position={index + 1}
                 moved={original[index] !== name}
                 selected={selection.includes(name)}
-                thumbnailUrl={client.thumbnailUrl(archive, name, cardWidth)}
+                thumbnailUrl={`${client.thumbnailUrl(archive, name, cardWidth)}&v=${reloadKey}`}
                 onSelect={select}
                 onZoom={setZoomed}
               />
@@ -461,7 +491,9 @@ export function PageGrid({
           <img
             data-testid="lightbox-image"
             className="max-h-[82vh] max-w-[92vw] rounded shadow-2xl"
-            src={client.imageUrl(archive, zoomed)}
+            // 原寸も同じ。開いたまま本が書き換わったとき、同じ名前で
+            // 書き換わる前の絵を出し続けない
+            src={`${client.imageUrl(archive, zoomed)}&v=${reloadKey}`}
             alt={zoomed}
           />
           <span className="text-[12px] text-ink-faint">
