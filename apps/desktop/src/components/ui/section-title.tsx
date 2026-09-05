@@ -8,11 +8,19 @@ import { cn } from "../../lib/utils";
  * 帯や枠で囲うと箱代を払ううえ、区画そのものが重く見えるので、
  * 文字の大きさと色だけで一段下げる。
  */
-export function SectionTitle({ className, ...props }: ComponentProps<"h2">) {
+export function SectionTitle({
+  className,
+  children,
+  ...props
+}: ComponentProps<"h2">) {
   return (
+    // 中身は children として明に受ける。まとめて撒くだけだと、見出しに
+    // 文字が入るのかどうかが呼ぶ側を読まないと分からない
     <h2
       className={cn("text-[11.5px] font-medium text-ink-muted", className)}
       {...props}
-    />
+    >
+      {children}
+    </h2>
   );
 }

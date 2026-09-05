@@ -168,6 +168,8 @@ run_frontend_checks() {
     echo "npm が必要です" >&2
     exit 1
   }
+  # lint は型検査（tsc --noEmit）と ESLint の両方を通す。react-hooks の
+  # 依存配列など、過去に実際に出た欠陥を機械的に見つける側はここで落ちる
   ( cd "$repo_root/apps/desktop" \
     && npm ci --no-fund --no-audit \
     && npm run lint \
