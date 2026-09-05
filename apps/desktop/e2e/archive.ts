@@ -121,3 +121,34 @@ print(json.dumps(result))
   );
   return JSON.parse(output);
 }
+
+/** 記録 1 件分。加工後のハッシュから、元と施した加工を引ける（#66） */
+export type DerivedRecord = {
+  source: string;
+  operations: { kind: string; params: Record<string, unknown> }[];
+};
+
+/**
+ * manifest の `derived`（加工後のハッシュ -> 元 + 施した加工）。
+ *
+ * 画面の検証で使うのは、失敗したときにどちら側が悪いのかを分けるため。
+ * 枠が中央に出たとき、これが無いと「コアが割った位置を記録していない」のか
+ * 「画面が記録を読んでいない」のかが区別できず、直す場所が分からない。
+ */
+export function derivedRecordsOf(
+  archive: string,
+): Record<string, DerivedRecord> {
+  const output = runPython(
+    `
+import json, sys, zipfile
+from manga_core.original_store import MANIFEST_ENTRY
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    names = archive.namelist()
+    raw = archive.read(MANIFEST_ENTRY) if MANIFEST_ENTRY in names else b"{}"
+document = json.loads(raw.decode("utf-8"))
+print(json.dumps(document.get("derived", {})))
+`,
+    archive,
+  );
+  return JSON.parse(output);
+}
