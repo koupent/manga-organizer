@@ -20,14 +20,14 @@ GET /api/jobs/{id}
     current 見終えたページ数
     result  {
       "archive":   絶対パス,
-      "pageCount": ページ数,
+      "page_count": ページ数,
       "token":     いま並んでいるページ名と大きさから作る印,
       "rows": [{
         "names":    [ページ名, ...]  # 割った対は 2 つ（先に読む方が先）,
         "width":    int,
         "height":   int,
         "source":   "page" | "original",
-        "isSpread": bool,
+        "is_spread": bool,
         "split":    {"x": int} | null
       }, ...]
     }
@@ -41,8 +41,8 @@ POST /api/jobs/split
 
 GET /api/jobs/{id}
     kind    "split"
-    result  {"changed": bool, "pageCount": int,
-             "splitCount": int, "restoredCount": int, "adjustedCount": int}
+    result  {"changed": bool, "page_count": int,
+             "split_count": int, "restored_count": int, "adjusted_count": int}
 
 
 なぜこの形か
@@ -108,9 +108,15 @@ PAGE_HEIGHT = 1800
 
 # 走査が返す 1 行の形。鍵が欠けると画面は「割れない行」と「載せ忘れ」を
 # 区別できないので、集合ごと固定する
-ROW_KEYS = {"names", "width", "height", "source", "isSpread", "split"}
-SCAN_KEYS = {"archive", "pageCount", "token", "rows"}
-CONFIRM_KEYS = {"changed", "pageCount", "splitCount", "restoredCount", "adjustedCount"}
+ROW_KEYS = {"names", "width", "height", "source", "is_spread", "split"}
+SCAN_KEYS = {"archive", "page_count", "token", "rows"}
+CONFIRM_KEYS = {
+    "changed",
+    "page_count",
+    "split_count",
+    "restored_count",
+    "adjusted_count",
+}
 
 THUMBNAIL_WIDTH = 240
 
@@ -246,7 +252,7 @@ class SplitApiTestBase(unittest.TestCase):
         return job
 
     def scan(self, archive: Path | str) -> dict:
-        """走査の結果（archive / pageCount / token / rows）"""
+        """走査の結果（archive / page_count / token / rows）"""
         return self.scan_job(archive)["result"]
 
     def rows_for(self, result: dict, changes: dict[int, dict | None] | None = None):
@@ -318,7 +324,7 @@ class SplitScanTest(SplitApiTestBase):
             SCAN_KEYS, set(result), f"走査の結果の形が契約と違う: {result}"
         )
         self.assertEqual(str(self.archive), result["archive"])
-        self.assertEqual(4, result["pageCount"], result)
+        self.assertEqual(4, result["page_count"], result)
         self.assertEqual(ROW_KEYS, set(result["rows"][0]), result["rows"][0])
 
         # Assert - ページ順そのまま。1 行 1 ページで、まだ何も畳まれない
@@ -331,7 +337,7 @@ class SplitScanTest(SplitApiTestBase):
         # Assert - 印が付くのは見開きだけ。3 枚目に付くなら閾値を見ていない
         self.assertEqual(
             [False, True, False, False],
-            [row["isSpread"] for row in result["rows"]],
+            [row["is_spread"] for row in result["rows"]],
             f"見開きの印が閾値どおりでない: {result['rows']}",
         )
 
@@ -359,7 +365,7 @@ class SplitScanTest(SplitApiTestBase):
         self.assertEqual(
             job["total"], job["current"], f"見終えた数が分母に届いていない: {job}"
         )
-        self.assertEqual(job["result"]["pageCount"], job["total"], job)
+        self.assertEqual(job["result"]["page_count"], job["total"], job)
 
 
 class SplitConfirmTest(SplitApiTestBase):
@@ -375,16 +381,18 @@ class SplitConfirmTest(SplitApiTestBase):
             CONFIRM_KEYS, set(result), f"確定の結果の形が契約と違う: {result}"
         )
         self.assertIs(True, result["changed"], result)
-        self.assertEqual(5, result["pageCount"], f"ページが 1 枚増えていない: {result}")
-        self.assertEqual(1, result["splitCount"], result)
-        self.assertEqual(0, result["restoredCount"], result)
-        self.assertEqual(0, result["adjustedCount"], result)
+        self.assertEqual(
+            5, result["page_count"], f"ページが 1 枚増えていない: {result}"
+        )
+        self.assertEqual(1, result["split_count"], result)
+        self.assertEqual(0, result["restored_count"], result)
+        self.assertEqual(0, result["adjusted_count"], result)
 
         # Assert - 枚数だけでは「同じ絵を 2 回書いた」実装も通る。右綴じなので
         # 先に読むのは右半分（青）、後が左半分（赤）。両方を見ることで
         # 左右を取り違えた実装もここで落ちる
         after = self.scan(self.archive)
-        self.assertEqual(5, after["pageCount"], after)
+        self.assertEqual(5, after["page_count"], after)
         self.assertEqual(4, len(after["rows"]), f"行が増減している: {after['rows']}")
         folded = after["rows"][1]
         self.assertEqual(
@@ -407,7 +415,7 @@ class SplitConfirmTest(SplitApiTestBase):
         self.assertEqual(
             {"x": SPLIT_X}, folded["split"], f"割った位置が戻らない: {folded}"
         )
-        self.assertIs(True, folded["isSpread"], folded)
+        self.assertIs(True, folded["is_spread"], folded)
 
         # Assert - 割っていない行は巻き添えにならない
         self.assertEqual(
@@ -462,8 +470,8 @@ class SplitTokenTest(SplitApiTestBase):
         result = self.confirmed(
             self.archive, mine["token"], self.rows_for(mine, {1: {"x": SPLIT_X}})
         )
-        self.assertEqual(1, result["splitCount"], result)
-        self.assertEqual(5, result["pageCount"], result)
+        self.assertEqual(1, result["split_count"], result)
+        self.assertEqual(5, result["page_count"], result)
 
 
 class SubmittedRowsCoverTheArchiveTest(SplitApiTestBase):
@@ -510,7 +518,7 @@ class SubmittedRowsCoverTheArchiveTest(SplitApiTestBase):
 
         # Assert
         self.assertIs(True, result["changed"], result)
-        self.assertEqual(5, result["pageCount"], result)
+        self.assertEqual(5, result["page_count"], result)
 
 
 class SplitRestoreTest(SplitApiTestBase):
@@ -530,14 +538,14 @@ class SplitRestoreTest(SplitApiTestBase):
         # Assert - 減った 1 枚は「戻した」として数える。割った数と同じ欄で
         # 数えると、画面は何が起きたのか言えない
         self.assertIs(True, result["changed"], result)
-        self.assertEqual(4, result["pageCount"], f"ページ数が戻っていない: {result}")
-        self.assertEqual(1, result["restoredCount"], result)
-        self.assertEqual(0, result["splitCount"], result)
-        self.assertEqual(0, result["adjustedCount"], result)
+        self.assertEqual(4, result["page_count"], f"ページ数が戻っていない: {result}")
+        self.assertEqual(1, result["restored_count"], result)
+        self.assertEqual(0, result["split_count"], result)
+        self.assertEqual(0, result["adjusted_count"], result)
 
         # Assert - 開き直すと、また普通の 1 行になる
         after = self.scan(self.archive)
-        self.assertEqual(4, after["pageCount"], after)
+        self.assertEqual(4, after["page_count"], after)
         restored = after["rows"][1]
         self.assertEqual(1, len(restored["names"]), f"対が残っている: {restored}")
         self.assertEqual("page", restored["source"], restored)
@@ -587,7 +595,7 @@ class SplitScanSecurityTest(SplitApiTestBase):
         )
 
         # Act / Assert - 同じ形でも許可の中なら走査する
-        self.assertEqual(4, self.scan(self.archive)["pageCount"])
+        self.assertEqual(4, self.scan(self.archive)["page_count"])
 
 
 class SplitConfirmSecurityTest(SplitApiTestBase):
@@ -635,7 +643,7 @@ class SplitConfirmSecurityTest(SplitApiTestBase):
 
         # Act / Assert - 同じ形でも許可の中なら書き直す
         self.assertEqual(
-            5, self.confirmed(self.archive, scanned["token"], rows)["pageCount"]
+            5, self.confirmed(self.archive, scanned["token"], rows)["page_count"]
         )
 
 
