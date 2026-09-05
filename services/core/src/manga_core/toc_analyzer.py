@@ -14,11 +14,11 @@
 - 巻数の優先順位 …… ``VolumeDetector.resolve_volume``
 - 名前の組み立てと衝突時の ``_1`` …… ``format_volume_name`` / ``unique_file_name``
 
-一致のために、既知の欠陥もそのまま写している。実処理は入れ子アーカイブを
+一致のために、実処理が作るフォルダ名をそのまま使う。実処理は入れ子アーカイブを
 ``_extracted_内_05_zip`` のような名前のフォルダへ展開し、``VolumeDetector`` は
-``_extracted_`` 始まりの名前を巻数なしと見なす。結果として内側の ``05.zip`` は
-第005巻ではなく並び順の第001巻になる。ここでもその名前を使って判定する
-（欠陥そのものは #74 で扱う）。
+その名前から接頭辞と形式の接尾辞を外して元の名前を取り戻す。結果として内側の
+``05.zip`` は第005巻になる（#74）。ここでも同じ名前を渡すので、巻数を読む規則を
+書き写さずに予告と実処理が揃う。
 
 **形式は ZIP・RAR・7z の 3 つ**（第 5 段階）。目次の読み方だけが形式ごとに違い、
 そこから先――どのフォルダが 1 冊になるか、何巻か、名前が衝突したらどうするか――は
@@ -57,6 +57,9 @@ from manga_core.naming import natural_sort_key
 from manga_core.safe_extract import DEFAULT_LIMITS
 from manga_core.viewer_contract import is_page_source
 from manga_core.volume_detector import (
+    # 展開先フォルダ名の接頭辞。組み立てる側と、そこから元の名前を取り戻す側で
+    # 別々に持つと、片方を変えた瞬間に予告と実処理の巻数が食い違う
+    EXTRACTED_PREFIX,
     ORIGIN_LAST_NUMBER,
     ORIGIN_POSITION,
     VolumeDecision,
@@ -76,9 +79,6 @@ VOLUME_UNCERTAIN = "volume-uncertain"
 ZIP_SUFFIXES = frozenset({".zip", ".cbz", ".epub"})
 RAR_SUFFIXES = frozenset({".rar", ".cbr"})
 SEVENZIP_SUFFIXES = frozenset({".7z", ".cb7"})
-
-# 実処理が入れ子アーカイブの展開先に付ける接頭辞
-EXTRACTED_PREFIX = "_extracted_"
 
 
 @dataclass(frozen=True)
@@ -186,8 +186,9 @@ class _Place:
     """展開後に出来るフォルダ 1 つ分の位置。
 
     見せる位置と巻数判定に使う名前は別物になる。実処理は入れ子アーカイブを
-    ``_extracted_内_05_zip`` へ展開し、その名前で巻数を判定するため（#74）。
-    利用者には ``内_05.zip`` と見せたい。
+    ``_extracted_内_05_zip`` へ展開し、その名前で巻数を判定する（そこから
+    ``内_05`` を取り戻して 5 巻と読む。#74）。利用者には位置として
+    ``内_05.zip`` と見せたい。
     """
 
     # 元アーカイブ内での位置。利用者に見せる

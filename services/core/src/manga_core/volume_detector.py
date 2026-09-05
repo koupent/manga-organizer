@@ -4,7 +4,20 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from manga_core.input_expander import ARCHIVE_SUFFIXES
+
 logger = logging.getLogger(__name__)
+
+# 実処理（``archive_handler``）が入れ子アーカイブの展開先フォルダに付ける接頭辞。
+# ``内_05.zip`` の展開先は ``_extracted_内_05_zip`` になり、元の名前は接頭辞と
+# ``.`` → ``_`` の置き換えを除いてそのまま残っている
+EXTRACTED_PREFIX = "_extracted_"
+
+# 展開先フォルダ名の末尾に残る、``.`` が ``_`` に化けた拡張子。
+# ``ARCHIVE_SUFFIXES`` から導くのは、対応形式が増えたときにここだけ取り残されて
+# その形式の巻数だけずれるのを防ぐため。``_7z`` と ``_cb7`` は接尾辞そのものに
+# 数字があり、落とし損ねると ``内_05_7z`` の 7 を拾って 5 巻が 7 巻になる
+EXTRACTED_SUFFIXES = tuple(f"_{suffix.lstrip('.')}" for suffix in ARCHIVE_SUFFIXES)
 
 # 巻数をどこから読んだか。実行前の一覧（#70）で「この巻数は怪しい」と伝えるには、
 # 番号だけでは足りない。`第3巻` から読んだ 3 と、名前の最後の数字を拾っただけの 3 と、
@@ -50,6 +63,19 @@ def unique_file_name(
         if not is_taken(candidate):
             return candidate
         counter += 1
+
+
+def original_nested_name(dir_name: str) -> str:
+    """展開先フォルダ名から、元の入れ子アーカイブ名を取り戻す（#74）。
+
+    ``_extracted_内_05_zip`` → ``内_05``。``.`` は ``_`` に置き換わったあとなので
+    小数点は戻らないが、巻数を読むのに要る数字はそのまま残る。
+    """
+    body = dir_name[len(EXTRACTED_PREFIX) :]
+    for suffix in EXTRACTED_SUFFIXES:
+        if body.endswith(suffix):
+            return body[: -len(suffix)]
+    return body
 
 
 class VolumeDetector:
@@ -118,8 +144,17 @@ class VolumeDetector:
         """フォルダ名から巻数を読み、どう読んだかを併せて返す"""
         dir_name = directory_path.name
 
-        # Skip obvious temporary directories (but not normal manga_vol type names)
-        if dir_name.startswith("_extracted_") or dir_name.startswith("temp"):
+        # 入れ子アーカイブの展開先は、元の名前を保っている。接頭辞と形式の
+        # 接尾辞を外して元の名前で判定しないと、``まとめ.zip`` の中の
+        # ``05.zip`` が並び順の第001巻になってしまう（#74）
+        if dir_name.startswith(EXTRACTED_PREFIX):
+            return self.decide_volume_from_name(original_nested_name(dir_name))
+
+        # 作業用フォルダの名前は利用者が本に付けた名前ではないので、数字が
+        # あっても読まない。``temp_08`` を 8 巻にすると、利用者が意図しない
+        # 番号の本が出来る。上の枝と 1 つの条件に同居させると、片方の直しが
+        # そのままこちらへ漏れる
+        if dir_name.startswith("temp"):
             return VolumeDecision(None, ORIGIN_NONE, dir_name)
 
         # Use existing name-based detection logic
