@@ -23,7 +23,15 @@ from pathlib import Path
 from PIL import Image
 
 from manga_core.file_times import capture_file_times, restore_file_times
-from manga_core.page_reorder import PageEntry, PageReorderError, ZipPageEditor
+from manga_core.original_store import Operation, plan_record
+from manga_core.page_reorder import (
+    DEFLATE_LEVEL,
+    PageEntry,
+    PageReorderError,
+    ZipPageEditor,
+    mismatched_entries,
+    new_entry_info,
+)
 from manga_core.viewer_contract import (
     VIEWER_IMAGE_EXTENSIONS,
     output_suffix,
@@ -141,6 +149,40 @@ def transform_image(
     return buffer.getvalue()
 
 
+def _transform_operations(transform: CoverTransform) -> tuple[Operation, ...]:
+    """加工の内容を、元画像から見た適用順の記録へ落とす。
+
+    並びは transform_image と同じ（分割 → 切り抜き → 回転）。ここがずれると、
+    画面が前回の枠を復元できず、切り抜きを広げる方向へ戻せない。
+    何もしない回転は加工ではないので記録しない。
+    """
+    operations: list[Operation] = []
+    if transform.split:
+        operations.append(Operation("split", {"side": transform.split}))
+    if transform.crop:
+        operations.append(Operation("crop", {"box": list(transform.crop)}))
+    if transform.rotate % 360:
+        operations.append(Operation("rotate", {"degrees": transform.rotate % 360}))
+    return tuple(operations)
+
+
+def _plan_original(
+    archive_path: Path,
+    name: str,
+    original: bytes,
+    produced: bytes,
+    transform: CoverTransform,
+) -> dict[str, bytes]:
+    """加工前の画像と紐づけの記録を、書き足すエントリとして組み立てる"""
+    return plan_record(
+        archive_path,
+        source=original,
+        source_name=name,
+        produced=produced,
+        operations=_transform_operations(transform),
+    )
+
+
 def apply_to_archive(
     archive_path: Path,
     name: str,
@@ -152,6 +194,8 @@ def apply_to_archive(
     make_first を立てると、加工した 1 枚をサムネイル（先頭ページ）へ移す。
     どちらの経路でも、元を捨てる前に書き上げた ZIP を読み直して確かめ、
     原子的に置き換える。
+
+    加工前の画像は失われると戻せないので、同じ書き直しの中で ZIP へ残す（#66）。
     """
     archive_path = Path(archive_path)
     if make_first:
@@ -174,6 +218,7 @@ def _replace_in_place(
     produced = transform_image(original, transform, name)
     _, suffix = _output_format(name)
     new_name = str(Path(name).with_suffix(suffix))
+    extras = _plan_original(archive_path, name, original, produced, transform)
 
     times = capture_file_times(archive_path)
     handle, temp_name = tempfile.mkstemp(
@@ -184,8 +229,8 @@ def _replace_in_place(
     os.close(handle)
     temp_path = Path(temp_name)
     try:
-        _write_replacement(archive_path, temp_path, name, new_name, produced)
-        _verify(temp_path, new_name, len(produced))
+        _write_replacement(archive_path, temp_path, name, new_name, produced, extras)
+        _verify(temp_path, new_name, len(produced), extras)
         os.replace(temp_path, archive_path)
     finally:
         temp_path.unlink(missing_ok=True)
@@ -215,6 +260,9 @@ def _move_to_front(
     加工と並べ替えを page_reorder の 1 回の書き直しに委ねる。別々に適用すると、
     加工だけ済んで並べ替えに失敗した中途半端なアーカイブが残る。連番の付け方や
     ページとみなす条件も page_reorder と一致させないと、viewer 側で順序が崩れる。
+
+    加工前の画像も同じ書き直しに乗せる。後から追記に分けると ZIP 自身の
+    タイムスタンプ保持が壊れ、元画像だけ書けて本体が古いままにもなりうる。
     """
     try:
         editor = ZipPageEditor(archive_path)
@@ -225,8 +273,9 @@ def _move_to_front(
         original = editor.read_entry(name)
         # 加工に失敗したらここで止まる。元のアーカイブには触れていない
         produced = transform_image(original, transform, name)
+        extras = _plan_original(archive_path, name, original, produced, transform)
         ordered = _front_first_order(name, editor.pages)
-        editor.apply_order(ordered, replacements={name: produced})
+        editor.apply_order(ordered, replacements={name: produced}, extra_entries=extras)
     except PageReorderError as error:
         raise CoverEditError(str(error)) from error
     finally:
@@ -242,9 +291,18 @@ def _move_to_front(
 
 
 def _write_replacement(
-    archive_path: Path, temp_path: Path, old_name: str, new_name: str, produced: bytes
+    archive_path: Path,
+    temp_path: Path,
+    old_name: str,
+    new_name: str,
+    produced: bytes,
+    extras: dict[str, bytes] | None = None,
 ) -> None:
-    """対象の 1 枚だけ差し替えた ZIP を書き出す。他はバイト列を変えない"""
+    """対象の 1 枚だけ差し替えた ZIP を書き出す。他はバイト列を変えない。
+
+    extras は同じ書き込みに含めて書き足すエントリ（元画像と manifest）。
+    """
+    added = extras or {}
     with (
         zipfile.ZipFile(archive_path, "r") as source,
         zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as destination,
@@ -252,6 +310,9 @@ def _write_replacement(
         destination.comment = source.comment
         for info in source.infolist():
             if info.is_dir():
+                continue
+            if info.filename in added:
+                # 書き足す側で同じ名前を作る。両方入れると同名エントリになる
                 continue
             if info.filename == old_name:
                 replaced = zipfile.ZipInfo(new_name, date_time=info.date_time)
@@ -265,8 +326,28 @@ def _write_replacement(
             copied.comment = info.comment
             destination.writestr(copied, source.read(info))
 
+        for name, data in sorted(added.items()):
+            destination.writestr(
+                new_entry_info(name), data, compresslevel=DEFLATE_LEVEL
+            )
 
-def _verify(temp_path: Path, new_name: str, expected_size: int) -> None:
+
+def _verify_extras(written: zipfile.ZipFile, extras: dict[str, bytes]) -> None:
+    """書き足したエントリが渡した中身のまま書けているか確かめる。
+
+    元画像は元のアーカイブを捨てた後では作り直せない。捨てる前に確かめる。
+    """
+    mismatched = mismatched_entries(written, extras)
+    if mismatched:
+        raise CoverEditError(f"書き出した ZIP の書き足しが一致しません: {mismatched}")
+
+
+def _verify(
+    temp_path: Path,
+    new_name: str,
+    expected_size: int,
+    extras: dict[str, bytes] | None = None,
+) -> None:
     """置き換える前に、書き上げた ZIP を読み直して確かめる"""
     try:
         with zipfile.ZipFile(temp_path, "r") as written:
@@ -274,6 +355,7 @@ def _verify(temp_path: Path, new_name: str, expected_size: int) -> None:
                 raise CoverEditError(f"書き出した ZIP に {new_name} がありません")
             if written.getinfo(new_name).file_size != expected_size:
                 raise CoverEditError("書き出した表紙のサイズが一致しません")
+            _verify_extras(written, extras or {})
             damaged = written.testzip()
     except (OSError, zipfile.BadZipFile) as error:
         raise CoverEditError(

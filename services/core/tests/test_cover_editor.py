@@ -218,9 +218,13 @@ class ApplyToArchiveTest(unittest.TestCase):
         # Assert
         self.assertEqual("001.jpg", result.name)
         with zipfile.ZipFile(self.archive) as archive:
+            names = archive.namelist()
+            # ページの集合と並びは変わらない。加工前の画像と manifest（#66）は
+            # ページ以外のエントリとして増えるので、ページだけで数える
             self.assertEqual(
-                ["ComicInfo.xml", "001.jpg", "002.jpg"], archive.namelist()
+                ["001.jpg", "002.jpg"], [name for name in names if is_viewer_page(name)]
             )
+            self.assertIn("ComicInfo.xml", names, "ページ以外のエントリが消えている")
             with Image.open(io.BytesIO(archive.read("001.jpg"))) as cover:
                 self.assertEqual((800, 1200), cover.size)
 
@@ -248,7 +252,13 @@ class ApplyToArchiveTest(unittest.TestCase):
         # Assert
         self.assertEqual("001.png", result.name)
         with zipfile.ZipFile(archive_path) as archive:
-            self.assertEqual(["001.png"], archive.namelist())
+            names = archive.namelist()
+            # 加工前の BMP は元画像として残る（#66）。ページとしては
+            # PNG の 1 枚だけになり、古い名前は消えている
+            self.assertEqual(
+                ["001.png"], [name for name in names if is_viewer_page(name)]
+            )
+            self.assertNotIn("001.bmp", names, "古い名前のページが残っている")
 
     def test_preserves_the_archive_timestamp(self):
         # Arrange

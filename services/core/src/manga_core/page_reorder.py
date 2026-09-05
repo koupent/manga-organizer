@@ -12,6 +12,7 @@ import os
 import struct
 import tempfile
 import threading
+import time
 import zipfile
 from collections import Counter
 from collections.abc import Mapping
@@ -151,6 +152,34 @@ def _copy_entry(
     destination.writestr(copied, data, compresslevel=level)
 
 
+def new_entry_info(name: str) -> zipfile.ZipInfo:
+    """アーカイブへ新しく書き足すエントリのメタ情報を作る。
+
+    コピー元の ZipInfo が無いエントリ（#66 の元画像や manifest）用。
+    zipfile の既定の日時は 1980-01-01 になるため、書き足した時刻を入れる。
+    """
+    info = zipfile.ZipInfo(name, date_time=time.localtime()[:6])
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o644 << 16
+    return info
+
+
+def mismatched_entries(
+    archive: zipfile.ZipFile, expected: Mapping[str, bytes]
+) -> list[str]:
+    """期待した中身で書けていないエントリ名を返す。
+
+    名前と CRC の検証だけでは、書いたつもりで元の中身が残っていても気づけない。
+    元のアーカイブを捨てる前に大きさまで突き合わせるために使う。
+    """
+    names = set(archive.namelist())
+    return sorted(
+        name
+        for name, data in expected.items()
+        if name not in names or archive.getinfo(name).file_size != len(data)
+    )
+
+
 def _required_directories(source: zipfile.ZipFile, renames: dict[str, str]) -> set[str]:
     """書き直した後も中身が残るディレクトリエントリの名前を集める"""
     required: set[str] = set()
@@ -208,24 +237,33 @@ class ZipPageEditor:
         ordered_names,
         progress=None,
         replacements: Mapping[str, bytes] | None = None,
+        extra_entries: Mapping[str, bytes] | None = None,
     ) -> ReorderResult:
         """指定された順序で連番を振り直し、ZIP をその場で置き換える。
 
         replacements を渡すと、そのページだけ中身を差し替えたうえで並べ替える。
         並べ替えと差し替えを 1 回の書き直しで済ませることで、片方だけ適用された
         中途半端なアーカイブが残らない。
+
+        extra_entries はページ以外として書き足すエントリ（#66 の元画像と
+        manifest）。同名が既にあれば置き換える。これも同じ 1 回の書き直しに
+        含める。後から追記に分けると、ZIP 自身のタイムスタンプ保持が 2 回目の
+        書き込みで壊れるうえ、元画像だけ書けて本体が古いままのアーカイブが残る。
         """
         with self._lock:
             ordered = tuple(ordered_names)
             self._validate_order(ordered)
             replaced = dict(replacements or {})
+            extras = dict(extra_entries or {})
             self._validate_replacements(ordered, replaced)
+            self._validate_extra_entries(extras)
             renames = self._build_renames(ordered)
 
             current = tuple(page.name for page in self._pages)
             renamed_nothing = all(old == new for old, new in renames.items())
-            # 差し替えがあるなら、名前と順序が同じでも書き直さないと中身が変わらない
-            if not replaced and renamed_nothing and ordered == current:
+            # 差し替えや書き足しがあるなら、名前と順序が同じでも
+            # 書き直さないと中身が変わらない
+            if not replaced and not extras and renamed_nothing and ordered == current:
                 return ReorderResult(
                     changed=False,
                     page_count=len(ordered),
@@ -237,9 +275,12 @@ class ZipPageEditor:
             original_times = capture_file_times(self.zip_path)
             temp_path = self._create_temp_file()
             try:
-                self._write_reordered(temp_path, ordered, renames, progress, replaced)
+                self._write_reordered(
+                    temp_path, ordered, renames, progress, replaced, extras
+                )
                 self._verify_written(temp_path, ordered, renames)
                 self._verify_replacements(temp_path, renames, replaced)
+                self._verify_extra_entries(temp_path, extras)
                 os.replace(temp_path, self.zip_path)
             finally:
                 # 置き換えに成功していれば既に消えている
@@ -372,6 +413,20 @@ class ZipPageEditor:
         if empty:
             raise PageReorderError(f"差し替える中身が空です: {empty}")
 
+    def _validate_extra_entries(self, extras: dict[str, bytes]) -> None:
+        """書き足すエントリがページと衝突しないか検証する。
+
+        ページとみなされる名前を書き足すと連番の振り直しに巻き込まれ、隠して
+        おいたはずの元画像が改名されて本文へ紛れる。置き場を変えたときに
+        気づけるよう、書き込む前で止める。
+        """
+        pages = sorted(name for name in extras if is_image_name(name))
+        if pages:
+            raise PageReorderError(f"書き足すエントリがページと衝突します: {pages}")
+        empty = sorted(name for name, data in extras.items() if not data)
+        if empty:
+            raise PageReorderError(f"書き足す中身が空です: {empty}")
+
     def _verify_replacements(
         self, temp_path: Path, renames: dict[str, str], replacements: dict[str, bytes]
     ) -> None:
@@ -401,6 +456,25 @@ class ZipPageEditor:
         if mismatched:
             raise PageReorderError(
                 f"差し替えたページの大きさが一致しません: {mismatched}"
+            )
+
+    def _verify_extra_entries(self, temp_path: Path, extras: dict[str, bytes]) -> None:
+        """書き足したエントリが渡した中身のまま書けているか確かめる。
+
+        元画像は元のアーカイブを捨てた後では作り直せない。捨てる前に確かめる。
+        """
+        if not extras:
+            return
+        try:
+            with zipfile.ZipFile(temp_path, "r") as written:
+                mismatched = mismatched_entries(written, extras)
+        except (OSError, zipfile.BadZipFile) as error:
+            raise PageReorderError(
+                f"書き出した ZIP の書き足しを確認できませんでした: {error}"
+            ) from error
+        if mismatched:
+            raise PageReorderError(
+                f"書き足したエントリの大きさが一致しません: {mismatched}"
             )
 
     def _build_renames(self, ordered: tuple[str, ...]) -> dict[str, str]:
@@ -434,9 +508,11 @@ class ZipPageEditor:
         renames: dict[str, str],
         progress=None,
         replacements: dict[str, bytes] | None = None,
+        extras: dict[str, bytes] | None = None,
     ) -> None:
         """新しい並び順の ZIP を一時ファイルとして書き出す"""
         replaced = replacements or {}
+        added = extras or {}
         with (
             zipfile.ZipFile(self.zip_path, "r") as source,
             zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as destination,
@@ -446,10 +522,18 @@ class ZipPageEditor:
             for info in source.infolist():
                 if info.filename in renames:
                     continue
+                if info.filename in added:
+                    # 書き足す側で同じ名前を作る。両方入れると同名エントリになる
+                    continue
                 if info.is_dir() and info.filename not in retained_dirs:
                     # 画像が抜けて空になるフォルダは残さない
                     continue
                 _copy_entry(source, destination, info, info.filename)
+
+            for name, data in sorted(added.items()):
+                destination.writestr(
+                    new_entry_info(name), data, compresslevel=DEFLATE_LEVEL
+                )
 
             total = len(ordered)
             for position, name in enumerate(ordered, 1):
