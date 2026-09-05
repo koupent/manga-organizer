@@ -71,11 +71,14 @@ manifest は「加工後 -> 元 + 施した加工」を持つ。1 つの元か�
 で表せる。加工の種類は Operation.kind を増やせば足りる。
 """
 
+import contextlib
 import hashlib
 import io
 import json
+import struct
 import sys
 import threading
+import tracemalloc
 import unittest
 import zipfile
 from pathlib import Path
@@ -197,6 +200,142 @@ def replace_manifest(archive_path: Path, raw: bytes) -> None:
         for item, data in kept:
             archive.writestr(item, data)
         archive.writestr(manifest, raw)
+
+
+def add_entry(archive_path: Path, name: str, data: bytes) -> None:
+    """エントリを 1 つ書き足す。他のエントリは触らない"""
+    with zipfile.ZipFile(archive_path, "a", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(name, data)
+
+
+def declared_size(archive_path: Path, name: str) -> int:
+    """ZIP が申告している展開後の大きさ。中身を読まなくても分かる"""
+    with zipfile.ZipFile(archive_path) as archive:
+        return archive.getinfo(name).file_size
+
+
+# 展開せずに拒むための上限（このテストが前提とする契約）。実装がこれ以下の値を
+# 選ぶ限りこの検証は通る。見たいのは数そのものではなく、上限が効いていること
+MANIFEST_SIZE_LIMIT = 4 * 1024 * 1024
+ORIGINAL_SIZE_LIMIT = 64 * 1024 * 1024
+
+# 展開すると 128 MiB になるエントリ。ZIP の上では数百 KB にしかならない
+BOMB_MIB = 128
+BOMB_CHUNK = b"a" * (1024 * 1024)
+
+# 展開してしまったかどうかの物差し。まっとうな読み方では確保しない大きさで、
+# かつ 128 MiB よりは十分に小さい
+MEMORY_ALLOWANCE = 32 * 1024 * 1024
+
+
+def bomb_digest(prefix: bytes = b"", suffix: bytes = b"") -> str:
+    """巨大なエントリの中身そのものの SHA-256。中身を丸ごと持たずに求める"""
+    digest = hashlib.sha256()
+    digest.update(prefix)
+    for _ in range(BOMB_MIB):
+        digest.update(BOMB_CHUNK)
+    digest.update(suffix)
+    return digest.hexdigest()
+
+
+def lie_about_size(archive_path: Path, entry: str, pretend: int) -> None:
+    """展開後の大きさだけを偽った ZIP に書き換える。
+
+    申告された大きさは ZIP のヘッダに書いてあるだけで、本を配る側が自由に
+    決められる。中身と食い違っていても、展開し終えるまで誰も気付かない。
+    申告を信じて上限を判定すると、小さいと言い張るだけで素通りできてしまう。
+    """
+    raw = bytearray(archive_path.read_bytes())
+    with zipfile.ZipFile(archive_path) as archive:
+        info = archive.getinfo(entry)
+    name = entry.encode()
+
+    def patch(at: int, size_at: int, extra_at: int, extra_len: int) -> None:
+        """32 ビットの欄か、zip64 の拡張領域か、書いてある方を書き換える"""
+        if struct.unpack_from("<I", raw, size_at)[0] != 0xFFFFFFFF:
+            struct.pack_into("<I", raw, size_at, pretend)
+            return
+        # zip64 拡張領域。識別子 1 の塊の先頭 8 バイトが展開後の大きさ
+        cursor = extra_at
+        while cursor < extra_at + extra_len:
+            block, length = struct.unpack_from("<HH", raw, cursor)
+            if block == 0x0001:
+                struct.pack_into("<Q", raw, cursor + 4, pretend)
+                return
+            cursor += 4 + length
+        raise AssertionError("zip64 の拡張領域に大きさが無い")
+
+    # local file header
+    at = info.header_offset
+    if raw[at : at + 4] != b"PK\x03\x04":
+        raise AssertionError("local header が見つからない")
+    name_len, extra_len = struct.unpack_from("<HH", raw, at + 26)
+    patch(at, at + 22, at + 30 + name_len, extra_len)
+
+    # central directory
+    at = raw.find(b"PK\x01\x02")
+    while at != -1:
+        name_len, extra_len = struct.unpack_from("<HH", raw, at + 28)
+        if raw[at + 46 : at + 46 + name_len] == name:
+            patch(at, at + 24, at + 46 + name_len, extra_len)
+            break
+        at = raw.find(b"PK\x01\x02", at + 1)
+    else:
+        raise AssertionError("central directory に項目が無い")
+    archive_path.write_bytes(raw)
+
+
+def repack_with_a_bomb(
+    archive_path: Path,
+    entry: str,
+    *,
+    manifest: bytes | None = None,
+    prefix: bytes = b"",
+    suffix: bytes = b"",
+) -> None:
+    """既存のエントリを保ったまま、展開すると巨大になるエントリを 1 つ置く。
+
+    ZIP は同じ文字の並びをほとんど無に圧縮するので、数百 KB の書庫が展開すると
+    128 MiB になる。利用者は ZIP をどこからでも手に入れるので、こうした書庫が
+    そのまま画面へ渡ってくる。書き込みも小分けにして、テスト自身は中身を持たない。
+    """
+    store = load_store()
+    with zipfile.ZipFile(archive_path) as archive:
+        kept = [
+            (item.filename, archive.read(item.filename))
+            for item in archive.infolist()
+            if item.filename not in {entry, store.MANIFEST_ENTRY}
+        ]
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in kept:
+            archive.writestr(name, data)
+        if manifest is not None:
+            archive.writestr(store.MANIFEST_ENTRY, manifest)
+        info = zipfile.ZipInfo(entry)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        with archive.open(info, "w", force_zip64=True) as writer:
+            writer.write(prefix)
+            for _ in range(BOMB_MIB):
+                writer.write(BOMB_CHUNK)
+            writer.write(suffix)
+
+
+@contextlib.contextmanager
+def peak_allocation():
+    """その間に確保された最大量（バイト）を測る。
+
+    「拒んだ」だけでは、いったん全部展開してから捨てた実装と区別が付かない。
+    展開してしまえば、その一瞬で数百 MiB を掴む。拒むかどうかは申告された
+    大きさで決まるべきで、中身を持ってから決めるのでは遅い。
+    """
+    measured: list[int] = []
+    tracemalloc.start()
+    tracemalloc.reset_peak()
+    try:
+        yield measured
+    finally:
+        measured.append(tracemalloc.get_traced_memory()[1])
+        tracemalloc.stop()
 
 
 class DotPathExclusionTest(unittest.TestCase):
@@ -764,6 +903,222 @@ class TamperedManifestTest(ArchiveFixture):
         self.assertIsNotNone(ref, "壊れた manifest を捨てた後に記録し直せていない")
         self.assertEqual(self.edited_hash, ref.hash)
         self.assertEqual(self.edited, self.store.read_original(self.archive, ref))
+
+
+class EditedArchiveFixture(ArchiveFixture):
+    """1 回切り抜いた本を用意する。加工前と加工後のハッシュを両方持つ"""
+
+    def setUp(self):
+        super().setUp()
+        self.store = load_store()
+        self.source = read_entry(self.archive, "page-3.jpg")
+        result = apply_to_archive(
+            self.archive, "page-3.jpg", CoverTransform(crop=CROP), make_first=True
+        )
+        self.edited = read_entry(self.archive, result.name)
+        self.source_hash = self.store.content_hash(self.source)
+        self.edited_hash = self.store.content_hash(self.edited)
+        self.original_entry = stored_originals(self.archive)[0]
+
+        # 書き換える前は引ける。ここが引けないと、以降の検証が「防御が効いた」
+        # のか「元々引けなかった」のか区別できない
+        self.assertIsNotNone(self.store.find_original(self.archive, self.edited))
+
+    def record(self, digest: str, entry: str) -> bytes:
+        """加工後の 1 枚が、その参照先から来たことにする manifest"""
+        return manifest_bytes(
+            {
+                "version": 1,
+                "originals": {digest: entry},
+                "derived": {
+                    self.edited_hash: {"source": digest, "operations": []},
+                },
+            }
+        )
+
+
+class VerifiedOriginalBytesTest(EditedArchiveFixture):
+    """記録されたハッシュと中身が食い違う元画像は読み出さない。
+
+    manifest は ZIP の中にあり、本を配る側が自由に書き換えられる。参照先だけを
+    元画像の置き場の別のエントリへ向ければ、利用者が一度も見ていない絵が
+    「加工前の画像」として画面に出る。さらに from_original を立てた確定は、
+    その見ていない画素へ切り抜きを当てて本文を上書きする。元は残らない。
+
+    紐づけは中身のハッシュで決まると謳っている以上、読み出したバイト列が
+    その値になることは、引く側が確かめないと誰も確かめない。
+    """
+
+    def test_refuses_bytes_that_do_not_match_the_recorded_hash(self):
+        # Arrange - 元画像の置き場に別の絵を置き、記録の参照先だけをそちらへ向ける。
+        # 寸法を変えておくと、取り違えたときに何が返ったのかが見える
+        decoy = page_bytes("yellow", (320, 480))
+        decoy_entry = f"{self.store.ORIGINALS_PREFIX}decoy.jpg"
+        add_entry(self.archive, decoy_entry, decoy)
+        replace_manifest(self.archive, self.record(self.source_hash, decoy_entry))
+
+        # Arrange - 食い違いが本当に起きている。同じ中身なら検証しても意味がない
+        self.assertNotEqual(self.source_hash, self.store.content_hash(decoy))
+
+        # Act - 参照そのものは引ける。置き場の中を指しているので形の検査は通る
+        ref = self.store.find_original(self.archive, self.edited)
+        self.assertIsNotNone(ref, "参照が引けない。以降の検証が意味を失う")
+        self.assertEqual(self.source_hash, ref.hash)
+
+        # Assert - 記録と食い違う中身は返さない
+        with self.assertRaises(
+            self.store.OriginalStoreError,
+            msg=f"{image_size(decoy)} の別の絵を元画像として返している",
+        ):
+            self.store.read_original(self.archive, ref)
+
+    def test_still_reads_the_original_that_matches_its_record(self):
+        # Act / Assert - 食い違っていなければ、これまでどおり読める。
+        # 「常に拒む」で前のテストを通されないための対照
+        ref = self.store.find_original(self.archive, self.edited)
+        self.assertEqual(self.source, self.store.read_original(self.archive, ref))
+
+
+class OversizedMemberTest(EditedArchiveFixture):
+    """展開すると巨大になるエントリを、展開せずに拒む。
+
+    サムネイル画面は開いただけで manifest を読み、元画像を展開する。数百 KB の
+    ZIP が展開で 128 MiB になる書庫を渡されると、開いた瞬間にその場で確保する。
+    申告された大きさは読む前に分かるので、読む前に決められる。
+    """
+
+    def test_ignores_a_manifest_too_large_to_be_real(self):
+        # Arrange（対照）- 同じ形の manifest でも、まっとうな大きさなら読める。
+        # これが読めないと、以降の「引けない」が大きさのせいだと言えない
+        entry = self.original_entry
+        document = {
+            "version": 1,
+            "originals": {self.source_hash: entry},
+            "derived": {
+                self.edited_hash: {"source": self.source_hash, "operations": []}
+            },
+            "padding": "a" * 1024,
+        }
+        replace_manifest(self.archive, manifest_bytes(document))
+        self.assertIsNotNone(
+            self.store.find_original(self.archive, self.edited),
+            "余分な鍵を足しただけで引けなくなっている。対照として成立しない",
+        )
+
+        # Arrange - 同じ JSON のまま、余白だけを 128 MiB に膨らませる。
+        # 壊れた JSON ではないので、読んでしまえばそのまま解釈できてしまう
+        head = (
+            f'{{"version": 1, "originals": {{"{self.source_hash}": "{entry}"}}, '
+            f'"derived": {{"{self.edited_hash}": '
+            '{"source": "' + self.source_hash + '", "operations": []}}, '
+            '"padding": "'
+        ).encode()
+        tail = b'"}\n'
+        repack_with_a_bomb(
+            self.archive, self.store.MANIFEST_ENTRY, prefix=head, suffix=tail
+        )
+
+        # Arrange - 仕掛けが本物であること。小さな ZIP に巨大な中身が入っている
+        declared = declared_size(self.archive, self.store.MANIFEST_ENTRY)
+        self.assertGreater(declared, MANIFEST_SIZE_LIMIT, "上限を超えていない")
+        self.assertLess(
+            self.archive.stat().st_size,
+            5 * 1024 * 1024,
+            "書庫自体が大きい。小さな書庫が展開で膨らむ形になっていない",
+        )
+
+        # Act
+        with peak_allocation() as peak:
+            found = self.store.find_original(self.archive, self.edited)
+
+        # Assert - 記録が無いものとして扱う。読めない manifest と同じ扱いで、
+        # 加工そのものは止めない
+        self.assertIsNone(found, f"{declared} バイトの manifest を展開して読んでいる")
+        self.assertLess(
+            peak[0],
+            MEMORY_ALLOWANCE,
+            f"読まずに拒むはずが {peak[0] // (1024 * 1024)} MiB 確保している",
+        )
+
+    def test_refuses_an_original_too_large_to_be_real(self):
+        # Arrange（対照）- 手で組み立てた記録でも、まっとうな大きさなら読める。
+        # これが読めないと、以降の拒否が大きさのせいだと言えない
+        small = page_bytes("yellow", (320, 480))
+        small_hash = self.store.content_hash(small)
+        small_entry = f"{self.store.ORIGINALS_PREFIX}{small_hash}.jpg"
+        add_entry(self.archive, small_entry, small)
+        replace_manifest(self.archive, self.record(small_hash, small_entry))
+        ref = self.store.find_original(self.archive, self.edited)
+        self.assertIsNotNone(ref, "対照として成立しない。記録が引けていない")
+        self.assertEqual(small, self.store.read_original(self.archive, ref))
+
+        # Arrange - 同じ記録の参照先を、展開すると 128 MiB になるエントリへ向ける。
+        # 記録するハッシュはその中身そのものの値なので、中身との食い違いでは弾けない
+        digest = bomb_digest()
+        entry = f"{self.store.ORIGINALS_PREFIX}{digest}.jpg"
+        repack_with_a_bomb(self.archive, entry, manifest=self.record(digest, entry))
+        ref = self.store.find_original(self.archive, self.edited)
+        self.assertIsNotNone(ref, "参照が引けない。以降の検証が意味を失う")
+
+        # Arrange - 仕掛けが本物であること
+        declared = declared_size(self.archive, entry)
+        self.assertGreater(declared, ORIGINAL_SIZE_LIMIT, "上限を超えていない")
+        self.assertLess(
+            self.archive.stat().st_size,
+            5 * 1024 * 1024,
+            "書庫自体が大きい。小さな書庫が展開で膨らむ形になっていない",
+        )
+
+        # Act / Assert - 展開せずに引けないと答える
+        with peak_allocation() as peak:
+            with self.assertRaises(
+                self.store.OriginalStoreError,
+                msg=f"{declared} バイトの元画像を展開して返している",
+            ):
+                self.store.read_original(self.archive, ref)
+        self.assertLess(
+            peak[0],
+            MEMORY_ALLOWANCE,
+            f"読まずに拒むはずが {peak[0] // (1024 * 1024)} MiB 確保している",
+        )
+
+    def test_refuses_an_original_that_lies_about_its_size(self):
+        # Arrange - 展開すると 128 MiB になるエントリを置き、記録をそこへ向ける
+        digest = bomb_digest()
+        entry = f"{self.store.ORIGINALS_PREFIX}{digest}.jpg"
+        repack_with_a_bomb(self.archive, entry, manifest=self.record(digest, entry))
+        ref = self.store.find_original(self.archive, self.edited)
+        self.assertIsNotNone(ref, "参照が引けない。以降の検証が意味を失う")
+
+        # Arrange - 申告だけを 1000 バイトに書き換える。上限の判定を申告に
+        # 委ねている限り、ここを小さいと言い張るだけで検査を素通りできる
+        lie_about_size(self.archive, entry, 1000)
+
+        # Arrange - 仕掛けが本物であること。申告は上限の内側なのに、
+        # 書庫は小さく、中身は 128 MiB ある
+        self.assertLess(
+            declared_size(self.archive, entry),
+            ORIGINAL_SIZE_LIMIT,
+            "申告が上限を超えている。申告を見るだけで弾けてしまう",
+        )
+        self.assertLess(
+            self.archive.stat().st_size,
+            5 * 1024 * 1024,
+            "書庫自体が大きい。小さな書庫が展開で膨らむ形になっていない",
+        )
+
+        # Act / Assert - 申告ではなく、読みながら量で決める
+        with peak_allocation() as peak:
+            with self.assertRaises(
+                self.store.OriginalStoreError,
+                msg="申告を信じて 128 MiB の元画像を返している",
+            ):
+                self.store.read_original(self.archive, ref)
+        self.assertLess(
+            peak[0],
+            MEMORY_ALLOWANCE,
+            f"読む量を抑えられず {peak[0] // (1024 * 1024)} MiB 確保している",
+        )
 
 
 if __name__ == "__main__":

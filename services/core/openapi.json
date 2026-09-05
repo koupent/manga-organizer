@@ -535,10 +535,64 @@
         }
       }
     },
+    "/api/original": {
+      "get": {
+        "summary": "Original",
+        "description": "いま見ている 1 枚の、加工前の画像そのものを返す。\n\n求めるのは加工後のページ名だけで、元画像が ZIP のどのエントリに\n入っているかは受け取らない。エントリ名を外から取ると、書き換えられた\nmanifest 経由でアーカイブ内の任意のエントリを読ませる道ができる。\n\nバイト列を /api/cover と分けているのは、画像が JSON に載らないうえ、\n/api/cover は画面を描き直すたびに引かれる軽い経路であってほしいため。",
+        "operationId": "original_api_original_get",
+        "parameters": [
+          {
+            "name": "archive",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Archive"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cover": {
       "get": {
         "summary": "Cover",
-        "description": "サムネイルにする候補 1 枚の状態を返す。name を省くと先頭ページ。\n\nviewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が\n見えない。UI で加工を促せるよう、見開きかどうかを添える。\n\n寸法と見開き判定をここで返すのは、UI が切り抜き枠を元画像の画素へ\n写すのに必要だから。画面側で画像から測り直すと、判定の基準が\nサーバーと二重になり、片方だけずれても気づけない。",
+        "description": "サムネイルにする候補 1 枚の状態を返す。name を省くと先頭ページ。\n\nviewer は縦長 2:3 に中央クロップして描くため、横長だと表紙が\n見えない。UI で加工を促せるよう、見開きかどうかを添える。\n\n寸法と見開き判定をここで返すのは、UI が切り抜き枠を元画像の画素へ\n写すのに必要だから。画面側で画像から測り直すと、判定の基準が\nサーバーと二重になり、片方だけずれても気づけない。\n\n元画像の有無も同じ応答に載せる。画面は「どれだけ広い絵を出すか」と\n「枠をどこに置くか」を 1 度に決める。別の入口に分けると、2 回\n問い合わせる間に片方だけ古い値を見た状態が作れてしまう。",
         "operationId": "cover_api_cover_get",
         "parameters": [
           {
@@ -1182,6 +1236,12 @@
             "title": "Make First",
             "description": "加工した 1 枚を先頭ページ（サムネイル）へ移すかどうか",
             "default": false
+          },
+          "from_original": {
+            "type": "boolean",
+            "title": "From Original",
+            "description": "加工前の画像を対象にするかどうか。立てると crop は加工前の画像の画素で解釈される",
+            "default": false
           }
         },
         "type": "object",
@@ -1213,6 +1273,17 @@
           "target_aspect_ratio": {
             "type": "number",
             "title": "Target Aspect Ratio"
+          },
+          "original": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OriginalView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "加工前の画像。一度も加工していなければ null"
           }
         },
         "type": "object",
@@ -1221,10 +1292,11 @@
           "width",
           "height",
           "is_spread",
-          "target_aspect_ratio"
+          "target_aspect_ratio",
+          "original"
         ],
         "title": "CoverView",
-        "description": "表紙の状態"
+        "description": "表紙の状態。\n\n寸法と見開き判定は「いま保存されている 1 枚」を指す。original は、その\n1 枚が加工の結果なら加工前の姿を添える。画面は加工前を対象にして枠を\n置き直すので、両方を 1 回の問い合わせで受け取る必要がある。"
       },
       "DroppedFile": {
         "properties": {
@@ -1490,6 +1562,25 @@
         "title": "LibraryEntry",
         "description": "タイトルと著者の対応"
       },
+      "OperationView": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "OperationView",
+        "description": "元画像に施した加工 1 つ分。params の形は kind ごとに決まる"
+      },
       "OrganizeRequest": {
         "properties": {
           "archives": {
@@ -1546,6 +1637,33 @@
         ],
         "title": "OrganizeRequest",
         "description": "アーカイブ整理の依頼"
+      },
+      "OriginalView": {
+        "properties": {
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/OperationView"
+            },
+            "type": "array",
+            "title": "Operations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "width",
+          "height",
+          "operations"
+        ],
+        "title": "OriginalView",
+        "description": "いま見ている 1 枚の、加工前の姿。\n\nZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた\nmanifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。\n画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。"
       },
       "PageList": {
         "properties": {
