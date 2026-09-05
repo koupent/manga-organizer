@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
 import {
   derivedRecordsOf,
   pageEntriesOf,
@@ -134,6 +134,56 @@ async function splitFraction(page: Page, index: number): Promise<number> {
   return (handle.x + handle.width / 2 - image.x) / image.width;
 }
 
+/**
+ * 名前を運びうる属性。読み上げ・吹き出し・画面のどれかに現れる。
+ *
+ * `src` と `srcset` は入れない。画像の URL には ``name=003.png`` が要る
+ * （サイドカーがページを名前で引くため）が、これは画面にも読み上げにも
+ * 現れない。ここに入れると、直しようのない失敗を出し続けることになる。
+ * URL に名前が載っていることは、別途つぶすべき残りの経路として扱う。
+ *
+ * `class` と `style` も入れない。読み上げられないうえ、寸法の px 値が
+ * 3 桁の連番とたまたま重なって、名前が漏れていないのに落ちる。
+ */
+const NAMED_ATTRIBUTES = [
+  "alt",
+  "title",
+  "aria-label",
+  "aria-description",
+  "aria-placeholder",
+  "aria-valuetext",
+  "placeholder",
+  "value",
+];
+
+/**
+ * カード 1 枚が持っている「読める文字」を全部集める。
+ *
+ * textContent だけを見ると、alt・title・aria-label・data-* から漏れた名前を
+ * 見逃す。どれも読み上げか吹き出しで利用者に届くので、画面に書いてあるのと
+ * 変わらない。data-* をまとめて拾うのは、そこへ名前を置いて CSS で
+ * 出す実装（content: attr(data-name)）も同じ漏れ方をするため。
+ */
+async function readableStringsOf(card: Locator): Promise<string[]> {
+  return card.evaluate((root, named) => {
+    const found: string[] = [];
+    for (const node of [root, ...root.querySelectorAll("*")]) {
+      for (const attribute of Array.from(node.attributes)) {
+        if (!named.includes(attribute.name) && !attribute.name.startsWith("data-")) {
+          continue;
+        }
+        found.push(`${attribute.name}=${attribute.value}`);
+      }
+      for (const child of Array.from(node.childNodes)) {
+        if (child.nodeType !== Node.TEXT_NODE) continue;
+        const text = (child.nodeValue ?? "").trim();
+        if (text) found.push(text);
+      }
+    }
+    return found;
+  }, NAMED_ATTRIBUTES);
+}
+
 /** いまの内容で確定し、書き込みが終わるまで待つ */
 async function confirmSplit(page: Page) {
   await page.getByTestId("split-confirm").click();
@@ -202,6 +252,13 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     await page.context().close();
   });
 
+  /**
+   * 見える文字だけでなく、読み上げと吹き出しまで見る。
+   *
+   * textContent しか見ない検証は、alt・title・aria-label・data-* へ名前を
+   * 置いた実装を素通しする。どれも利用者に届く経路で、届いた時点でこの機能の
+   * 約束（元画像と割った半分の区別を見せない）は破れている。
+   */
   test("カードにファイル名は出ない。畳んだ行も畳まない行も同じ", async ({
     browser,
   }) => {
@@ -226,6 +283,34 @@ test.describe("ページ分割: 割った本を開き直す", () => {
       // ような通し番号なので、"003" とは重ならない
       const stem = name.replace(/\.[^.]+$/, "");
       expect(text, `カードに ${stem} が出ている`).not.toContain(stem);
+    }
+
+    // Assert - 見える文字だけでは足りない。alt・title・aria-label・data-* に
+    // 名前が入っていれば、読み上げにも吹き出しにも出る。利用者は
+    // 「元画像」と「割った半分」があることを、そこで知ってしまう
+    for (const [index, chip] of [
+      [0, "1"],
+      [2, `3${RANGE}4`],
+    ] as const) {
+      const readable = await readableStringsOf(cardAt(page, index));
+
+      // 制御 - 集められていることを先に確かめる。1 つも拾えていない
+      // 集合なら「名前が入っていない」は何も確かめていない。番号の札は
+      // 必ず読める所にあるので、それが取れていることを目印にする
+      expect(
+        readable,
+        `${index} 番目のカードから読める文字を拾えていない`,
+      ).toContain(chip);
+
+      for (const value of readable) {
+        for (const name of entries) {
+          const stem = name.replace(/\.[^.]+$/, "");
+          expect(value, `${index} 番目のカードの ${value} に ${name} が入っている`)
+            .not.toContain(name);
+          expect(value, `${index} 番目のカードの ${value} に ${stem} が入っている`)
+            .not.toContain(stem);
+        }
+      }
     }
 
     await page.context().close();
