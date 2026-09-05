@@ -75,6 +75,7 @@ import hashlib
 import io
 import json
 import sys
+import threading
 import unittest
 import zipfile
 from pathlib import Path
@@ -172,6 +173,30 @@ def image_size(data: bytes) -> tuple[int, int]:
     """画像の寸法"""
     with Image.open(io.BytesIO(data)) as image:
         return image.size
+
+
+def manifest_bytes(document: object) -> bytes:
+    """manifest として書き込む JSON のバイト列"""
+    return json.dumps(document).encode()
+
+
+def replace_manifest(archive_path: Path, raw: bytes) -> None:
+    """manifest だけを差し替える。
+
+    ZIP は利用者が開いて書き換えられる。手を入れた ZIP を読み込んだときの
+    ふるまいを、実際に書き換えて確かめる。他のエントリは触らない。
+    """
+    manifest = load_store().MANIFEST_ENTRY
+    with zipfile.ZipFile(archive_path) as archive:
+        kept = [
+            (item, archive.read(item.filename))
+            for item in archive.infolist()
+            if item.filename != manifest
+        ]
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for item, data in kept:
+            archive.writestr(item, data)
+        archive.writestr(manifest, raw)
 
 
 class DotPathExclusionTest(unittest.TestCase):
@@ -565,6 +590,180 @@ class DuplicateOriginalTest(unittest.TestCase):
             tuple(refs["b.jpg"].operations[-1].params["box"]),
             "2 枚分の加工が別々に記録されていない",
         )
+
+
+class TamperedManifestTest(ArchiveFixture):
+    """書き換えられた manifest を読んでも、危ない引き方をしない。
+
+    ZIP は利用者が開いて書き換えられるので、manifest が期待した形である保証は
+    ない。崩れた記録を信じると、加工のたびに読み出し側で落ちるか、あるいは
+    `read_original` に ZIP 内の任意のエントリ（`ComicInfo.xml` など）を
+    読ませてしまう。読めない記録は捨て、引けないものは引けないと答える。
+
+    注記: これは RED を先に書いたテストではない。実装（`_load_document` と
+    `_normalized` の防御）が先にあり、手で確かめた 5 通りを後から回帰テストとして
+    自動化したもの。実装を消せば落ちる形にしてある。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.store = load_store()
+        self.source = read_entry(self.archive, "page-3.jpg")
+        result = apply_to_archive(
+            self.archive, "page-3.jpg", CoverTransform(crop=CROP), make_first=True
+        )
+        self.edited = read_entry(self.archive, result.name)
+        self.source_hash = self.store.content_hash(self.source)
+        self.edited_hash = self.store.content_hash(self.edited)
+        self.original_entry = stored_originals(self.archive)[0]
+
+        # 書き換える前は引ける。ここが引けないと、以降の assertIsNone が
+        # 「防御が効いた」のか「元々引けなかった」のか区別できない
+        self.assertIsNotNone(self.store.find_original(self.archive, self.edited))
+
+    def find(self):
+        return self.store.find_original(self.archive, self.edited)
+
+    def find_within(self, seconds: float = 5.0):
+        """時間を区切って引く。返ってこないこと自体を失敗として扱う。
+
+        遡りに歯止めが無い実装は、輪になった記録で回り続ける。そのまま呼ぶと
+        テストは落ちずに止まったままになり、何が起きたのか分からない。
+        """
+        found: list[object] = []
+        failed: list[Exception] = []
+
+        def run() -> None:
+            try:
+                found.append(self.find())
+            except Exception as error:
+                failed.append(error)
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        worker.join(seconds)
+        self.assertFalse(
+            worker.is_alive(), f"{seconds} 秒で返らない。記録の輪で回り続けている"
+        )
+        if failed:
+            raise failed[0]
+        return found[0]
+
+    def test_ignores_a_manifest_that_is_not_a_mapping(self):
+        # Arrange - 配列で来る。dict として扱うと .get で落ちる
+        replace_manifest(self.archive, manifest_bytes(["originals", "derived"]))
+
+        # Act / Assert
+        self.assertIsNone(self.find())
+
+    def test_ignores_a_manifest_that_is_not_json(self):
+        # Arrange - 途中で壊れたファイル
+        replace_manifest(self.archive, b"{ \xff not json")
+
+        # Act / Assert
+        self.assertIsNone(self.find())
+
+    def test_ignores_sections_that_are_not_mappings(self):
+        # Arrange - originals が配列、derived が文字列
+        replace_manifest(
+            self.archive,
+            manifest_bytes(
+                {
+                    "version": 1,
+                    "originals": [self.original_entry],
+                    "derived": "壊れている",
+                }
+            ),
+        )
+
+        # Act / Assert
+        self.assertIsNone(self.find())
+
+    def test_ignores_a_record_whose_source_is_not_a_string(self):
+        # Arrange - source が数値で、str() が別の記録の鍵とぶつかる。
+        # 形を確かめずに str() で受ける実装は、数値をハッシュに化けさせて
+        # 本来つながっていない元画像へ辿り着く
+        replace_manifest(
+            self.archive,
+            manifest_bytes(
+                {
+                    "version": 1,
+                    "originals": {"12345": self.original_entry},
+                    "derived": {
+                        self.edited_hash: {"source": 12345, "operations": []},
+                    },
+                }
+            ),
+        )
+
+        # Act / Assert
+        self.assertIsNone(self.find(), "文字列でない source を受け入れている")
+
+    def test_stops_when_the_records_point_at_each_other(self):
+        # Arrange - 加工後 -> 別の何か -> 加工後 と輪になっている。
+        # 遡り続ける実装はここで止まらない
+        other = "0" * 64
+        replace_manifest(
+            self.archive,
+            manifest_bytes(
+                {
+                    "version": 1,
+                    "originals": {self.source_hash: self.original_entry},
+                    "derived": {
+                        self.edited_hash: {"source": other, "operations": []},
+                        other: {"source": self.edited_hash, "operations": []},
+                    },
+                }
+            ),
+        )
+
+        # Act / Assert - 無限に回らず、引けないと答える
+        self.assertIsNone(self.find_within())
+
+    def test_ignores_an_original_that_points_outside_the_originals_folder(self):
+        # Arrange - 元画像の置き場ではなく、ZIP 内の別のエントリを指す。
+        # 素通しすると read_original が ComicInfo.xml の中身を返す
+        replace_manifest(
+            self.archive,
+            manifest_bytes(
+                {
+                    "version": 1,
+                    "originals": {self.source_hash: "ComicInfo.xml"},
+                    "derived": {
+                        self.edited_hash: {
+                            "source": self.source_hash,
+                            "operations": [],
+                        },
+                    },
+                }
+            ),
+        )
+
+        # Act
+        ref = self.find()
+
+        # Assert - 参照そのものを作らせない。作らせなければ読ませようがない
+        self.assertIsNone(ref, "元画像の置き場の外を指す記録を受け入れている")
+
+    def test_keeps_editing_possible_after_the_manifest_was_tampered(self):
+        # Arrange - 読めない manifest で加工そのものを止めると、
+        # 書き換えられたアーカイブを二度と直せなくなる
+        replace_manifest(self.archive, b"{ not json")
+        target = page_with_content(self.archive, self.edited)
+        self.assertIsNotNone(target)
+
+        # Act - もう一度加工する
+        result = apply_to_archive(
+            self.archive, target, CoverTransform(crop=(0, 0, 200, 300))
+        )
+
+        # Assert - 捨てたうえで書き直され、新しい記録は引ける
+        ref = self.store.find_original(
+            self.archive, read_entry(self.archive, result.name)
+        )
+        self.assertIsNotNone(ref, "壊れた manifest を捨てた後に記録し直せていない")
+        self.assertEqual(self.edited_hash, ref.hash)
+        self.assertEqual(self.edited, self.store.read_original(self.archive, ref))
 
 
 if __name__ == "__main__":

@@ -1,12 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, utimesSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import { coloursOf, pageEntriesOf } from "./archive";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
-
-const CORE_DIR = fileURLToPath(
-  new URL("../../../services/core", import.meta.url),
-);
 
 let sidecar: Sidecar;
 
@@ -17,47 +12,6 @@ test.beforeAll(async () => {
 test.afterAll(() => {
   sidecar?.stop();
 });
-
-/** ZIP の中身をファイル名順で読み出す */
-function entriesOf(archive: string): string[] {
-  const output = execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `import sys, zipfile; print("\\n".join(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))`,
-      archive,
-    ],
-    { cwd: CORE_DIR, encoding: "utf8" },
-  );
-  return output.trim().split("\n");
-}
-
-/** ページの中身（色）を読み出し、並べ替えが実際に効いたか確かめる */
-function coloursOf(archive: string): Record<string, string> {
-  const output = execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `
-import io, json, sys, zipfile
-from PIL import Image
-result = {}
-with zipfile.ZipFile(sys.argv[1]) as archive:
-    for name in sorted(archive.namelist()):
-        with Image.open(io.BytesIO(archive.read(name))) as image:
-            result[name] = "#%02x%02x%02x" % image.convert("RGB").getpixel((20, 20))
-print(json.dumps(result))
-`,
-      archive,
-    ],
-    { cwd: CORE_DIR, encoding: "utf8" },
-  );
-  return JSON.parse(output);
-}
 
 test.describe("ページ並べ替え", () => {
   test("サムネイルが並び、ドラッグで入れ替えて ZIP に保存できる", async ({
@@ -113,7 +67,7 @@ test.describe("ページ並べ替え", () => {
     );
 
     // Assert - ZIP が実際に書き換わっている
-    expect(entriesOf(archive)).toEqual(["001.jpg", "002.jpg", "003.jpg"]);
+    expect(pageEntriesOf(archive)).toEqual(["001.jpg", "002.jpg", "003.jpg"]);
     const after = coloursOf(archive);
     expect(after["001.jpg"]).toBe(before["002.jpg"]);
     expect(after["002.jpg"]).toBe(before["003.jpg"]);
@@ -413,7 +367,7 @@ test.describe("ページ並べ替えの対象選択", () => {
     );
 
     // Assert - ZIP は連番のまま、中身が入れ替わっている
-    expect(entriesOf(archive)).toEqual(["001.jpg", "002.jpg", "003.jpg"]);
+    expect(pageEntriesOf(archive)).toEqual(["001.jpg", "002.jpg", "003.jpg"]);
     const after = coloursOf(archive);
     expect(after["001.jpg"]).toBe(before["002.jpg"]);
     expect(after["002.jpg"]).toBe(before["003.jpg"]);

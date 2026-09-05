@@ -1,13 +1,14 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import {
+  VIEWER_CONTRACT_IMPORT,
+  coloursOf,
+  pageEntriesOf,
+  runPython,
+  storedOriginalsOf,
+} from "./archive";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
-
-const CORE_DIR = fileURLToPath(
-  new URL("../../../services/core", import.meta.url),
-);
 
 let sidecar: Sidecar;
 test.beforeAll(async () => {
@@ -18,13 +19,8 @@ test.afterAll(() => sidecar?.stop());
 /** 表紙が見開き（左右で色が違う）の ZIP を作る */
 function writeSpreadArchive(workDir: string, name: string): string {
   const target = `${workDir}/${name}`;
-  execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `
+  runPython(
+    `
 import io, sys, zipfile
 from PIL import Image
 target = sys.argv[1]
@@ -38,9 +34,7 @@ with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
     archive.writestr("001.jpg", buffer.getvalue())
     archive.writestr("002.jpg", page.getvalue())
 `,
-      target,
-    ],
-    { cwd: CORE_DIR },
+    target,
   );
   return target;
 }
@@ -55,13 +49,8 @@ with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
  */
 function writeNoisyArchive(workDir: string, name: string): string {
   const target = `${workDir}/${name}`;
-  execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `
+  runPython(
+    `
 import io, random, sys, zipfile
 from PIL import Image
 rnd = random.Random(7)
@@ -77,9 +66,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     archive.writestr("001.jpg", buffer.getvalue())
     archive.writestr("002.jpg", page.getvalue())
 `,
-      target,
-    ],
-    { cwd: CORE_DIR },
+    target,
   );
   return target;
 }
@@ -233,78 +220,37 @@ test.describe("サムネイル作成", () => {
     );
 
     // Assert - 残ったのは右半分（青）で、他ページは無変更
-    const inspected = execFileSync(
-      "uv",
-      [
-        "run",
-        "python",
-        "-c",
-        `
+    const inspected = runPython(
+      `
 import io, json, sys, zipfile
 from PIL import Image
+${VIEWER_CONTRACT_IMPORT}
 with zipfile.ZipFile(sys.argv[1]) as archive:
-    names = archive.namelist()
+    pages = sorted(n for n in archive.namelist() if is_viewer_page(n))
     with Image.open(io.BytesIO(archive.read("001.jpg"))) as opened:
         cover = opened.convert("RGB")
         size = cover.size
         red, green, blue = cover.getpixel((cover.width // 4, cover.height // 4))
     with Image.open(io.BytesIO(archive.read("002.jpg"))) as other:
         other_size = other.size
-print(json.dumps({"names": names, "size": size,
+print(json.dumps({"pages": pages, "size": size,
                   "blue_wins": blue > red, "other": other_size}))
 `,
-        archive,
-      ],
-      { cwd: CORE_DIR, encoding: "utf8" },
+      archive,
     );
     const result = JSON.parse(inspected);
-    expect(result.names).toEqual(["001.jpg", "002.jpg"]);
+    expect(result.pages).toEqual(["001.jpg", "002.jpg"]);
     expect(result.size).toEqual([800, 1200]);
     expect(result.blue_wins).toBeTruthy();
     expect(result.other).toEqual([800, 1200]);
+
+    // Assert - ページ以外として同梱された元画像と記録（#66）も残っている。
+    // ページだけを見ていると、同梱そのものが失われても気づけない
+    const stored = storedOriginalsOf(archive);
+    expect(stored.manifest).toBeTruthy();
+    expect(stored.originals).toHaveLength(1);
   });
 });
-
-/** ZIP の中身をファイル名順で読み出す（page-reorder.spec.ts と同じ手） */
-function entriesOf(archive: string): string[] {
-  const output = execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `import sys, zipfile; print("\\n".join(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))`,
-      archive,
-    ],
-    { cwd: CORE_DIR, encoding: "utf8" },
-  );
-  return output.trim().split("\n");
-}
-
-/** ページの中身（色）を読み出し、加工が実際に効いたか確かめる */
-function coloursOf(archive: string): Record<string, string> {
-  const output = execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `
-import io, json, sys, zipfile
-from PIL import Image
-result = {}
-with zipfile.ZipFile(sys.argv[1]) as archive:
-    for name in sorted(archive.namelist()):
-        with Image.open(io.BytesIO(archive.read(name))) as image:
-            result[name] = "#%02x%02x%02x" % image.convert("RGB").getpixel((20, 20))
-print(json.dumps(result))
-`,
-      archive,
-    ],
-    { cwd: CORE_DIR, encoding: "utf8" },
-  );
-  return JSON.parse(output);
-}
 
 /** 検証用に塗り分ける色。加工で再圧縮されるので、名前で見分ける */
 const PALETTE: Record<string, [number, number, number]> = {
@@ -335,10 +281,10 @@ function pageColours(archive: string): string[] {
     .map((name) => nearestColour(colours[name]));
 }
 
-/** ZIP の指紋。ページ名・寸法・中身のハッシュを並べる */
+/** ZIP の指紋。エントリ名・寸法・中身のハッシュを並べる */
 type ArchiveState = {
   name: string;
-  size: [number, number];
+  size: [number, number] | null;
   digest: string;
 }[];
 
@@ -346,31 +292,32 @@ type ArchiveState = {
  * ZIP が書き換えられたかどうかを中身から見る。
  *
  * 名前と寸法だけでは、同じ寸法で保存し直された書き換えを見逃す。
- * ページのバイト列そのものをハッシュして、1 バイトの違いも捉える。
+ * バイト列そのものをハッシュして、1 バイトの違いも捉える。
+ *
+ * ハッシュはページ以外（#66 の元画像や manifest）も含めた全エントリで取る。
+ * ページだけに絞ると、確定前に manifest を書いてしまう作りを見逃す。
+ * 寸法は画像にしか無いので、ページ以外は null にする。ページでない
+ * manifest.json を Image.open すると、そこで落ちて比較まで届かない。
  */
 function archiveState(archive: string): ArchiveState {
-  const output = execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `
+  const output = runPython(
+    `
 import hashlib, io, json, sys, zipfile
 from PIL import Image
+${VIEWER_CONTRACT_IMPORT}
 result = []
 with zipfile.ZipFile(sys.argv[1]) as archive:
     for name in sorted(archive.namelist()):
         data = archive.read(name)
-        with Image.open(io.BytesIO(data)) as image:
-            size = list(image.size)
+        size = None
+        if is_viewer_page(name):
+            with Image.open(io.BytesIO(data)) as image:
+                size = list(image.size)
         result.append({"name": name, "size": size,
                        "digest": hashlib.sha256(data).hexdigest()[:16]})
 print(json.dumps(result))
 `,
-      archive,
-    ],
-    { cwd: CORE_DIR, encoding: "utf8" },
+    archive,
   );
   return JSON.parse(output);
 }
@@ -386,17 +333,13 @@ function firstPageProfile(archive: string): {
   size: [number, number];
   corners: string[];
 } {
-  const output = execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `
+  const output = runPython(
+    `
 import io, json, sys, zipfile
 from PIL import Image
+${VIEWER_CONTRACT_IMPORT}
 with zipfile.ZipFile(sys.argv[1]) as archive:
-    name = sorted(archive.namelist())[0]
+    name = sorted(name for name in archive.namelist() if is_viewer_page(name))[0]
     with Image.open(io.BytesIO(archive.read(name))) as opened:
         image = opened.convert("RGB")
         width, height = image.size
@@ -405,9 +348,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
         corners = ["#%02x%02x%02x" % image.getpixel(spot) for spot in spots]
 print(json.dumps({"name": name, "size": [width, height], "corners": corners}))
 `,
-      archive,
-    ],
-    { cwd: CORE_DIR, encoding: "utf8" },
+    archive,
   );
   const parsed = JSON.parse(output);
   return { ...parsed, corners: parsed.corners.map(nearestColour) };
@@ -423,18 +364,14 @@ function firstPageDiff(
   left: string,
   right: string,
 ): { sizes: [number, number][]; mae: number | null } {
-  const output = execFileSync(
-    "uv",
-    [
-      "run",
-      "python",
-      "-c",
-      `
+  const output = runPython(
+    `
 import io, json, sys, zipfile
 from PIL import Image, ImageChops
+${VIEWER_CONTRACT_IMPORT}
 def first(path):
     with zipfile.ZipFile(path) as archive:
-        name = sorted(archive.namelist())[0]
+        name = sorted(name for name in archive.namelist() if is_viewer_page(name))[0]
         with Image.open(io.BytesIO(archive.read(name))) as image:
             return image.convert("RGB")
 left = first(sys.argv[1])
@@ -446,10 +383,8 @@ if left.size == right.size:
     out["mae"] = total / (left.size[0] * left.size[1] * 3)
 print(json.dumps(out))
 `,
-      left,
-      right,
-    ],
-    { cwd: CORE_DIR, encoding: "utf8" },
+    left,
+    right,
   );
   return JSON.parse(output);
 }
@@ -839,13 +774,8 @@ test.describe("サムネイル作成の対象選択と加工", () => {
    */
   function writeSizedArchive(name: string, prefix = "page"): string {
     const target = `${sidecar.workDir}/${name}`;
-    execFileSync(
-      "uv",
-      [
-        "run",
-        "python",
-        "-c",
-        `
+    runPython(
+      `
 import io, sys, zipfile
 from PIL import Image
 prefix = sys.argv[2]
@@ -858,10 +788,8 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
         Image.new("RGB", size, color).save(buffer, "JPEG", quality=90)
         archive.writestr(f"{prefix}-{suffix}.jpg", buffer.getvalue())
 `,
-        target,
-        prefix,
-      ],
-      { cwd: CORE_DIR },
+      target,
+      prefix,
     );
     return target;
   }
@@ -1038,10 +966,16 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     );
 
     // Assert - 選んだ絵が先頭に来て、ページ数は変わらない
-    const entries = entriesOf(archive);
-    expect(entries).toHaveLength(3);
-    expect(entries).toEqual(["001.jpg", "002.jpg", "003.jpg"]);
+    const pages = pageEntriesOf(archive);
+    expect(pages).toHaveLength(3);
+    expect(pages).toEqual(["001.jpg", "002.jpg", "003.jpg"]);
     expect(pageColours(archive)).toEqual(["green", "red", "blue"]);
+
+    // Assert - 加工前の元画像と記録（#66）はページ以外として残る。
+    // ページだけを見ていると、同梱そのものが失われても気づけない
+    const stored = storedOriginalsOf(archive);
+    expect(stored.manifest).toBeTruthy();
+    expect(stored.originals).toHaveLength(1);
   });
 
   test("別のファイルを選び直すと加工の状態が持ち越されない", async ({
