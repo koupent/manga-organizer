@@ -16,7 +16,7 @@ import time
 import zipfile
 import zlib
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -41,6 +41,11 @@ TEMP_SUFFIX = ".tmp"
 # Zip64 拡張情報はオフセットを含み、書き直した ZIP では無効になる
 _ZIP64_EXTRA_ID = 0x0001
 _EXTRA_HEADER_STRUCT = struct.Struct("<HH")
+
+# 進捗の受け手。ページを 1 枚書き終えるたびに (いま何枚目, 全部で何枚) で呼ぶ。
+# 別名にしておくのは、同じ形の引数が並び替え・分割・サイドカー API に散って
+# いるため。片方だけ形を変えても気づけない
+ProgressCallback = Callable[[int, int], None]
 
 
 class PageReorderError(RuntimeError):
@@ -237,6 +242,11 @@ def _written_content(
     return written
 
 
+def _stamp(info: zipfile.ZipInfo) -> tuple[int, int]:
+    """中身を読み直さずに引ける、そのエントリの指紋（大きさと CRC-32）"""
+    return (info.file_size, info.CRC)
+
+
 def _required_directories(
     source: zipfile.ZipFile, consumed: frozenset[str]
 ) -> set[str]:
@@ -294,7 +304,7 @@ class ZipPageEditor:
     def apply_order(
         self,
         ordered_names,
-        progress=None,
+        progress: ProgressCallback | None = None,
         replacements: Mapping[str, bytes] | None = None,
         extra_entries: Mapping[str, bytes] | None = None,
     ) -> ReorderResult:
@@ -327,7 +337,7 @@ class ZipPageEditor:
     def apply_pages(
         self,
         outputs: Iterable[OutputPage],
-        progress=None,
+        progress: ProgressCallback | None = None,
         extra_entries: Mapping[str, bytes] | None = None,
         dropped: Sequence[str] = (),
         replacements: Mapping[str, bytes] | None = None,
@@ -383,6 +393,7 @@ class ZipPageEditor:
                     temp_path, pages, names, progress, replaced, extras
                 )
                 self._verify_written(temp_path, names, removed)
+                self._verify_carried_content(temp_path, pages, names, replaced)
                 self._verify_replacements(temp_path, written)
                 self._verify_extra_entries(temp_path, extras)
                 os.replace(temp_path, self.zip_path)
@@ -601,6 +612,60 @@ class ZipPageEditor:
         if empty:
             raise PageReorderError(f"書き足す中身が空です: {empty}")
 
+    def _verify_carried_content(
+        self,
+        temp_path: Path,
+        outputs: tuple[OutputPage, ...],
+        names: tuple[str, ...],
+        replacements: Mapping[str, bytes],
+    ) -> None:
+        """中身を指定せず運ぶだけのページが、その出どころの中身で書けているか
+        確かめる（#58）。
+
+        _verify_written が見るのは書き上がった ZIP のページ名の集合と、ZIP
+        としての整合だけで、「どの名前にどのページの中身が入ったか」は見て
+        いない。_verify_replacements は中身を指定した出力にしか効かない。
+        落として連番を振り直す書き直しで、落とすはずのページの中身が残る
+        ページの名前に入っても、名前・整合・差し替え・余りの検査は全部通り、
+        続く os.replace で元のアーカイブは消える。利用者から見ると、消した
+        はずのページが別の番号で残り、残るはずのページが消える。ページ数も
+        名前も期待どおりなので、開いて眺めるまで気づけない。
+
+        突き合わせるのは名前ではなく位置。分割は 1 つの出どころから 2 枚を
+        出すので、名前を鍵にすると片方しか見られない。大きさと CRC-32 は
+        どちらも中央ディレクトリに入っていて、中身を読み直さずに引ける。
+        長さが同じで中身の違うページは大きさだけの照合をすり抜けるため、
+        CRC まで見る。
+        """
+        carried = [
+            (name, output.source)
+            for output, name in zip(outputs, names, strict=True)
+            # 中身を指定した出力は _verify_replacements の担当。変換が要る
+            # ページ（BMP -> PNG）は、運んだ時点でバイト列が変わるのが正しい
+            if _content_for(output, replacements) is None
+            and not needs_conversion(output.source)
+        ]
+        if not carried:
+            return
+        try:
+            with (
+                zipfile.ZipFile(self.zip_path, "r") as source,
+                zipfile.ZipFile(temp_path, "r") as written,
+            ):
+                mismatched = sorted(
+                    f"{name} <- {origin}"
+                    for name, origin in carried
+                    if _stamp(written.getinfo(name)) != _stamp(source.getinfo(origin))
+                )
+        except (OSError, KeyError, zipfile.BadZipFile) as error:
+            raise PageReorderError(
+                f"書き出した ZIP のページの中身を確認できませんでした: {error}"
+            ) from error
+        if mismatched:
+            raise PageReorderError(
+                f"運んだページの中身が出どころと一致しません: {mismatched}"
+            )
+
     def _verify_replacements(self, temp_path: Path, expected: dict[str, bytes]) -> None:
         """中身を指定して書いたページが、その中身のまま書けているか確かめる。
 
@@ -621,7 +686,7 @@ class ZipPageEditor:
         try:
             with zipfile.ZipFile(temp_path, "r") as written:
                 infos = [written.getinfo(name) for name in expected]
-            stamps = {info.filename: (info.file_size, info.CRC) for info in infos}
+            stamps = {info.filename: _stamp(info) for info in infos}
         except (OSError, KeyError, zipfile.BadZipFile) as error:
             raise PageReorderError(
                 f"書き出した ZIP の差し替えを確認できませんでした: {error}"
@@ -674,7 +739,7 @@ class ZipPageEditor:
         temp_path: Path,
         outputs: tuple[OutputPage, ...],
         names: tuple[str, ...],
-        progress=None,
+        progress: ProgressCallback | None = None,
         replacements: dict[str, bytes] | None = None,
         extras: dict[str, bytes] | None = None,
     ) -> None:

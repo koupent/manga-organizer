@@ -44,6 +44,11 @@ manga_core.page_splitter （新設。分割の幾何と畳み込みはここに�
         行ぜんぶを受け取り、split の変化から
         「割る」「位置を変える」「割る前へ戻す」を 1 回の書き直しで適用する
 
+        名前を 2 つ持つ行は、書き直す前に下の畳み込みの規則で確かめ直す。
+        行は画面から戻ってくるので、走査と確定の間にアーカイブが変われば
+        古い名前を指しうる。1 枚目だけを見て書くと、2 枚目に指名された
+        無関係なページが「落とすページ」として黙って消える
+
 manga_core.original_store
 
     @dataclass(frozen=True) Derivation
@@ -73,6 +78,13 @@ manga_core.original_store
 1 つでも欠けたら、それぞれ普通の 1 行として扱う。緩めると、たまたま同じ
 元から出た無関係な 2 枚が 1 行にまとめられ、片方を割り直したつもりで
 もう片方が消える。
+
+例外は、左右が互いに同じバイト列になった対（一色の見開きを中央で割った
+場合など）。記録の鍵は中身のハッシュなので、同じバイト列の 2 枚には記録を
+1 件しか持てず、4 と 5 は確かめようがない。隣り合う 2 枚が互いに同じ
+バイト列で、同じ元から出た同じ 1 件の split の記録に行き着くときに限り、
+その記録の x で畳む。ここを塞いだままにすると、真っ白な見開きだけが
+二度と割り位置を直せない。
 """
 
 import io
@@ -129,11 +141,15 @@ def spread_bytes(
     width: int = SPREAD_WIDTH,
     height: int = SPREAD_HEIGHT,
     stripe_x: int | None = SPLIT_X,
+    fmt: str = "PNG",
 ) -> bytes:
     """左半分を赤、右半分を青に塗り、割る位置に緑の帯を立てた見開き。
 
     PNG にするのは、JPEG だと境目の色がにじんで画素の比較が当てにならず、
     「割れたかどうか」を色で確かめられなくなるため。
+
+    fmt を変えるのは、書き込んだバイト列の形式が拡張子と食い違わないかを
+    見るときだけ。どちらも可逆なので、画素の比較は PNG と同じように使える。
     """
     image = Image.new("RGB", (width, height), RED)
     right = Image.new("RGB", (width - width // 2, height), BLUE)
@@ -141,7 +157,7 @@ def spread_bytes(
     if stripe_x is not None:
         image.paste(Image.new("RGB", (STRIPE_WIDTH, height), GREEN), (stripe_x, 0))
     buffer = io.BytesIO()
-    image.save(buffer, "PNG")
+    image.save(buffer, fmt)
     return buffer.getvalue()
 
 
@@ -583,6 +599,455 @@ class SplitsSeveralSpreadsAtOnceTest(SplitFixture):
             [SPLIT_X, None, 700],
             [row.split.x if row.split else None for row in reopened],
         )
+
+
+# 拡張子ごとに、その名前を名乗る以上こうであるべき形式。名前ではなく
+# 中身を開いて突き合わせるために使う。BMP は viewer が読めないので、
+# 書き上がったページの拡張子として現れてはいけない
+FORMAT_BY_SUFFIX = {
+    ".png": "PNG",
+    ".jpg": "JPEG",
+    ".jpeg": "JPEG",
+    ".webp": "WEBP",
+    ".gif": "GIF",
+    ".avif": "AVIF",
+}
+
+# build_four_pages が置く単ページの色。どのページが残ったかを中身で見る
+TALL_COLOURS = ("#101010", "#303030", "#404040")
+
+
+def format_of(data: bytes) -> str:
+    """バイト列そのものが名乗る画像形式。名前は一切見ない。
+
+    拡張子と中身が食い違っていても、名前を眺めるだけでは分からない。
+    中身を開いて形式を聞くことでしか、貼り違いは見つけられない。
+    """
+    with Image.open(io.BytesIO(data)) as image:
+        return image.format
+
+
+def flat_spread_bytes(colour: str = "#f0f0f0") -> bytes:
+    """一色だけの見開き。中央で割ると左右がまったく同じバイト列になる。
+
+    真っ白な章扉や左右対称の見返しは実在する。作り物の特殊な入力ではない。
+    """
+    buffer = io.BytesIO()
+    Image.new("RGB", (SPREAD_WIDTH, SPREAD_HEIGHT), colour).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def page_row(splitter, path: Path, name: str):
+    """まだ割られていない 1 ページとして、画面が送り返してくる形の行"""
+    width, height = size_of(entry_data(path, name))
+    return splitter.SplitRow(
+        names=(name,),
+        source=splitter.SOURCE_PAGE,
+        width=width,
+        height=height,
+        is_spread=is_spread(width, height),
+        split=None,
+    )
+
+
+def pair_row(splitter, names, width: int, height: int, split):
+    """割った対として、画面が送り返してくる形の行。
+
+    走査を通さずに組み立てるのが要点。画面から戻る行は、走査した時点の
+    アーカイブしか映していない。確定までに中身が変われば、こうして
+    「もう正しくない行」がそのまま届く。Stage 2 の API も行を素通しする。
+    """
+    return splitter.SplitRow(
+        names=tuple(names),
+        source=splitter.SOURCE_ORIGINAL,
+        width=width,
+        height=height,
+        is_spread=is_spread(width, height),
+        split=split,
+    )
+
+
+class RevalidatesThePairBeforeRewritingTest(SplitFixture):
+    """名前を 2 つ持つ行を、書き直す前に本物の対として確かめること。
+
+    行は画面から戻ってくる。走査と確定の間に別のタブが同じ本を書き換えれば、
+    行が指す名前は古いままになる。1 枚目だけを見て 2 枚目を確かめずに書くと、
+    2 枚目に指名された無関係なページが「落とすページ」として黙って消える。
+    apply_pages は名指しされた落としを通すので、止められるのはここだけ。
+
+    どの試験も、断ることと、同じ操作が本物の対では通ることを対にして見る。
+    断る側だけでは「何でも断る」実装が通ってしまう。
+    """
+
+    def build_split_spread(self) -> list[str]:
+        """縦・見開き・縦・縦のうち、見開きだけを割った本を用意する"""
+        self.build_four_pages()
+        self.split_row(self.archive_path, 1, SPLIT_X)
+        names = page_names(self.archive_path)
+        self.assertEqual(5, len(names), f"素材が違う: {names}")
+        return names
+
+    def build_two_split_spreads(self, path: Path) -> list[str]:
+        """大きさの違う見開きを 2 つ用意し、両方を割る。
+
+        寸法を変えるのは、どの半分がどちらの見開きから出たのかを、
+        記録ではなく画像そのものから確かめられるようにするため。
+        """
+        build_archive(
+            path,
+            {
+                "p1.png": spread_bytes(),
+                "p2.png": spread_bytes(width=1200, height=900, stripe_x=700),
+            },
+        )
+        rows = list(self.splitter.scan_rows(path))
+        self.splitter.apply_rows(
+            path,
+            [
+                replace(row, split=self.splitter.SplitPosition(x=x))
+                for row, x in zip(rows, (SPLIT_X, 700), strict=True)
+            ],
+        )
+        return page_names(path)
+
+    def test_refuses_a_pair_whose_second_page_was_never_split(self):
+        # Arrange - 対照。2 枚目に指名するのは、割った跡が無いただのページ。
+        # ここが半分だと、この試験は別の理由で断られるだけになる
+        names = self.build_split_spread()
+        self.assertEqual(
+            TALL_COLOURS[1],
+            colour_at(entry_data(self.archive_path, names[3]), 10, 10),
+            "2 枚目に指名する相手が、割った跡の無いページになっていない",
+        )
+        before = self.archive_path.read_bytes()
+        rows = [
+            page_row(self.splitter, self.archive_path, names[0]),
+            page_row(self.splitter, self.archive_path, names[1]),
+            pair_row(
+                self.splitter, (names[2], names[3]), SPREAD_WIDTH, SPREAD_HEIGHT, None
+            ),
+            page_row(self.splitter, self.archive_path, names[4]),
+        ]
+
+        # Act / Assert - 断る。通すと、割った覚えのないページが
+        # 「割る前へ戻す」の巻き添えで本から消える
+        with self.assertRaises(self.splitter.PageSplitError):
+            self.splitter.apply_rows(self.archive_path, rows)
+        self.assertEqual(
+            before, self.archive_path.read_bytes(), "断ったのに本が書き換わっている"
+        )
+
+        # Act - 同じ「割る前へ戻す」でも、走査が畳んだ本物の対なら通る
+        rows = list(self.splitter.scan_rows(self.archive_path))
+        self.assertEqual(2, len(rows[1].names), f"対として畳めていない: {rows}")
+        self.splitter.apply_rows(
+            self.archive_path,
+            [
+                replace(row, split=None) if index == 1 else row
+                for index, row in enumerate(rows)
+            ],
+        )
+
+        # Assert - 見開きが戻り、ほかのページは 1 枚も欠けていない
+        restored = page_names(self.archive_path)
+        self.assertEqual(4, len(restored))
+        self.assertEqual(
+            (SPREAD_WIDTH, SPREAD_HEIGHT),
+            size_of(entry_data(self.archive_path, restored[1])),
+        )
+        self.assertEqual(
+            list(TALL_COLOURS),
+            [
+                colour_at(entry_data(self.archive_path, restored[index]), 10, 10)
+                for index in (0, 2, 3)
+            ],
+        )
+
+    def test_refuses_a_pair_whose_halves_came_from_different_spreads(self):
+        # Arrange - 別々の見開きから出た半分を、右・左の順で隣り合わせる。
+        # 隣接も向きも合っているので、元をたどらないと見分けが付かない
+        names = self.build_two_split_spreads(self.archive_path)
+        editor = ZipPageEditor(self.archive_path)
+        editor.apply_order([names[0], names[3], names[1], names[2]])
+        editor.close()
+        names = page_names(self.archive_path)
+
+        # Arrange - 対照。1 枚目は大きい見開きの右半分、2 枚目は小さい見開きの
+        # 左半分。寸法が違うので、同じ見開きの対でないことは記録抜きで分かる
+        self.assertEqual(
+            [(SPREAD_WIDTH - SPLIT_X, SPREAD_HEIGHT), (700, 900)],
+            [size_of(entry_data(self.archive_path, name)) for name in names[:2]],
+        )
+        # 対照 - どちらも元をたどれる。断る理由が「記録が無い」ではない
+        self.assertEqual(4, len(derived_of(self.archive_path)))
+        before = self.archive_path.read_bytes()
+        rows = [
+            pair_row(self.splitter, names[:2], SPREAD_WIDTH, SPREAD_HEIGHT, None),
+            page_row(self.splitter, self.archive_path, names[2]),
+            page_row(self.splitter, self.archive_path, names[3]),
+        ]
+
+        # Act / Assert - 断る。通すと、1 枚目の見開きを戻す操作で、
+        # 別の見開きの左半分が消える
+        with self.assertRaises(self.splitter.PageSplitError):
+            self.splitter.apply_rows(self.archive_path, rows)
+        self.assertEqual(
+            before, self.archive_path.read_bytes(), "断ったのに本が書き換わっている"
+        )
+
+        # Act - 同じ操作を、同じ元から出た本物の対で行う。並べ替えた本には
+        # もう対が残っていないので、同じ手順で作り直す
+        other = self.work_dir / "other.zip"
+        self.build_two_split_spreads(other)
+        rows = list(self.splitter.scan_rows(other))
+        self.assertEqual([2, 2], [len(row.names) for row in rows])
+        self.splitter.apply_rows(other, [replace(rows[0], split=None), rows[1]])
+
+        # Assert - 戻した見開きが 1 行に、もう 1 つの対はそのまま
+        restored = page_names(other)
+        self.assertEqual(3, len(restored))
+        self.assertEqual(
+            (SPREAD_WIDTH, SPREAD_HEIGHT), size_of(entry_data(other, restored[0]))
+        )
+
+    def test_refuses_a_pair_whose_halves_are_no_longer_adjacent(self):
+        # Arrange - まず、隣り合っている本物の対なら位置を動かせることを見る
+        names = self.build_split_spread()
+        rows = list(self.splitter.scan_rows(self.archive_path))
+        self.splitter.apply_rows(
+            self.archive_path,
+            [
+                replace(row, split=self.splitter.SplitPosition(x=1000))
+                if index == 1
+                else row
+                for index, row in enumerate(rows)
+            ],
+        )
+        names = page_names(self.archive_path)
+        self.assertEqual(
+            [(1400, SPREAD_HEIGHT), (1000, SPREAD_HEIGHT)],
+            [size_of(entry_data(self.archive_path, name)) for name in names[1:3]],
+        )
+
+        # Arrange - 利用者が、後に読む方（左半分）を末尾へ動かす
+        editor = ZipPageEditor(self.archive_path)
+        editor.apply_order([names[0], names[1], names[3], names[4], names[2]])
+        editor.close()
+        names = page_names(self.archive_path)
+
+        # Arrange - 対照。動かした 2 枚は、いまも同じ見開きから出た右と左で、
+        # 記録もそろっている。断る理由が「別の元」でも「記録が無い」でもない
+        self.assertEqual(
+            [(1400, SPREAD_HEIGHT), (1000, SPREAD_HEIGHT)],
+            [
+                size_of(entry_data(self.archive_path, name))
+                for name in (names[1], names[4])
+            ],
+        )
+        self.assertEqual(2, len(derived_of(self.archive_path)))
+        # 対照 - 走査は離れた 2 枚を畳まない。この行は動かす前の画面から来た
+        self.assertEqual(
+            [1, 1, 1, 1, 1],
+            [len(row.names) for row in self.splitter.scan_rows(self.archive_path)],
+        )
+        before = self.archive_path.read_bytes()
+        rows = [
+            page_row(self.splitter, self.archive_path, names[0]),
+            pair_row(
+                self.splitter,
+                (names[1], names[4]),
+                SPREAD_WIDTH,
+                SPREAD_HEIGHT,
+                self.splitter.SplitPosition(x=1200),
+            ),
+            page_row(self.splitter, self.archive_path, names[2]),
+            page_row(self.splitter, self.archive_path, names[3]),
+        ]
+
+        # Act / Assert - 断る。通すと、利用者が意図して動かした並びが
+        # 割り直しの巻き添えで黙って元へ戻る
+        with self.assertRaises(self.splitter.PageSplitError):
+            self.splitter.apply_rows(self.archive_path, rows)
+        self.assertEqual(
+            before, self.archive_path.read_bytes(), "断ったのに本が書き換わっている"
+        )
+
+
+class IdenticalHalvesTest(SplitFixture):
+    """左右が同じバイト列になる見開きも、開き直して直せること。
+
+    一色の章扉や左右対称の見返しを中央で割ると、左右がまったく同じ
+    バイト列になる。記録の鍵は中身のハッシュなので、この 2 枚には記録を
+    1 件しか持てず、後から書いた側が前を上書きする。両方が同じ side を
+    指す記録に行き着き、右・左の順という条件が満たせない。
+
+    畳めなければ、その見開きは 2 枚のページとしてしか見えなくなり、
+    利用者は割り位置を二度と直せない。ページは残るので、壊れたようには
+    見えないぶん気づけない。
+    """
+
+    TWIN_COLOUR = "#303030"
+
+    def build_blank_spread(self) -> None:
+        """一色の見開きと、互いに同じ中身の単ページ 2 枚。
+
+        単ページを同じ中身にするのは、「隣り合う同じバイト列なら畳む」と
+        だけ緩めた実装を落とすため。割った跡の無い 2 枚は対ではない。
+        """
+        build_archive(
+            self.archive_path,
+            {
+                "p1.png": flat_spread_bytes(),
+                "p2.png": tall_bytes(self.TWIN_COLOUR),
+                "p3.png": tall_bytes(self.TWIN_COLOUR),
+            },
+        )
+
+    def test_a_centred_split_of_identical_halves_folds_and_can_be_adjusted(self):
+        # Arrange
+        self.build_blank_spread()
+        centre = SPREAD_WIDTH // 2
+
+        # Act
+        self.split_row(self.archive_path, 0, centre)
+
+        # Assert - 対照。左右が本当に同じバイト列になっている。ここが違えば、
+        # 記録が 1 件に潰れる状況そのものを作れておらず、以下は何も見ていない
+        names = page_names(self.archive_path)
+        self.assertEqual(4, len(names))
+        earlier = entry_data(self.archive_path, names[0])
+        later = entry_data(self.archive_path, names[1])
+        self.assertEqual(earlier, later, "左右が同じバイト列になっていない")
+        self.assertEqual((centre, SPREAD_HEIGHT), size_of(earlier))
+        # 記録は 1 件しか持てない。鍵が中身のハッシュである以上、同じ
+        # バイト列の 2 枚を別々に記録する場所が無い（形式は変えない）
+        self.assertEqual(1, len(derived_of(self.archive_path)))
+
+        # Act
+        rows = list(self.splitter.scan_rows(self.archive_path))
+
+        # Assert - 割った対は 1 行に畳まれ、位置も元の寸法も戻る
+        self.assertEqual(3, len(rows), f"畳まれ方が違う: {[row.names for row in rows]}")
+        pair = rows[0]
+        self.assertEqual((names[0], names[1]), pair.names)
+        self.assertEqual(self.splitter.SOURCE_ORIGINAL, pair.source)
+        self.assertEqual((SPREAD_WIDTH, SPREAD_HEIGHT), (pair.width, pair.height))
+        self.assertIsNotNone(pair.split)
+        self.assertEqual(centre, pair.split.x)
+
+        # Assert - 対照。中身が同じで隣り合うだけの 2 枚は畳まない。
+        # 割った跡の無い 2 枚を対にすると、片方を割ったときもう片方が消える
+        self.assertEqual(
+            entry_data(self.archive_path, names[2]),
+            entry_data(self.archive_path, names[3]),
+            "単ページ 2 枚が同じ中身になっていない",
+        )
+        self.assertEqual([1, 1], [len(row.names) for row in rows[1:]])
+
+        # Act - 畳めるだけでなく、動かせること
+        self.splitter.apply_rows(
+            self.archive_path,
+            [replace(pair, split=self.splitter.SplitPosition(x=1000)), *rows[1:]],
+        )
+
+        # Assert - 新しい位置で割り直され、記録も 2 件に戻る
+        moved = page_names(self.archive_path)
+        self.assertEqual(4, len(moved))
+        self.assertEqual(
+            [(SPREAD_WIDTH - 1000, SPREAD_HEIGHT), (1000, SPREAD_HEIGHT)],
+            [size_of(entry_data(self.archive_path, name)) for name in moved[:2]],
+        )
+        self.assertEqual(2, len(derived_of(self.archive_path)))
+        reopened = list(self.splitter.scan_rows(self.archive_path))
+        self.assertEqual(2, len(reopened[0].names))
+        self.assertEqual(1000, reopened[0].split.x)
+
+
+class EncodedBytesMatchTheEntryNameTest(SplitFixture):
+    """書き込んだバイト列の形式が、そのエントリの拡張子と一致すること。
+
+    中身が PNG なのに名前が .gif のファイルは、拡張子で復号器を選ぶ読み手に
+    弾かれる。suzume-viewer が読めても、利用者が本を渡した先の別の読み手や
+    サムネイル生成が読めない。中身と名前の食い違いは開くまで分からない。
+    """
+
+    # 小さめの見開き。BMP は無圧縮で、大きいと書庫が無用に膨れる
+    WIDTH = 800
+    HEIGHT = 600
+    SPLIT_AT = 500
+
+    def small_spread(self, fmt: str) -> bytes:
+        return spread_bytes(
+            width=self.WIDTH, height=self.HEIGHT, stripe_x=self.SPLIT_AT, fmt=fmt
+        )
+
+    def assert_pages_match_their_suffix(self) -> None:
+        """ページとして残った全エントリの、名前と中身の形式を突き合わせる"""
+        for name in page_names(self.archive_path):
+            suffix = Path(name).suffix.lower()
+            expected = FORMAT_BY_SUFFIX.get(suffix)
+            self.assertIsNotNone(expected, f"viewer が読めない拡張子です: {name}")
+            self.assertEqual(
+                expected,
+                format_of(entry_data(self.archive_path, name)),
+                f"{name} の中身は拡張子どおりの形式ではありません",
+            )
+
+    def test_splitting_a_gif_page_writes_bytes_that_match_the_name(self):
+        # Arrange
+        build_archive(
+            self.archive_path,
+            {"p1.gif": self.small_spread("GIF"), "p2.png": tall_bytes("#808080")},
+        )
+
+        # Act
+        self.split_row(self.archive_path, 0, self.SPLIT_AT)
+
+        # Assert - 対照。左右非対称に本当に割れている。割れていない本で
+        # 形式だけ突き合わせても、何も確かめたことにならない
+        names = page_names(self.archive_path)
+        self.assertEqual(3, len(names))
+        self.assertEqual(
+            [
+                (self.WIDTH - self.SPLIT_AT, self.HEIGHT),
+                (self.SPLIT_AT, self.HEIGHT),
+            ],
+            [size_of(entry_data(self.archive_path, name)) for name in names[:2]],
+        )
+
+        # Assert
+        self.assert_pages_match_their_suffix()
+
+    def test_restoring_a_bmp_original_writes_bytes_that_match_the_name(self):
+        # Arrange - viewer が読めない BMP は、割った時点で .png になる
+        build_archive(
+            self.archive_path,
+            {"p1.bmp": self.small_spread("BMP"), "p2.png": tall_bytes("#808080")},
+        )
+        self.split_row(self.archive_path, 0, self.SPLIT_AT)
+        self.assertEqual(
+            [".png", ".png", ".png"],
+            [Path(name).suffix for name in page_names(self.archive_path)],
+        )
+        rows = list(self.splitter.scan_rows(self.archive_path))
+        self.assertEqual(2, len(rows[0].names), f"対として畳めていない: {rows}")
+
+        # Act - 割る前へ戻す。同梱されている元画像は BMP のまま
+        self.splitter.apply_rows(
+            self.archive_path, [replace(rows[0], split=None), rows[1]]
+        )
+
+        # Assert - 対照。割る前の見開きが画素として戻っている
+        names = page_names(self.archive_path)
+        self.assertEqual(2, len(names))
+        restored = entry_data(self.archive_path, names[0])
+        self.assertEqual((self.WIDTH, self.HEIGHT), size_of(restored))
+        self.assertEqual(RED, colour_at(restored, 100, 300))
+        self.assertEqual(BLUE, colour_at(restored, self.WIDTH - 1, 300))
+
+        # Assert - 戻したページの名前は .png。中身も PNG でなければ、
+        # 拡張子で復号器を選ぶ読み手はこのページを開けない
+        self.assert_pages_match_their_suffix()
 
 
 if __name__ == "__main__":

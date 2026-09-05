@@ -37,13 +37,23 @@ from manga_core.original_store import (
 from manga_core.page_reorder import (
     OutputPage,
     PageReorderError,
+    ProgressCallback,
     ZipPageEditor,
 )
 from manga_core.viewer_contract import VIEWER_IMAGE_EXTENSIONS, output_suffix
 
-# 割った半分を書き戻す形式。cover_editor と同じ選び方にしないと、同じ本を
-# 割る経路によって拡張子が変わる
-_SAVE_FORMATS = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP"}
+# 割った半分を書き戻す形式。鍵は viewer が読める拡張子の全部で、値は Pillow が
+# その拡張子に対して名乗る形式名。ここに無い拡張子は PNG へ移すので、抜けが
+# あると中身が PNG のまま名前だけ .gif のページができ、拡張子で復号器を選ぶ
+# 読み手（別のビューアやサムネイル生成）が開けなくなる
+_SAVE_FORMATS = {
+    ".jpg": "JPEG",
+    ".jpeg": "JPEG",
+    ".png": "PNG",
+    ".webp": "WEBP",
+    ".gif": "GIF",
+    ".avif": "AVIF",
+}
 _JPEG_QUALITY = 92
 
 # 行の画素の出どころ。画面はこの区別を出さないが、割る位置をどの座標で
@@ -102,7 +112,9 @@ def split_halves(image: Image.Image, x: int) -> tuple[Image.Image, Image.Image]:
     )
 
 
-def scan_rows(archive_path: Path, progress=None) -> tuple[SplitRow, ...]:
+def scan_rows(
+    archive_path: Path, progress: ProgressCallback | None = None
+) -> tuple[SplitRow, ...]:
     """ページ順に行を組み立てる。割った対は 1 行へ畳む"""
     path = Path(archive_path)
     try:
@@ -116,12 +128,20 @@ def scan_rows(archive_path: Path, progress=None) -> tuple[SplitRow, ...]:
     return _fold_pairs(path, facts)
 
 
-def apply_rows(archive_path: Path, rows: Sequence[SplitRow], progress=None) -> None:
+def apply_rows(
+    archive_path: Path,
+    rows: Sequence[SplitRow],
+    progress: ProgressCallback | None = None,
+) -> None:
     """行ぜんぶを受け取り、split の変化を 1 回の書き直しで適用する。
 
     変わった行だけではなく全部を受け取るのは、書き直しがページの並びそのものを
     作り直すため。一部だけ渡されると、渡されなかったページを消したいのか
     書き忘れたのか区別が付かない。
+
+    名前を 2 つ持つ行は、書き直す前に畳み込みと同じ規則で確かめ直す。行は
+    画面から戻ってくるので、走査と確定の間にアーカイブが変われば古い名前を
+    指しうる。
     """
     path = Path(archive_path)
     try:
@@ -151,32 +171,51 @@ def apply_rows(archive_path: Path, rows: Sequence[SplitRow], progress=None) -> N
 
 @dataclass(frozen=True)
 class _PageFacts:
-    """1 ページを行に組む前に集めた事実"""
+    """1 ページを行に組む前に集めた事実。
+
+    digest は中身そのもののハッシュ。記録の鍵と同じ値なので、「この 2 枚は
+    同じ 1 件の記録に行き着く」かどうかをここで判じられる。走査のときに
+    一度読んだバイト列から取っておかないと、畳む側が ZIP を開き直すことに
+    なる。
+    """
 
     name: str
     width: int
     height: int
+    digest: str
     ref: OriginalRef | None
     side: str | None
     x: int | None
 
 
+def _page_facts(path: Path, name: str, data: bytes) -> _PageFacts:
+    """1 ページ分の事実を集める。
+
+    走査と、書き直す前の確かめ直しで共有する。別々に組み立てると、畳む規則と
+    確かめ直す規則が食い違い、畳めた対が書き直しで断られる（あるいはその逆）。
+    """
+    width, height = _image_size(data)
+    ref = find_original(path, data)
+    side, x = _split_marks(ref)
+    return _PageFacts(
+        name=name,
+        width=width,
+        height=height,
+        digest=content_hash(data),
+        ref=ref,
+        side=side,
+        x=x,
+    )
+
+
 def _scan_pages(
-    editor: ZipPageEditor, path: Path, progress=None
+    editor: ZipPageEditor, path: Path, progress: ProgressCallback | None = None
 ) -> tuple[_PageFacts, ...]:
     """ページを 1 枚ずつ読み、割った跡の記録まで含めて事実を集める"""
     pages = editor.pages
     facts: list[_PageFacts] = []
     for position, page in enumerate(pages, 1):
-        data = editor.read_entry(page.name)
-        width, height = _image_size(data)
-        ref = find_original(path, data)
-        side, x = _split_marks(ref)
-        facts.append(
-            _PageFacts(
-                name=page.name, width=width, height=height, ref=ref, side=side, x=x
-            )
-        )
+        facts.append(_page_facts(path, page.name, editor.read_entry(page.name)))
         if progress is not None:
             progress(position, len(pages))
     return tuple(facts)
@@ -231,21 +270,16 @@ def _folded_row(path: Path, earlier: _PageFacts, later: _PageFacts) -> SplitRow 
     右左が逆の 2 枚を畳まないのは、利用者が意図して動かした並びを、次の
     書き込みで黙って戻さないため。
     """
-    if earlier.ref is None or later.ref is None:
-        return None
-    if earlier.ref.hash != later.ref.hash:
-        return None
-    if earlier.side != _SIDE_EARLIER or later.side != _SIDE_LATER:
-        return None
-    if earlier.x is None or earlier.x != later.x:
+    pair = _split_pair(earlier, later)
+    if pair is None:
         return None
     try:
-        original = read_original(path, earlier.ref)
+        original = read_original(path, pair.ref)
     except OriginalStoreError:
         # 割る前の画像を引けないなら、位置を動かすことも戻すこともできない
         return None
     width, height = _image_size(original)
-    if not 0 < earlier.x < width:
+    if not 0 < pair.x < width:
         return None
     return SplitRow(
         names=(earlier.name, later.name),
@@ -253,8 +287,57 @@ def _folded_row(path: Path, earlier: _PageFacts, later: _PageFacts) -> SplitRow 
         width=width,
         height=height,
         is_spread=is_spread(width, height),
-        split=SplitPosition(x=earlier.x),
+        split=SplitPosition(x=pair.x),
     )
+
+
+@dataclass(frozen=True)
+class _SplitPair:
+    """同じ元を同じ位置で割った対だと確かめられた 2 枚。
+
+    確かめた結果そのもの（どの元画像を、どこで割ったか）を持つ。呼び出し側が
+    改めて片方から引き直すと、確かめた対象とずれる余地が残る。
+    """
+
+    ref: OriginalRef
+    x: int
+
+
+def _split_pair(earlier: _PageFacts, later: _PageFacts) -> _SplitPair | None:
+    """隣り合う 2 枚が同じ元を同じ位置で割った対なら、その元と位置を返す。
+
+    条件を 1 つでも緩めると、たまたま同じ元から出た無関係な 2 枚が 1 行に
+    まとめられ、片方を割り直したつもりでもう片方が消える。右左が逆の 2 枚を
+    対にしないのは、利用者が意図して入れ替えた並びを、次の書き込みで黙って
+    戻さないため。
+
+    ただ 1 つだけ緩める。左右がまったく同じバイト列になった対（一色の章扉や
+    左右対称の見返しを中央で割った場合）は、記録の鍵が中身のハッシュである
+    以上 1 件しか持てず、後から書いた側が前を上書きする。両方が同じ side を
+    指すので、右・左の順という条件は原理的に満たせない。そこで、2 枚の中身が
+    同じで、同じ元から出た同じ 1 件の split の記録に行き着くときに限り、
+    その記録の x で対とみなす。塞いだままにすると、真っ白な見開きだけが
+    二度と割り位置を直せなくなる。ページは残るので、壊れたようには見えない
+    ぶん気づけない。
+
+    記録の形は変えない。derived を 1 つのハッシュに複数件持てる形へ広げると、
+    #66 と共有している manifest の形式が変わる。
+    """
+    if earlier.ref is None or later.ref is None:
+        return None
+    if earlier.ref.hash != later.ref.hash:
+        return None
+    if earlier.x is None or earlier.x != later.x:
+        return None
+    if earlier.side is None or later.side is None:
+        return None
+    # 中身が同じ 2 枚は同じ 1 件の記録に行き着くので、side はどちらも同じ値に
+    # なる。右・左の順という条件は原理的に満たせず、見るだけ無駄になる
+    if earlier.digest != later.digest and (
+        earlier.side != _SIDE_EARLIER or later.side != _SIDE_LATER
+    ):
+        return None
+    return _SplitPair(ref=earlier.ref, x=earlier.x)
 
 
 def _plain_row(fact: _PageFacts) -> SplitRow:
@@ -286,14 +369,18 @@ def _apply_row(
     if len(row.names) == 1:
         if row.split is None:
             return _RowPlan((OutputPage(row.names[0]),), (), extras)
-        return _split_page(editor, path, row, extras)
+        return _split_page(editor, path, row.names[0], row.split, extras)
     if len(row.names) == 2:
         return _rewrite_pair(editor, path, row, extras)
     raise PageSplitError(f"行が持てるページは 1 枚か 2 枚です: {row.names}")
 
 
 def _split_page(
-    editor: ZipPageEditor, path: Path, row: SplitRow, extras: dict[str, bytes]
+    editor: ZipPageEditor,
+    path: Path,
+    name: str,
+    split: SplitPosition,
+    extras: dict[str, bytes],
 ) -> _RowPlan:
     """まだ割られていない 1 ページを割る。
 
@@ -302,9 +389,8 @@ def _split_page(
     抜いた跡があるページを、利用者が一度も見ていない見開きから切ると、
     選んだ位置と切れる場所が食い違う。
     """
-    name = row.names[0]
     stored = editor.read_entry(name)
-    earlier, later = _halves_of(stored, name, row.split.x)
+    earlier, later = _halves_of(stored, name, split.x)
     return _RowPlan(
         outputs=(OutputPage(name, earlier.data), OutputPage(name, later.data)),
         dropped=(),
@@ -330,29 +416,34 @@ def _rewrite_pair(
     たびに前回捨てた画素が戻らず、JPEG なら劣化も積み上がる。
     """
     earlier_name, later_name = row.names
-    stored = [editor.read_entry(name) for name in row.names]
-    ref = find_original(path, stored[0])
-    if ref is None:
-        raise PageSplitError(f"割る前の画像が同梱されていません: {earlier_name}")
+    facts = _revalidated_pair(editor, path, row.names)
+    pair = _split_pair(*facts)
+    if pair is None:
+        raise PageSplitError(
+            f"同じ見開きを同じ位置で割った対ではありません: {row.names}"
+        )
     try:
-        original = read_original(path, ref)
+        original = read_original(path, pair.ref)
     except OriginalStoreError as error:
         raise PageSplitError(str(error)) from error
     # 置き換わって消える 2 枚。落とさないと、位置を動かすたびに記録が
     # 2 件ずつ増え、開き直すたびに前回の位置で畳まれて動かせなくなる
-    superseded = tuple(content_hash(data) for data in stored)
+    superseded = tuple(fact.digest for fact in facts)
 
     if row.split is None:
         # 割る前のバイト列をそのまま戻す。作り直した絵では、貼り合わせた
         # ものと見分けが付かない。元画像そのものは残す（#66）。消すと、
-        # 戻した直後にもう一度割ったとき、元の画素をもう引けない
+        # 戻した直後にもう一度割ったとき、元の画素をもう引けない。ただし
+        # 元画像の形式が書き戻し先の拡張子と食い違うとき（viewer が読めない
+        # BMP の元画像は、戻り先の名前が .png になる）だけは書き直す
+        restored = _bytes_matching_suffix(original, earlier_name)
         return _RowPlan(
-            outputs=(OutputPage(earlier_name, original),),
+            outputs=(OutputPage(earlier_name, restored),),
             dropped=(later_name,),
             extras=plan_manifest(
                 path,
                 source=original,
-                source_name=ref.entry,
+                source_name=pair.ref.entry,
                 derivations=(),
                 superseded=superseded,
                 planned=extras,
@@ -369,11 +460,39 @@ def _rewrite_pair(
         extras=plan_manifest(
             path,
             source=original,
-            source_name=ref.entry,
+            source_name=pair.ref.entry,
             derivations=(earlier.derivation, later.derivation),
             superseded=superseded,
             planned=extras,
         ),
+    )
+
+
+def _revalidated_pair(
+    editor: ZipPageEditor, path: Path, names: tuple[str, ...]
+) -> tuple[_PageFacts, _PageFacts]:
+    """名前を 2 つ持つ行が、いまも隣り合う 2 枚を指しているか確かめ直す。
+
+    行は画面から戻ってくるもので、走査した時点のアーカイブしか映していない。
+    確定までに別のタブが同じ本を書き換えれば、行は古い名前を指したまま届く。
+    1 枚目だけを見て書くと、2 枚目に指名された無関係なページが「割る前へ
+    戻す」の巻き添えで落とされる。apply_pages は名指しされた落としを通すので、
+    止められるのはここだけ。書き直しの計画を組む前に断ることで、アーカイブは
+    1 バイトも変わらない。
+
+    隣り合っているかまで見るのは、離れた 2 枚を対として書き直すと、利用者が
+    意図して動かした並びが黙って元へ戻るため。畳む側と同じ規則で確かめる。
+    """
+    order = {page.name: position for position, page in enumerate(editor.pages)}
+    missing = [name for name in names if name not in order]
+    if missing:
+        raise PageSplitError(f"アーカイブに存在しないページです: {missing}")
+    earlier_name, later_name = names
+    if order[later_name] != order[earlier_name] + 1:
+        raise PageSplitError(f"割った対が隣り合っていません: {names}")
+    return (
+        _page_facts(path, earlier_name, editor.read_entry(earlier_name)),
+        _page_facts(path, later_name, editor.read_entry(later_name)),
     )
 
 
@@ -402,19 +521,49 @@ def _halves_of(source: bytes, name: str, x: int) -> tuple[_Half, _Half]:
 
 def _half(image: Image.Image, name: str, side: str, x: int, width: int) -> _Half:
     """半分 1 枚を書き戻す形へ落とし、割った位置まで記録に残す"""
-    data = _encoded(image, name)
+    data = _encoded(image, _destination_suffix(name))
     operation = Operation(_SPLIT_KIND, {"side": side, "x": x, "width": width})
     return _Half(
         data=data, derivation=Derivation(produced=data, operations=(operation,))
     )
 
 
-def _encoded(image: Image.Image, name: str) -> bytes:
-    """viewer が読める形式へ書き出す。読めない拡張子は PNG へ移す"""
+def _destination_suffix(name: str) -> str:
+    """このページを書き戻すときの拡張子。viewer が読めない拡張子は PNG へ移す。
+
+    連番を振り直す側（viewer_contract.sequential_name）と同じ規則で決める。
+    食い違うと、中身が PNG なのに名前が .gif のページができ、拡張子で復号器を
+    選ぶ読み手（別のビューアやサムネイル生成）が開けなくなる。
+    """
     suffix = output_suffix(Path(name).suffix)
     if suffix not in VIEWER_IMAGE_EXTENSIONS:
-        suffix = ".png"
-    fmt = _SAVE_FORMATS.get(suffix, "PNG")
+        return ".png"
+    return suffix
+
+
+def _bytes_matching_suffix(data: bytes, name: str) -> bytes:
+    """バイト列を、そのページの拡張子が名乗る形式へ揃える。
+
+    既に合っていればバイト列をそのまま返すのが要点。割る前へ戻すときは同梱の
+    元画像をそのまま書き戻したい。無条件に書き直すと、「割る前のものをそのまま
+    戻した」ことの唯一の証拠であるバイト列の一致が失われ、貼り合わせた絵と
+    見分けが付かなくなる。一方で viewer が読めない BMP の元画像は戻り先の
+    名前が .png になるので、そのまま書くと名前と中身が食い違う。
+    """
+    suffix = _destination_suffix(name)
+    try:
+        with Image.open(io.BytesIO(data)) as opened:
+            if opened.format == _SAVE_FORMATS[suffix]:
+                return data
+            image = opened.convert("RGB")
+    except OSError as error:
+        raise PageSplitError(f"画像を読めません: {error}") from error
+    return _encoded(image, suffix)
+
+
+def _encoded(image: Image.Image, suffix: str) -> bytes:
+    """拡張子どおりの形式で書き出す"""
+    fmt = _SAVE_FORMATS[suffix]
     buffer = io.BytesIO()
     if fmt == "JPEG":
         image.save(buffer, fmt, quality=_JPEG_QUALITY, optimize=True)
