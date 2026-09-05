@@ -100,6 +100,11 @@ async function enterArchiveDirectory(page: Page) {
       `[data-testid="browse-entry"][data-name="${ARCHIVE_DIR}"] .browser-name`,
     )
     .click();
+  // 一覧が出揃うまで待つ。押した時点で届いていた分だけが対象になるので、
+  // 待たずに「ここを全部追加」を押すと、件数が実行のたびに変わる
+  await expect(
+    page.locator('[data-testid="browse-entry"][data-name$=".zip"]'),
+  ).toHaveCount(MANY);
 }
 
 /**
