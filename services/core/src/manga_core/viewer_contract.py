@@ -8,6 +8,10 @@
 
 - `filterImageEntries` はディレクトリエントリ、`__MACOSX/`、ドット始まりを
   除外し、対応拡張子のみを採用する（サブフォルダ内の画像は保持する）
+- ただし viewer のドット判定は末尾の要素だけを見ている。こちらはパスの
+  どの要素で判定しても除外する側に倒す。ページ並べ替えは書き換えなので、
+  隠しフォルダの中身を取り込むと取り返しがつかない（#66）。viewer が
+  追いついた後は二重に守られるだけで、出力は変わらない
 - 並び順は `a.name.compareTo(b.name)`、つまり単純な辞書順。ZIP の格納順は
   見ていない。表紙は並べ替え後の先頭
 """
@@ -28,19 +32,24 @@ MACOS_METADATA_PREFIX = f"{MACOS_METADATA_DIR}/"
 MIN_SEQUENCE_DIGITS = 3
 
 
-def _basename(name: str) -> str:
-    """アーカイブ内のエントリ名から、末尾の要素を取り出す"""
-    return PurePosixPath(name).name
-
-
 def _is_excluded(name: str) -> bool:
-    """viewer が読み飛ばすエントリかどうかを判定する"""
+    """viewer が読み飛ばすエントリかどうかを判定する。
+
+    ドット始まりは末尾の要素（ベース名）だけでなくパスの全要素で見る。
+    ベース名しか見ないと `.manga-organizer/originals/a3f2.jpg` が素通りし、
+    ページとして扱われて並べ替えで `001.jpg` へ改名される。表示がずれるだけでは
+    済まず、隠しておいた元画像が本文に混ざったうえ失われる（#66）。
+    `.thumbnails/` や `.cache/` を抱えたアーカイブは実在するため、元画像の
+    置き場に限らずパス全体で判定する。
+    """
     if not name or name.endswith("/"):
         return True
     if name.startswith(MACOS_METADATA_PREFIX):
         return True
-    base = _basename(name)
-    return not base or base.startswith(".")
+    path = PurePosixPath(name)
+    if not path.name:
+        return True
+    return any(part.startswith(".") for part in path.parts)
 
 
 def is_viewer_page(name: str) -> bool:

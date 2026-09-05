@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from manga_api.app import create_app  # noqa: E402
 from manga_core.api_client import AniListClient  # noqa: E402
+from manga_core.viewer_contract import is_viewer_page  # noqa: E402
 
 
 def make_page(color: str = "navy") -> bytes:
@@ -348,10 +349,21 @@ def closest_color_name(pixel: tuple[int, int, int]) -> str:
     return min(_COLOR_SAMPLES, key=squared_distance)
 
 
+def viewer_pages(archive_path: Path) -> list[str]:
+    """viewer がページとして読むエントリ名を、viewer と同じ辞書順で返す。
+
+    ZIP には元画像や manifest（#66）などページ以外のエントリも入る。
+    ページ数や並びを見るときに数へ入れると、加工の記録が増えただけで
+    「ページが増えた」と読めてしまう。
+    """
+    with zipfile.ZipFile(archive_path) as archive:
+        return sorted(name for name in archive.namelist() if is_viewer_page(name))
+
+
 def page_colors(archive_path: Path) -> list[str]:
     """ページの色名を viewer と同じ辞書順で返す。どの絵が何ページ目かを見る"""
+    names = viewer_pages(archive_path)
     with zipfile.ZipFile(archive_path) as archive:
-        names = sorted(archive.namelist())
         colors = []
         for name in names:
             with Image.open(io.BytesIO(archive.read(name))) as opened:
@@ -363,10 +375,11 @@ def page_colors(archive_path: Path) -> list[str]:
 
 
 def page_sizes(archive_path: Path) -> dict[str, tuple[int, int]]:
-    """エントリ名ごとの画像サイズ。加工が効いた 1 枚を見分ける"""
+    """ページ名ごとの画像サイズ。加工が効いた 1 枚を見分ける"""
+    names = viewer_pages(archive_path)
     with zipfile.ZipFile(archive_path) as archive:
         sizes = {}
-        for name in archive.namelist():
+        for name in names:
             with Image.open(io.BytesIO(archive.read(name))) as image:
                 sizes[name] = image.size
         return sizes
@@ -409,8 +422,7 @@ class CoverMakeFirstTest(ApiTestBase):
             page_colors(self.pages),
             "選んだ絵が先頭ページになっていない",
         )
-        with zipfile.ZipFile(self.pages) as archive:
-            names = sorted(archive.namelist())
+        names = viewer_pages(self.pages)
         self.assertEqual(len(THUMBNAIL_PAGES), len(names), "ページ数が変わっている")
         self.assertEqual(
             ["001.jpg", "002.jpg", "003.jpg"], names, "連番へ振り直されていない"
