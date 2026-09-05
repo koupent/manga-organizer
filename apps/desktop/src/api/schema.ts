@@ -310,6 +310,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/analyze": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Analyze
+     * @description 展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。
+     *
+     *     利用者はチェックを外す前に「何が出来るのか」を見る必要がある。
+     *     整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が
+     *     そのまま実行の結果になる。
+     */
+    post: operations["analyze_api_analyze_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/jobs/organize": {
     parameters: {
       query?: never;
@@ -338,6 +362,37 @@ export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
     /**
+     * AnalyzeRequest
+     * @description 出来上がる本を実行前に調べる依頼
+     */
+    AnalyzeRequest: {
+      /**
+       * Archives
+       * @description 解析対象の絶対パス。フォルダを渡すと中を再帰的に辿る
+       */
+      archives: string[];
+      /**
+       * Title
+       * @description 作品名
+       * @default
+       */
+      title: string;
+      /**
+       * Author
+       * @description 著者名
+       * @default
+       */
+      author: string;
+    };
+    /**
+     * AnalyzeResult
+     * @description 解析の結果。出来上がる本を、実行するのと同じ順に並べる
+     */
+    AnalyzeResult: {
+      /** Books */
+      books: components["schemas"]["PlannedBookView"][];
+    };
+    /**
      * AuthorCandidate
      * @description 検索で見つかった作品と、その著者
      */
@@ -350,6 +405,27 @@ export interface components {
       source: string;
       /** Similarity */
       similarity: number;
+    };
+    /**
+     * BookRef
+     * @description 本 1 冊の指定。
+     *
+     *     名前ではなく「元のアーカイブ + その中での位置」で指す。出来上がる名前は
+     *     作品名と著者で毎回変わるので、名前を鍵にすると入力欄をいじった瞬間に
+     *     選択が外れる。``entry`` はアーカイブ全体が 1 冊なら空文字。
+     */
+    BookRef: {
+      /**
+       * Source
+       * @description 元のアーカイブ（または画像フォルダ）の絶対パス
+       */
+      source: string;
+      /**
+       * Entry
+       * @description アーカイブ内での位置
+       * @default
+       */
+      entry: string;
     };
     /**
      * BrowseEntry
@@ -581,6 +657,11 @@ export interface components {
        * @default true
        */
       keep_originals: boolean;
+      /**
+       * Books
+       * @description 作る本。省くと投入されたものを全部作る。与えると、その本だけを作る（空の配列は 1 冊も作らない）
+       */
+      books?: components["schemas"]["BookRef"][] | null;
     };
     /**
      * PageList
@@ -605,6 +686,25 @@ export interface components {
       size: number;
       /** Modified */
       modified: string;
+    };
+    /**
+     * PlannedBookView
+     * @description 実行すると 1 冊出来る、という予告
+     */
+    PlannedBookView: {
+      /** Source */
+      source: string;
+      /** Entry */
+      entry: string;
+      /** Output Name */
+      output_name: string;
+      /** Volume */
+      volume?: number | null;
+      /**
+       * Issues
+       * @description 実行前に利用者へ見せる印
+       */
+      issues?: string[];
     };
     /**
      * ReorderRequest
@@ -1224,6 +1324,42 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  analyze_api_analyze_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AnalyzeRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AnalyzeResult"];
         };
       };
       /** @description Validation Error */

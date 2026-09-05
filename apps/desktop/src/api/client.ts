@@ -25,6 +25,8 @@ type HealthResponse =
   paths["/api/health"]["get"]["responses"][200]["content"]["application/json"];
 type OrganizeRequest =
   paths["/api/jobs/organize"]["post"]["requestBody"]["content"]["application/json"];
+type AnalyzeResult =
+  paths["/api/analyze"]["post"]["responses"][200]["content"]["application/json"];
 type CoverRequest =
   paths["/api/jobs/cover"]["post"]["requestBody"]["content"]["application/json"];
 type LibraryEntries =
@@ -159,6 +161,31 @@ export class SidecarClient {
 
   organize(request: OrganizeRequest): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/organize", request);
+  }
+
+  /**
+   * 展開せずに、出来上がる本を実行前に調べる。
+   *
+   * 作品名と著者を渡すのは、サイドカーが組み立てた名前を突き合わせに使える
+   * ようにするため。画面に出す名前は巻数から組み立て直すので、入力欄を
+   * 変えるたびにここを呼び直すことはしない。
+   */
+  analyze(
+    archives: string[],
+    title: string,
+    author: string,
+    signal?: AbortSignal,
+  ): Promise<AnalyzeResult> {
+    return this.request<AnalyzeResult>(
+      "/api/analyze",
+      {},
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archives, title, author }),
+        signal,
+      },
+    );
   }
 
   job(id: string, signal?: AbortSignal): Promise<JobResponse> {

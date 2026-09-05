@@ -114,11 +114,33 @@ class FileOrganizer:
                 error_message=f"Failed to create archive for volume {volume}",
             )
 
+    def _skipped(self, image_dir: Path, skip_locations: frozenset[str]) -> bool:
+        """利用者が一覧で外した本かどうかを見る（#70 第 3 段階）。
+
+        突き合わせは展開ルートからの相対パスで行う。名前や並び順では、
+        1 つのアーカイブから同じ名前の本が 2 冊出たときに選り分けられない。
+        """
+        if not skip_locations:
+            return False
+        root = self.archive_handler.extract_root
+        if root is None:
+            return False
+        try:
+            relative = image_dir.relative_to(root).as_posix()
+        except ValueError:
+            # 展開ルートの外は、そもそも予告できていない。作る側に倒す
+            return False
+        return (relative if relative != "." else "") in skip_locations
+
     def _handle_original_deletion(
-        self, archive_path: Path, results: list[ProcessResult]
+        self, archive_path: Path, results: list[ProcessResult], skipped: bool
     ):
-        """Delete original archive if requested and all volumes were successful"""
-        if not self.keep_originals and all(r.success for r in results):
+        """Delete original archive if requested and all volumes were successful.
+
+        外した本があるときは消さない。元を消すと、外した本を後から作り直す
+        手立てが無くなる。
+        """
+        if not skipped and not self.keep_originals and all(r.success for r in results):
             try:
                 archive_path.unlink()
                 self._log(f"Deleted original: {archive_path}")
@@ -149,9 +171,16 @@ class FileOrganizer:
                 )
             ]
 
-    def process_single_archive(self, archive_path: Path) -> list[ProcessResult]:
-        """Process a single archive file"""
+    def process_single_archive(
+        self, archive_path: Path, skip_locations: frozenset[str] = frozenset()
+    ) -> list[ProcessResult]:
+        """Process a single archive file.
+
+        ``skip_locations`` は、利用者が実行前の一覧で外した本の位置（展開
+        ルートからの相対パス）。省くと従来どおり中身を全部作る。
+        """
         # フォルダが来たら、その中身が 1 冊分。展開する物が無いので別経路へ回す
+        # フォルダは丸ごと 1 冊なので、外すかどうかは呼び出し側が決めている
         if archive_path.is_dir():
             return self._process_image_directory(archive_path)
 
@@ -178,14 +207,22 @@ class FileOrganizer:
             if len(image_dirs) > 1:
                 self._log(f"  Processing {len(image_dirs)} volumes...")
 
+            skipped = False
             for vol_idx, image_dir in enumerate(image_dirs, 1):
                 if len(image_dirs) > 1:
                     self._log(f"  Processing volume {vol_idx}/{len(image_dirs)}...")
 
                 # Detect volume number
+                # 外した本のぶんも先に番号を決める。並び順（Priority 3）が
+                # 巻数に効くので、飛ばしてから数えると残した本の巻数がずれる
                 volume = self._detect_volume_number(
                     image_dir, archive_path, vol_idx, len(image_dirs)
                 )
+
+                if self._skipped(image_dir, skip_locations):
+                    skipped = True
+                    self._log(f"  Skipped (excluded): volume {vol_idx}")
+                    continue
 
                 # Process the volume
                 result = self._process_volume(
@@ -194,7 +231,12 @@ class FileOrganizer:
                 results.append(result)
 
             # Step 4: Handle original deletion
-            self._handle_original_deletion(archive_path, results)
+            self._handle_original_deletion(archive_path, results, skipped)
+
+            # 全部外したなら、作る物も失敗も無い。ここで「No volumes processed」を
+            # 返すと、利用者が自分で外したものが失敗として並ぶ
+            if skipped and not results:
+                return []
 
             return (
                 results

@@ -820,8 +820,10 @@ class OrganizeProgressTest(ApiTestBase):
         observed: list[tuple[int, int]] = []
         process_single_archive = FileOrganizer.process_single_archive
 
-        def watched(organizer, archive_path):
-            results = process_single_archive(organizer, archive_path)
+        # 選んだ本だけを作れるようになり、引数が 1 つ増えた（#70 第 3 段階）。
+        # ここで見ているのは進捗であって呼び出しの形ではないので、そのまま通す
+        def watched(organizer, archive_path, *args, **kwargs):
+            results = process_single_archive(organizer, archive_path, *args, **kwargs)
             observed.append(self.visible_progress())
             return results
 

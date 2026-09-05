@@ -856,6 +856,59 @@
         }
       }
     },
+    "/api/analyze": {
+      "post": {
+        "summary": "Analyze",
+        "description": "展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。\n\n利用者はチェックを外す前に「何が出来るのか」を見る必要がある。\n整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が\nそのまま実行の結果になる。",
+        "operationId": "analyze_api_analyze_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyzeResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/organize": {
       "post": {
         "summary": "Submit Organize",
@@ -912,6 +965,53 @@
   },
   "components": {
     "schemas": {
+      "AnalyzeRequest": {
+        "properties": {
+          "archives": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Archives",
+            "description": "解析対象の絶対パス。フォルダを渡すと中を再帰的に辿る"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "作品名",
+            "default": ""
+          },
+          "author": {
+            "type": "string",
+            "title": "Author",
+            "description": "著者名",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "archives"
+        ],
+        "title": "AnalyzeRequest",
+        "description": "出来上がる本を実行前に調べる依頼"
+      },
+      "AnalyzeResult": {
+        "properties": {
+          "books": {
+            "items": {
+              "$ref": "#/components/schemas/PlannedBookView"
+            },
+            "type": "array",
+            "title": "Books"
+          }
+        },
+        "type": "object",
+        "required": [
+          "books"
+        ],
+        "title": "AnalyzeResult",
+        "description": "解析の結果。出来上がる本を、実行するのと同じ順に並べる"
+      },
       "AuthorCandidate": {
         "properties": {
           "title": {
@@ -940,6 +1040,27 @@
         ],
         "title": "AuthorCandidate",
         "description": "検索で見つかった作品と、その著者"
+      },
+      "BookRef": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "元のアーカイブ（または画像フォルダ）の絶対パス"
+          },
+          "entry": {
+            "type": "string",
+            "title": "Entry",
+            "description": "アーカイブ内での位置",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "BookRef",
+        "description": "本 1 冊の指定。\n\n名前ではなく「元のアーカイブ + その中での位置」で指す。出来上がる名前は\n作品名と著者で毎回変わるので、名前を鍵にすると入力欄をいじった瞬間に\n選択が外れる。``entry`` はアーカイブ全体が 1 冊なら空文字。"
       },
       "BrowseEntry": {
         "properties": {
@@ -1401,6 +1522,21 @@
             "title": "Keep Originals",
             "description": "元ファイルを残すか",
             "default": true
+          },
+          "books": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BookRef"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Books",
+            "description": "作る本。省くと投入されたものを全部作る。与えると、その本だけを作る（空の配列は 1 冊も作らない）"
           }
         },
         "type": "object",
@@ -1464,6 +1600,49 @@
         ],
         "title": "PageView",
         "description": "ページ 1 枚の情報"
+      },
+      "PlannedBookView": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "entry": {
+            "type": "string",
+            "title": "Entry"
+          },
+          "output_name": {
+            "type": "string",
+            "title": "Output Name"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          },
+          "issues": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Issues",
+            "description": "実行前に利用者へ見せる印"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "entry",
+          "output_name"
+        ],
+        "title": "PlannedBookView",
+        "description": "実行すると 1 冊出来る、という予告"
       },
       "ReorderRequest": {
         "properties": {
