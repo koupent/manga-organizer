@@ -59,6 +59,9 @@ class PageEntry:
     name: str
     size: int
     modified: str
+    # 中身の照合用。中央ディレクトリに書いてあるので画素は展開しない。
+    # 大きさだけでは、同じ大きさに収まる別の絵への差し替えを見分けられない
+    crc: int = 0
 
 
 @dataclass(frozen=True)
@@ -510,6 +513,7 @@ class ZipPageEditor:
                 name=info.filename,
                 size=info.file_size,
                 modified=_format_modified(info.date_time),
+                crc=info.CRC,
             )
             for info in infos
         )

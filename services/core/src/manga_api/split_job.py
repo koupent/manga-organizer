@@ -41,7 +41,7 @@ from manga_core.page_splitter import (
 
 # 印の材料の先頭に書く版。作り方を変えたとき、古い画面が持っている印が
 # 当たり続けないようにする
-_TOKEN_VERSION = "1"
+_TOKEN_VERSION = "2"
 
 
 class SplitScanRequest(BaseModel):
@@ -128,17 +128,22 @@ def archive_token(pages: Sequence[PageEntry]) -> str:
 
     名前だけでは足りない。ページは連番なので、別の本でも 001.png から
     始まる。名前しか見ない印だと、同じ枚数の 2 冊が同じ値になり、別の本を
-    見ていた画面からの確定が通ってしまう。1 枚ごとの大きさまで混ぜれば、
-    割った本も、絵を差し替えた本も、必ず違う印になる。
+    見ていた画面からの確定が通ってしまう。
 
-    大きさは画素数ではなく展開後のバイト数（``PageEntry.size``）。中央
-    ディレクトリに書いてあるので、画素は 1 枚も展開しない。ここで全ページを
-    読み直す印にすると、確定の受け付けが走査と同じ時間かかる。
+    大きさだけでも足りない。同じ大きさに収まる別の絵に差し替えられると
+    印が変わらず、別のタブで表紙を切った直後の画面からの確定が通り、
+    **利用者が見ていないページが割られる**。中身まで見る必要がある。
+
+    大きさ（展開後のバイト数）も CRC も中央ディレクトリに書いてあるので、
+    画素は 1 枚も展開しない。ここで全ページを読み直す印にすると、確定の
+    受け付けが走査と同じ時間かかる。
 
     名前の長さを先に書くのは、名前に区切り文字が入っていても混ざらない
     ようにするため。混ざると、中身の違う 2 冊が同じ印になりうる。
     """
-    material = "\n".join(f"{page.size}:{len(page.name)}:{page.name}" for page in pages)
+    material = "\n".join(
+        f"{page.crc}:{page.size}:{len(page.name)}:{page.name}" for page in pages
+    )
     return hashlib.sha256(f"{_TOKEN_VERSION}\n{material}".encode()).hexdigest()
 
 

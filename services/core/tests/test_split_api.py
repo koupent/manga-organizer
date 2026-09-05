@@ -473,6 +473,65 @@ class SplitTokenTest(SplitApiTestBase):
         self.assertEqual(1, result["split_count"], result)
         self.assertEqual(5, result["page_count"], result)
 
+    def test_a_page_swapped_for_the_same_size_is_still_caught(self):
+        """大きさが同じままでも、絵が変わったら断る。
+
+        名前と展開後のバイト数だけを見る印では、同じ大きさに収まる別の絵に
+        差し替えられたことが分からない。別のタブで表紙を切ったり並べ替えた
+        直後の画面から確定すると、印が一致してしまい、**利用者が見ていない
+        ページが割られる**。
+        """
+        # Arrange
+        scanned = self.scan(self.archive)
+        rows = self.rows_for(scanned, {1: {"x": SPLIT_X}})
+
+        # Arrange - 1 枚目だけを、同じ寸法・別の色の絵に差し替える。
+        # 単色の PNG は色が違ってもバイト数がそろうので、「大きさは同じまま
+        # 中身だけ変わった」を、絵として壊さずに作れる
+        with zipfile.ZipFile(self.archive) as archive:
+            kept = {
+                item.filename: archive.read(item.filename)
+                for item in archive.infolist()
+            }
+        target = sorted(kept)[0]
+        swapped = tall_bytes("#a0a0a0")
+        self.assertEqual(
+            len(kept[target]), len(swapped), "下準備が想定と違う: 大きさがそろわない"
+        )
+        self.assertNotEqual(kept[target], swapped, "下準備が想定と違う: 中身が同じ")
+        kept[target] = swapped
+        build_archive(self.archive, kept)
+
+        # Arrange（対照）- 名前も枚数も展開後の大きさも、走査したときのまま。
+        # ここが変わっていると、大きさで気づいただけの実装でも通ってしまう
+        with zipfile.ZipFile(self.archive) as archive:
+            now = [(item.filename, item.file_size) for item in archive.infolist()]
+        self.assertEqual(
+            [(name, len(data)) for name, data in sorted(kept.items())],
+            sorted(now),
+            "下準備が想定と違う: 大きさが変わっている",
+        )
+        before = self.archive.read_bytes()
+
+        # Act
+        refused = self.submit_confirm(self.archive, scanned["token"], rows)
+
+        # Assert - 中身が変わったことを見分けて断る
+        self.assertEqual(
+            400,
+            refused.status_code,
+            f"絵が差し替わったのに通してしまう: {refused.text}",
+        )
+        self.assertEqual(before, self.archive.read_bytes(), "断ったのに書き換えている")
+
+        # Act / Assert - 差し替え後に走査し直した印なら通る。これが無いと
+        # 「印が何であれ断る」実装でも上の検証を通せる
+        fresh = self.scan(self.archive)
+        result = self.confirmed(
+            self.archive, fresh["token"], self.rows_for(fresh, {1: {"x": SPLIT_X}})
+        )
+        self.assertEqual(1, result["split_count"], result)
+
 
 class SubmittedRowsCoverTheArchiveTest(SplitApiTestBase):
     """4. 行の名前を並べたものが、いまのページ順と 1 つも違わないこと"""
