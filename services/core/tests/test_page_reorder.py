@@ -21,6 +21,19 @@ PAGE_DATE_TIME = (2019, 5, 4, 12, 30, 0)
 COMIC_INFO = b"<ComicInfo><Series>Test</Series></ComicInfo>"
 
 
+def load_output_page():
+    """manga_core.page_reorder.OutputPage を読み込む（#58）。
+
+    実装が入るまでは ImportError で落ちる。モジュールの先頭で import すると
+    このファイル全体が収集エラーになり、既存の検証（並び替えが何を拒むか）
+    まで巻き添えで落ちる。緩和が並び替えの経路へ漏れていないことを
+    確かめられなくなるので、要る所だけで読み込む。
+    """
+    from manga_core.page_reorder import OutputPage
+
+    return OutputPage
+
+
 def build_archive(path: Path, names, extra_entries=None) -> dict[str, bytes]:
     """テスト用 ZIP を作り、エントリ名から中身への対応表を返す"""
     payloads = {name: f"payload-{name}".encode() for name in names}
@@ -412,6 +425,306 @@ class ViewerContractTest(unittest.TestCase):
             with Image.open(io.BytesIO(archive.read("002.png"))) as converted:
                 self.assertEqual("PNG", converted.format)
                 self.assertEqual((40, 60), converted.size)
+
+
+class ApplyPagesTest(unittest.TestCase):
+    """出力ページの列を受け取る入口を検証する（#58）。
+
+    apply_order は「並べ替え」なので、ページ数もページの集合も変わらない。
+    見開きの分割は 1 枚から 2 枚を出し、割る前へ戻すと 2 枚が 1 枚に減る。
+    そこで apply_pages という別の単位の入口を足す。apply_order を緩めるのでは
+    なく、緩い側を別に置くのが要点。緩めてしまうと、ページ修正画面から来た
+    ただの並べ替えでも、名前を 1 つ書き間違えただけでページが消える。
+
+    緩めた分だけ、別の検証を置く。
+
+    - すべての source が、いま存在するページであること
+    - いま存在するページはすべて、どれかの source になるか dropped にあること
+    - 同じ source を 2 回以上使えるのは、その出力すべてが content を持つときだけ
+    - dropped と source が重ならないこと
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.work_dir = Path(self._temp.name)
+        self.archive_path = self.work_dir / "volume.zip"
+        self.payloads = build_archive(self.archive_path, ["a.jpg", "b.jpg"])
+        self.OutputPage = load_output_page()
+        self.editor = ZipPageEditor(self.archive_path)
+        self.addCleanup(self.editor.close)
+
+    def page_names(self) -> list[str]:
+        with zipfile.ZipFile(self.archive_path) as archive:
+            return archive.namelist()
+
+    def test_rejects_an_unknown_source_and_accepts_a_known_one(self):
+        # Act / Assert - 無い名前を source にすると断る。黙って読み飛ばすと、
+        # 名前を書き間違えただけでそのページが本から消える
+        with self.assertRaises(PageReorderError):
+            self.editor.apply_pages(
+                [
+                    self.OutputPage("a.jpg", None),
+                    self.OutputPage("b.jpg", None),
+                    self.OutputPage("zzz.jpg", None),
+                ]
+            )
+
+        # Act / Assert - 同じ形で名前だけ正しいものは通る。無条件に投げる
+        # 検査は、ここで落ちる
+        self.editor.apply_pages(
+            [self.OutputPage("a.jpg", None), self.OutputPage("b.jpg", None)]
+        )
+        self.assertEqual(["001.jpg", "002.jpg"], self.page_names())
+
+    def test_a_source_used_twice_must_supply_content_for_every_output(self):
+        # Arrange - 1 枚から 2 枚を出すのは分割だけ。どちらの出力も切った後の
+        # 中身を持つ。content が無い出力が混ざるのは、同じページをそのまま
+        # 2 箇所へ複製する形で、本の中に同じ絵が二重に並ぶ
+        right, left = b"right-half", b"left-half"
+
+        # Act / Assert - 違いは 2 つ目の content だけ。ほかの規則には
+        # 触れていないので、この規則が無ければ通ってしまう
+        with self.assertRaises(PageReorderError):
+            self.editor.apply_pages(
+                [
+                    self.OutputPage("a.jpg", right),
+                    self.OutputPage("a.jpg", None),
+                    self.OutputPage("b.jpg", None),
+                ]
+            )
+
+        # Act
+        self.editor.apply_pages(
+            [
+                self.OutputPage("a.jpg", right),
+                self.OutputPage("a.jpg", left),
+                self.OutputPage("b.jpg", None),
+            ]
+        )
+
+        # Assert
+        self.assertEqual(["001.jpg", "002.jpg", "003.jpg"], self.page_names())
+        with zipfile.ZipFile(self.archive_path) as archive:
+            self.assertEqual(right, archive.read("001.jpg"))
+            self.assertEqual(left, archive.read("002.jpg"))
+            self.assertEqual(self.payloads["b.jpg"], archive.read("003.jpg"))
+
+    def test_refuses_to_drop_a_page_that_was_not_named(self):
+        # Act / Assert - 出力に出てこないページは、消したいのか書き忘れたのか
+        # 区別が付かない。黙って落とすと、行を 1 つ組み立て損ねただけで
+        # ページが失われる
+        with self.assertRaises(PageReorderError):
+            self.editor.apply_pages([self.OutputPage("a.jpg", None)])
+
+        # Act - 同じ出力でも、落とすと名指しすれば通る
+        self.editor.apply_pages([self.OutputPage("a.jpg", None)], dropped=("b.jpg",))
+
+        # Assert
+        self.assertEqual(["001.jpg"], self.page_names())
+        with zipfile.ZipFile(self.archive_path) as archive:
+            self.assertEqual(self.payloads["a.jpg"], archive.read("001.jpg"))
+
+    def test_refuses_a_page_that_is_both_dropped_and_used(self):
+        # Act / Assert - 落とすと言いながら出力にも使うのは、呼び出し側の
+        # 取り違え。どちらかを黙って優先すると、消えるはずのページが残るか、
+        # 残るはずのページが消える
+        with self.assertRaises(PageReorderError):
+            self.editor.apply_pages(
+                [self.OutputPage("a.jpg", None), self.OutputPage("b.jpg", None)],
+                dropped=("b.jpg",),
+            )
+
+
+class ReplacementIntegrityTest(unittest.TestCase):
+    """差し替えたページが、渡したとおりの中身で書けているか（#58）。
+
+    大きさだけを突き合わせると、同じ長さの別の絵が書かれても通る。差し替えは
+    元の画素を捨てる操作なので、通った時点で利用者は「加工した」つもりのまま
+    別の絵を掴み、元は戻らない。ZIP の中央ディレクトリには各エントリの CRC-32
+    が既に入っているので、中身を読み直さずに突き合わせられる。
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.work_dir = Path(self._temp.name)
+        self.archive_path = self.work_dir / "volume.zip"
+        build_archive(self.archive_path, ["a.jpg", "b.jpg"])
+        self.editor = ZipPageEditor(self.archive_path)
+        self.addCleanup(self.editor.close)
+
+    def writer_that_emits(self, editor, name, body):
+        """差し替えの中身だけを body に取り替えて書かせる細工。
+
+        検証側には呼び出し元が渡した本来の中身がそのまま届くので、
+        「書かれたもの」と「期待するもの」が食い違う状況を、ほかは
+        何も変えずに作れる。
+        """
+        original_write = editor._write_reordered
+
+        def write(
+            temp_path,
+            ordered,
+            renames,
+            progress=None,
+            replacements=None,
+            extras=None,
+        ):
+            swapped = dict(replacements or {})
+            swapped[name] = body
+            return original_write(
+                temp_path, ordered, renames, progress, swapped, extras
+            )
+
+        return write
+
+    def test_accepts_a_replacement_that_was_written_as_asked(self):
+        # Arrange - 細工そのものが書き込みを壊していないことの対照。これが
+        # 無いと、次のテストは「細工のせいで別の検証が落ちた」だけでも通る
+        intended = b"A" * 512
+        self.editor._write_reordered = self.writer_that_emits(
+            self.editor, "a.jpg", intended
+        )
+
+        # Act
+        self.editor.apply_order(["a.jpg", "b.jpg"], replacements={"a.jpg": intended})
+
+        # Assert
+        with zipfile.ZipFile(self.archive_path) as archive:
+            self.assertEqual(intended, archive.read("001.jpg"))
+
+    def test_rejects_a_replacement_of_the_same_size_but_different_content(self):
+        # Arrange - 長さは同じで中身が違う。大きさだけの照合はここを見逃す
+        intended = b"A" * 512
+        decoy = b"B" * 512
+        self.assertEqual(len(intended), len(decoy))
+        before = self.archive_path.read_bytes()
+        self.editor._write_reordered = self.writer_that_emits(
+            self.editor, "a.jpg", decoy
+        )
+
+        # Act / Assert - 元を捨てる前に気づいて断る
+        with self.assertRaises(PageReorderError):
+            self.editor.apply_order(
+                ["a.jpg", "b.jpg"], replacements={"a.jpg": intended}
+            )
+        self.assertEqual(before, self.archive_path.read_bytes())
+
+
+class CarriedPageIntegrityTest(unittest.TestCase):
+    """中身を指定せず運ぶだけのページが、本当にそのページの中身で書けているか。
+
+    _verify_written が見るのは、書き上がった ZIP のページ名の集合と、
+    CRC としての整合だけ。「どの名前にどのページの中身が入ったか」は見ていない。
+    _verify_replacements は content を渡した出力にしか効かない。
+
+    落として連番を振り直す書き直しで、落とすはずのページの中身が残るページの
+    名前に入っても、名前・整合・差し替え・余りの検査は全部通る。その後の
+    os.replace で元のアーカイブは消え、取り返しがつかない。
+
+    利用者から見ると、消したはずのページが別の番号で残り、残るはずのページが
+    消える。ページ数も名前も期待どおりなので、開いて眺めるまで気づけない。
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.work_dir = Path(self._temp.name)
+        self.archive_path = self.work_dir / "volume.zip"
+        self.OutputPage = load_output_page()
+
+    def writer_that_reroutes(self, editor, mapping):
+        """書き込む位置ごとに、中身の出どころだけを付け替える細工。
+
+        検証側には呼び出し元が組み立てた出力がそのまま届くので、「書かれた
+        中身」と「約束した中身」だけが食い違う状況を、名前も枚数も変えずに
+        作れる。mapping が空なら何も付け替えない（細工の器そのものの対照）。
+        """
+        original_write = editor._write_reordered
+
+        def write(
+            temp_path,
+            outputs,
+            names,
+            progress=None,
+            replacements=None,
+            extras=None,
+        ):
+            rerouted = tuple(
+                self.OutputPage(
+                    mapping.get(output.source, output.source), output.content
+                )
+                for output in outputs
+            )
+            return original_write(
+                temp_path, rerouted, names, progress, replacements, extras
+            )
+
+        return write
+
+    def test_detects_a_dropped_pages_bytes_written_under_a_retained_name(self):
+        # Arrange - 対照。細工の器そのものは書き込みを壊さない。何も付け替え
+        # なければ、落として連番を振り直す書き直しは通り、中身も期待どおり。
+        # これが無いと、次の Assert は「細工のせいで別の検査が落ちた」だけでも
+        # 通ってしまう
+        payloads = build_archive(self.archive_path, ["a.jpg", "b.jpg", "c.jpg"])
+        editor = ZipPageEditor(self.archive_path)
+        self.addCleanup(editor.close)
+        editor._write_reordered = self.writer_that_reroutes(editor, {})
+        editor.apply_pages(
+            [self.OutputPage("a.jpg", None), self.OutputPage("c.jpg", None)],
+            dropped=("b.jpg",),
+        )
+        with zipfile.ZipFile(self.archive_path) as archive:
+            self.assertEqual(["001.jpg", "002.jpg"], archive.namelist())
+            self.assertEqual(payloads["c.jpg"], archive.read("002.jpg"))
+
+        # Arrange - 同じ書き直しを、2 枚目だけ「落とすはずのページ」の中身に
+        # すり替えて書かせる。長さは同じなので、大きさの照合では見抜けない
+        other = self.work_dir / "other.zip"
+        build_archive(other, ["a.jpg", "b.jpg", "c.jpg"])
+        self.assertEqual(len(payloads["b.jpg"]), len(payloads["c.jpg"]))
+        before = other.read_bytes()
+        faulty = ZipPageEditor(other)
+        self.addCleanup(faulty.close)
+        faulty._write_reordered = self.writer_that_reroutes(faulty, {"c.jpg": "b.jpg"})
+
+        # Act / Assert - 元を捨てる前に気づいて断る
+        with self.assertRaises(PageReorderError):
+            faulty.apply_pages(
+                [self.OutputPage("a.jpg", None), self.OutputPage("c.jpg", None)],
+                dropped=("b.jpg",),
+            )
+        self.assertEqual(before, other.read_bytes())
+
+    def test_detects_two_carried_pages_whose_bytes_were_swapped(self):
+        # Arrange - 対照。付け替えない細工なら並べ替えは通り、中身も期待どおり
+        payloads = build_archive(self.archive_path, ["a.jpg", "b.jpg"])
+        editor = ZipPageEditor(self.archive_path)
+        self.addCleanup(editor.close)
+        editor._write_reordered = self.writer_that_reroutes(editor, {})
+        editor.apply_order(["b.jpg", "a.jpg"])
+        with zipfile.ZipFile(self.archive_path) as archive:
+            self.assertEqual(payloads["b.jpg"], archive.read("001.jpg"))
+
+        # Arrange - 2 枚の中身だけを入れ替えて書かせる。名前も枚数も注文どおり
+        # なので、名前の集合と整合の検査は全部通る。長さも同じ
+        other = self.work_dir / "other.zip"
+        build_archive(other, ["a.jpg", "b.jpg"])
+        self.assertEqual(len(payloads["a.jpg"]), len(payloads["b.jpg"]))
+        before = other.read_bytes()
+        faulty = ZipPageEditor(other)
+        self.addCleanup(faulty.close)
+        faulty._write_reordered = self.writer_that_reroutes(
+            faulty, {"a.jpg": "b.jpg", "b.jpg": "a.jpg"}
+        )
+
+        # Act / Assert - 利用者が指定した並びと逆の本ができあがる。
+        # ページ数も名前も合っているので、断らなければ誰も気づかない
+        with self.assertRaises(PageReorderError):
+            faulty.apply_order(["a.jpg", "b.jpg"])
+        self.assertEqual(before, other.read_bytes())
 
 
 if __name__ == "__main__":

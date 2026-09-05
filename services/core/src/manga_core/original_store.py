@@ -82,12 +82,17 @@ class OriginalStoreError(RuntimeError):
 class Operation:
     """元画像に施した加工 1 つ分。
 
-    kind は "crop" | "rotate"（#58 の見開き分割で "split" が加わる）。
-    params の形は kind ごとに決まる。
+    kind は "crop" | "rotate" | "split"。params の形は kind ごとに決まる。
 
         crop   -> {"box": [left, upper, right, lower]}
         rotate -> {"degrees": int}
-        split  -> {"side": "left" | "right"}
+        split  -> {"side": "left" | "right", "x": int, "width": int}
+
+    split が位置まで持つのは、開き直したときに「どこで割ったか」を復元する
+    ため（#58）。中央で割ったことにして枠を置くと、利用者は自分が選んで
+    いない範囲を前回の範囲として見せられる。width は座標系の照合用で、
+    読む側は自分が見ている画像の幅と食い違ったら描かずに断る。#58 より前に
+    書かれた本には "side" しか無い。
 
     種類を増やすときは kind と params を足すだけで済むよう、params は
     形を固定せず素の写像で持つ。
@@ -95,6 +100,18 @@ class Operation:
 
     kind: str
     params: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Derivation:
+    """1 つの元画像から出た加工後の画像 1 枚分（#58）。
+
+    見開きの分割は 1 枚から 2 枚を出す。1 枚ずつ記録しようとすると、記録の
+    たびに manifest を読み直す作りでは 2 枚目が 1 枚目の記録を消す。
+    """
+
+    produced: bytes
+    operations: tuple[Operation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -131,6 +148,23 @@ def plan_record(
     produced: bytes,
     operations: Sequence[Operation] = (),
 ) -> dict[str, bytes]:
+    """1 枚の元画像から 1 枚が出る加工を記録する。plan_manifest の 1 件版"""
+    return plan_manifest(
+        archive_path,
+        source=source,
+        source_name=source_name,
+        derivations=(Derivation(produced=produced, operations=tuple(operations)),),
+    )
+
+
+def plan_manifest(
+    archive_path: Path,
+    source: bytes,
+    source_name: str,
+    derivations: Sequence[Derivation],
+    superseded: Sequence[str] = (),
+    planned: Mapping[str, bytes] | None = None,
+) -> dict[str, bytes]:
     """加工を確定するときに ZIP へ書き足すエントリを組み立てる。
 
     返すのは「エントリ名 -> バイト列」。呼び出し側は本体の書き直しと同じ
@@ -140,32 +174,65 @@ def plan_record(
 
     実際に書き込むかどうかの判断（既に同じ中身が入っているか、遡れる中間結果か）
     はここに閉じる。呼び出し側は返ってきたものをそのまま書けばよい。
-    """
-    produced_hash = content_hash(produced)
-    source_hash = content_hash(source)
-    if produced_hash == source_hash:
-        # 中身が変わっていない。記録すると自分自身を指して遡れなくなる
-        return {}
 
-    document = _load_document(Path(archive_path))
+    1 つの元画像から出る複数枚（#58 の見開き分割は 2 枚）をまとめて受けるのが
+    要点。1 枚ずつ呼ぶと、そのたびに manifest をディスクから読み直すため、
+    2 回目の記録が 1 回目を知らないまま書き、片方の記録が黙って消える。
+
+    superseded は、この加工で置き換わって本から消える加工後の画像のハッシュ。
+    落としてから足す順にするので、割る位置を動かした結果がたまたま前と同じ
+    バイト列になっても、記録は消えずに書き直される。落とさないと、位置を
+    動かすたびに derived が 2 件ずつ増え続ける。
+
+    planned は同じ書き直しで既に組み立てた extras。渡すと manifest をそこから
+    読み継ぐので、1 回の書き込みで複数の元画像を記録しても取りこぼさない。
+    """
+    extras: dict[str, bytes] = dict(planned or {})
+    document = _planned_document(Path(archive_path), extras)
     originals = dict(document.get(_ORIGINALS_KEY, {}))
     derived = dict(document.get(_DERIVED_KEY, {}))
 
-    extras: dict[str, bytes] = {}
-    if source_hash not in derived and source_hash not in originals:
+    source_hash = content_hash(source)
+    # 中身が変わっていない記録は持たない。自分自身を指して遡れなくなる
+    records = [
+        derivation
+        for derivation in derivations
+        if content_hash(derivation.produced) != source_hash
+    ]
+    if not records and not superseded:
+        return dict(planned or {})
+
+    for digest in superseded:
+        derived.pop(digest, None)
+
+    if records and source_hash not in derived and source_hash not in originals:
         # 遡れない画像が本当の元画像。中間結果は遡れるので保存しない
         entry = original_entry_name(source_hash, source_name)
         originals[source_hash] = entry
         extras[entry] = source
 
-    derived[produced_hash] = {
-        _SOURCE_KEY: source_hash,
-        _OPERATIONS_KEY: [_operation_to_json(operation) for operation in operations],
-    }
+    for derivation in records:
+        derived[content_hash(derivation.produced)] = {
+            _SOURCE_KEY: source_hash,
+            _OPERATIONS_KEY: [
+                _operation_to_json(operation) for operation in derivation.operations
+            ],
+        }
 
     extras[MANIFEST_ENTRY] = _dump_document(originals, derived)
     _reject_page_entries(extras)
     return extras
+
+
+def _planned_document(archive_path: Path, extras: Mapping[str, bytes]) -> dict:
+    """記録の土台にする manifest。組み立て中のものがあればそれを使う"""
+    raw = extras.get(MANIFEST_ENTRY)
+    if raw is None:
+        return _load_document(archive_path)
+    try:
+        return _normalized(json.loads(raw.decode("utf-8")))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
 
 
 def find_original(archive_path: Path, image: bytes) -> OriginalRef | None:

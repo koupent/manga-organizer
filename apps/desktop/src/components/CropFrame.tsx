@@ -150,18 +150,25 @@ function takenRegion(operation: Operation, shown: ImageSize): CropRect | null {
     return { x: left, y: upper, width: right - left, height: lower - upper };
   }
   if (operation.kind === "split") {
-    // サイドカーと同じ割り方。中央から左右へ分ける
-    const middle = Math.floor(shown.width / 2);
+    // 記録の座標系がいま見ている絵と食い違うなら描かない。ずれたまま枠を
+    // 置くと、利用者は自分が選んでいない範囲を前回の範囲として見せられ、
+    // そのまま確定すれば別の場所が切り出される。切り抜きの枠と同じ構え
+    if (typeof params.width === "number" && params.width !== shown.width) {
+      return null;
+    }
+    // #58 より前に書かれた本の記録には位置が無い。そちらは今までどおり
+    // サイドカーと同じ既定（中央）に落とす
+    const at =
+      typeof params.x === "number" && Number.isFinite(params.x)
+        ? params.x
+        : Math.floor(shown.width / 2);
+    if (at <= 0 || at >= shown.width) return null;
+    // 右綴じなので、先に読む右半分が割った位置から右端まで
     if (params.side === "left") {
-      return { x: 0, y: 0, width: middle, height: shown.height };
+      return { x: 0, y: 0, width: at, height: shown.height };
     }
     if (params.side === "right") {
-      return {
-        x: middle,
-        y: 0,
-        width: shown.width - middle,
-        height: shown.height,
-      };
+      return { x: at, y: 0, width: shown.width - at, height: shown.height };
     }
   }
   return null;
