@@ -4,14 +4,19 @@
 （#16 の page_editor_server の設計を踏襲）。
 """
 
+import inspect
 import io
+import re
 import sys
 import unittest
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import NamedTuple
 from unittest import mock
 
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -27,6 +32,109 @@ def make_page(color: str = "navy") -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", (800, 1200), color).save(buffer, "JPEG")
     return buffer.getvalue()
+
+
+# いま公開している /api/ の経路数。経路を app.routes から数え直すテストが
+# 「1 つも見つからないまま合格」する空振りに落ちないための下限。経路を
+# 増やしたらここも上げる
+PUBLISHED_API_ROUTE_COUNT = 21
+
+# パスらしい引数を名前で見分ける手がかり。名前で拾う以上、これに当たらない
+# 名前を付けられれば見落とすので、拾いすぎる側に倒してある
+PATH_NAME_HINTS = (
+    "archive",
+    "path",
+    "dir",
+    "file",
+    "source",
+    "folder",
+    "target",
+    "root",
+)
+
+# ドロップされたファイルの「名前」であってパスではない。許可された場所の
+# 中から探すための手がかりなので、これ自体が外を指すことはない
+NOT_A_FILESYSTEM_PATH = frozenset({("POST", "/api/resolve", "files")})
+
+# 出力先は refuse_outside を通っていない。トークンを持つ呼び出しは許可の
+# 外へ書き出せる。ここでは事実として書き留めるだけにする。直すのはこの
+# 変更の役目ではなく、直したらこの集合から guarded_cases() へ移す
+UNGUARDED_PATH_PARAMETERS = frozenset(
+    {("POST", "/api/jobs/organize", "output_directory")}
+)
+
+
+class GuardedCase(NamedTuple):
+    """許可の外を断る経路 1 つと、その確かめ方。
+
+    ``expected`` は許可の中を指したときに返る状態。断り（400）と必ず違う値に
+    する。同じにすると「何を渡しても断る」実装でも表が通ってしまう。
+    """
+
+    method: str
+    path: str
+    parameter: str
+    build: Callable[[dict], dict]
+    shape: str
+    expected: int
+
+
+def api_routes(app) -> list[APIRoute]:
+    """/api/ 配下の経路を、宣言された場所によらず集める。
+
+    /openapi.json と /docs は APIRoute ですらなく /api/ でもないので、この
+    絞り込みだけで自然に外れる。除外の一覧を持たずに済ませるための形。
+    """
+    return [
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith("/api/")
+    ]
+
+
+def flattened_dependencies(dependant):
+    """依存を入れ子ごと平らに辿り、呼ばれるものを並べる。
+
+    FastAPI 0.141 には get_flat_dependant が無く、あっても私用の API なので
+    自前で辿る。経路と router のどちらに付けられていても同じように見つかる。
+    """
+    for sub in dependant.dependencies:
+        yield sub.call
+        yield from flattened_dependencies(sub)
+
+
+def discover_path_parameters(schema: dict) -> set[tuple[str, str, str]]:
+    """公開しているスキーマから、パスらしい引数を取る経路を数え上げる。
+
+    手で並べた一覧だけで見ていると、後から足した経路が誰にも見られないまま
+    通ってしまう。スキーマ側から数えれば、経路を足した人は「表に足す」か
+    「パスではないと言い切る」かのどちらかを選ばされる。
+
+    見るのはクエリと要求本体の直下だけで、入れ子のモデルの中までは辿らない。
+    """
+    schemas = schema.get("components", {}).get("schemas", {})
+    found: set[tuple[str, str, str]] = set()
+    for path, operations in schema["paths"].items():
+        if not path.startswith("/api/"):
+            continue
+        for method, operation in operations.items():
+            names = [parameter["name"] for parameter in operation.get("parameters", [])]
+            body = (
+                operation.get("requestBody", {})
+                .get("content", {})
+                .get("application/json", {})
+                .get("schema", {})
+            )
+            reference = body.get("$ref")
+            if reference:
+                model = schemas.get(reference.rsplit("/", 1)[-1], {})
+                names += list(model.get("properties", {}))
+            found.update(
+                (method.upper(), path, name)
+                for name in names
+                if any(hint in name.lower() for hint in PATH_NAME_HINTS)
+            )
+    return found
 
 
 class ApiTestBase(unittest.TestCase):
@@ -56,21 +164,48 @@ class ApiTestBase(unittest.TestCase):
 
 
 class AuthorizationTest(ApiTestBase):
-    def test_every_route_rejects_a_missing_token(self):
+    def test_every_route_requires_a_token(self):
+        """トークンを必須にし忘れた経路を、宣言された場所によらず見つける。
+
+        手で並べた 5 経路だけを見ていたときは、一覧に足し忘れた経路が誰にも
+        見られないまま公開されていた。app.routes から数え直せば、どこに
+        書かれていても漏れない。
+        """
         # Arrange
-        routes = [
-            ("GET", "/api/health"),
-            ("GET", "/api/pages"),
-            ("GET", "/api/thumb"),
-            ("GET", "/api/jobs"),
-            ("POST", "/api/jobs/organize"),
-        ]
+        routes = api_routes(self.app)
+        self.assertGreaterEqual(
+            len(routes),
+            PUBLISHED_API_ROUTE_COUNT,
+            "/api/ の経路が見つからない、または減っている。"
+            "経路を数えられずに空振りしていないか確かめること",
+        )
 
         # Act / Assert
-        for method, path in routes:
-            with self.subTest(route=f"{method} {path}"):
-                response = self.client.request(method, path, json={})
-                self.assertEqual(401, response.status_code)
+        for route in routes:
+            with self.subTest(route=f"{sorted(route.methods)} {route.path}"):
+                called = {
+                    getattr(call, "__name__", "")
+                    for call in flattened_dependencies(route.dependant)
+                }
+                self.assertIn(
+                    "require_token",
+                    called,
+                    f"{route.path} がトークン無しで呼べる。"
+                    "dependencies=guarded を付けること",
+                )
+
+    def test_every_route_rejects_a_missing_token(self):
+        """付け忘れの結果、つまり 401 が返ることまで確かめる。
+
+        依存が並んでいても、検証が実際に走らなければ意味がない。
+        """
+        # Act / Assert - 経路変数の値は何でもよい。トークンの検証は先に走る
+        for route in api_routes(self.app):
+            path = re.sub(r"\{[^}]+\}", "unused", route.path)
+            for method in sorted(route.methods):
+                with self.subTest(route=f"{method} {path}"):
+                    response = self.client.request(method, path, json={})
+                    self.assertEqual(401, response.status_code)
 
     def test_rejects_a_wrong_token(self):
         # Act / Assert
@@ -100,6 +235,199 @@ class OpenApiTest(ApiTestBase):
         # 載っていないと経路があっても画面から呼べない
         self.assertIn("/api/jobs/split-scan", schema["paths"])
         self.assertIn("/api/jobs/split", schema["paths"])
+
+
+class EventLoopTest(ApiTestBase):
+    def test_no_api_endpoint_is_a_coroutine(self):
+        """/api/ の処理を async def にしない。
+
+        同期の関数なら Starlette がスレッドプールへ逃がすが、async def に
+        すると同じイベントループの上で走る。ZIP の読み書きと PIL の変換は
+        止まっている時間が長いので、1 本の重い要求がループを占有し、
+        サイドカーへの他の要求が全部その後ろに並ぶ。数百ページの本を開いた
+        まま別の操作をすると画面が固まる、という形で表に出る。
+
+        この取り違えはスキーマにも既存のテストにも現れない。async を付けても
+        openapi.json は 1 バイトも変わらず、1 本ずつ叩くテストは詰まらない。
+        """
+        # Act
+        coroutines = [
+            route.path
+            for route in api_routes(self.app)
+            if inspect.iscoroutinefunction(route.endpoint)
+        ]
+
+        # Assert
+        self.assertEqual(
+            [],
+            coroutines,
+            "async def にすると ZIP と PIL の処理がイベントループを塞ぐ。"
+            "同期のまま書き、重い処理はジョブへ回すこと",
+        )
+
+
+class AllowedRootsTest(ApiTestBase):
+    """許可された場所の外を指されたら、開く前に断ることを経路ごとに見る。
+
+    openapi.json の比較では見つけられない。refuse_outside の呼び出しが 1 つ
+    抜け落ちても、公開しているスキーマは 1 バイトも変わらないため、ここが
+    唯一の網になる。
+    """
+
+    def setUp(self):
+        super().setUp()
+        outside_temp = TemporaryDirectory()
+        self.addCleanup(outside_temp.cleanup)
+        self.outside = Path(outside_temp.name)
+        self.outside_archive = self.outside / "外.zip"
+        with zipfile.ZipFile(
+            self.outside_archive, "w", zipfile.ZIP_DEFLATED
+        ) as archive:
+            for name in ("001.jpg", "002.jpg", "003.jpg"):
+                archive.writestr(name, make_page())
+
+    def scanned_rows(self, archive: str) -> tuple[str, list[dict]]:
+        """割る画面を開いたときと同じ印と行を、走査から取る。
+
+        許可の外は走査そのものが断られる。その場合は印の無いまま送るが、
+        確定は印を見るより先に場所で断るので、確かめたいことは変わらない。
+        """
+        accepted = self.client.request(
+            "POST",
+            "/api/jobs/split-scan",
+            params=self.auth(),
+            json={"archive": archive},
+        )
+        if accepted.status_code != 202:
+            return "", []
+        job = self.client.get(
+            f"/api/jobs/{accepted.json()['id']}", params=self.auth()
+        ).json()
+        result = job["result"]
+        return result["token"], [
+            {"names": row["names"], "split": None} for row in result["rows"]
+        ]
+
+    def guarded_cases(self) -> list[GuardedCase]:
+        """許可の外を断る経路を、確かめ方とともに並べる。
+
+        /api/original だけ許可の中でも 404 なのは、加工していないページには
+        元画像の記録が無いため。場所の検査そのものは通過している。
+        """
+
+        def query(**extra):
+            return lambda target: {"params": self.auth({**extra, **target})}
+
+        def body(**extra):
+            return lambda target: {"params": self.auth(), "json": {**extra, **target}}
+
+        def split_body(target):
+            token, rows = self.scanned_rows(target["archive"])
+            return {
+                "params": self.auth(),
+                "json": {"archive": target["archive"], "token": token, "rows": rows},
+            }
+
+        page = {"name": "001.jpg"}
+        return [
+            GuardedCase("GET", "/api/pages", "archive", query(), "archive", 200),
+            GuardedCase("GET", "/api/thumb", "archive", query(**page), "archive", 200),
+            GuardedCase("GET", "/api/image", "archive", query(**page), "archive", 200),
+            GuardedCase(
+                "GET", "/api/original", "archive", query(**page), "archive", 404
+            ),
+            GuardedCase("GET", "/api/cover", "archive", query(), "archive", 200),
+            GuardedCase("GET", "/api/browse", "path", query(), "directory", 200),
+            GuardedCase(
+                "POST", "/api/jobs/cover", "archive", body(**page), "archive", 202
+            ),
+            GuardedCase(
+                "POST",
+                "/api/jobs/reorder",
+                "archive",
+                body(order=["001.jpg", "002.jpg", "003.jpg"]),
+                "archive",
+                202,
+            ),
+            GuardedCase(
+                "POST", "/api/jobs/split-scan", "archive", body(), "archive", 202
+            ),
+            GuardedCase(
+                "POST", "/api/jobs/split", "archive", split_body, "archive", 202
+            ),
+            GuardedCase(
+                "POST", "/api/jobs/analyze", "archives", body(), "archive_list", 202
+            ),
+            GuardedCase(
+                "POST",
+                "/api/jobs/organize",
+                "archives",
+                body(output_directory=str(self.work_dir / "出力")),
+                "archive_list",
+                202,
+            ),
+        ]
+
+    def targets(self, shape: str, inside: bool) -> dict:
+        """経路が受け取る形に合わせて、許可の中／外を指す値を組み立てる"""
+        directory = self.work_dir if inside else self.outside
+        archive = self.archive if inside else self.outside_archive
+        if shape == "directory":
+            return {"path": str(directory)}
+        if shape == "archive_list":
+            return {"archives": [str(archive)]}
+        return {"archive": str(archive)}
+
+    def test_covers_every_route_that_takes_a_path(self):
+        """公開しているスキーマ側から数え直し、表の見落としを表に出す"""
+        # Act
+        discovered = discover_path_parameters(self.app.openapi())
+        classified = (
+            {(case.method, case.path, case.parameter) for case in self.guarded_cases()}
+            | NOT_A_FILESYSTEM_PATH
+            | UNGUARDED_PATH_PARAMETERS
+        )
+
+        # Assert
+        self.assertEqual(
+            classified,
+            discovered,
+            "パスを受け取る経路が増減している。guarded_cases() に足すか、"
+            "パスではないと言い切って集合へ足すこと",
+        )
+
+    def test_refuses_a_target_outside_the_allowed_roots(self):
+        """経路ごとに、外は断り・中は通ることを対で見る。
+
+        断りだけを見ると「何を渡しても断る」実装が合格してしまうので、
+        必ず許可の中を指した場合と組にする。
+        """
+        # Act / Assert
+        for case in self.guarded_cases():
+            with self.subTest(
+                route=f"{case.method} {case.path}", parameter=case.parameter
+            ):
+                refused = self.client.request(
+                    case.method,
+                    case.path,
+                    **case.build(self.targets(case.shape, inside=False)),
+                )
+                self.assertEqual(
+                    400,
+                    refused.status_code,
+                    f"{case.method} {case.path} の {case.parameter} が"
+                    "許可の外を開こうとしている",
+                )
+                accepted = self.client.request(
+                    case.method,
+                    case.path,
+                    **case.build(self.targets(case.shape, inside=True)),
+                )
+                self.assertEqual(
+                    case.expected,
+                    accepted.status_code,
+                    f"{case.method} {case.path} が許可の中まで断っている",
+                )
 
 
 class PagesTest(ApiTestBase):
