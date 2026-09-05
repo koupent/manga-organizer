@@ -77,6 +77,7 @@ TITLE = "作品"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "rar"
 REAL_RAR5 = FIXTURES / "rar5-subdirs.rar"
 REAL_RAR3_WITH_COMMENT = FIXTURES / "rar3-comment-plain.rar"
+REAL_RAR3_WITH_ENCRYPTED_HEADER = FIXTURES / "rar3-comment-hpsw.rar"
 
 
 def page() -> bytes:
@@ -792,6 +793,29 @@ class UnreadableRarAndSevenZipTest(TocFormatTestBase):
             [book.output_name for book in steps[root / "普通_04.rar"].books],
             f"読める RAR から本が出ていない: {steps[root / '普通_04.rar'].books}",
         )
+
+    def test_a_header_encrypted_rar_is_unreadable_while_a_plain_rar_is_not(self):
+        """目次ごと暗号化された RAR を、空の目次のまま通さないこと。
+
+        **ここが一番静かに間違う。** ``rarfile`` はこの書庫を例外も上げずに開き、
+        ``namelist()`` が空で返る。素直に書くと「読めたうえで本が 0 冊」に
+        なり、#70 で無くしたかった silent skip がそのまま残る。鍵が無い以上
+        中身は永遠に読めないので、読めなかったこととして扱う
+        （``RarFile.needs_password()`` が True になる）。
+        """
+        # Arrange - ヘッダごと暗号化された本物の RAR3 と、素直な RAR
+        root = self.work_dir / "蔵書"
+        locked = self.fixture("蔵書/施錠_02.rar", REAL_RAR3_WITH_ENCRYPTED_HEADER)
+        healthy = self.readable_rar(root)
+
+        # Arrange - 下準備の確認。例外は上がらず、目次だけが空になる
+        with without_archive_tools(), rarfile.RarFile(locked) as opened:
+            self.assertEqual([], opened.namelist())
+            self.assertTrue(opened.needs_password())
+
+        # Act / Assert
+        with without_archive_tools():
+            self.assert_only_unreadable(root, locked, healthy)
 
     def test_a_header_encrypted_7z_is_unreadable_while_a_plain_7z_is_not(self):
         # Arrange - 目次ごと暗号化された 7z（7-Zip の -mhe=on 相当）。鍵が無い

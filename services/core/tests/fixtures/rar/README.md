@@ -13,6 +13,10 @@
 |---|---|---|---|
 | `rar5-subdirs.rar` | 542 B | RAR5。`sub/dir1/file1.txt` などの下位フォルダと Unicode 名を含む | 手で組み立てた RAR3 だけでなく、**本物の RAR5 の目次も読めること**の錨 |
 | `rar3-comment-plain.rar` | 300 B | RAR3。書庫コメント付き | コメントの復号だけは外部ツールが要るため、**目次を読めない**側の実例 |
+| `rar3-comment-hpsw.rar` | 484 B | RAR3。ヘッダごと暗号化されている | 例外を上げず、**空の目次を返す**側の実例。鍵が無いので中身は永遠に読めない |
+
+`rar3-comment-hpsw.rar` が危ういのは、`rarfile` が例外を上げずに開き、`namelist()` が空になるところ。読めなかったことに気付かず「本が 0 冊」として
+通すと、#70 で直したい silent skip がそのまま残る。`needs_password()` が True。
 
 `rar3-comment-plain.rar` を手で組み立てないのは、`rarfile.rar3_decompress` が
 無圧縮（method 0x30）のコメントだけは外部ツール無しで返してしまうため。
