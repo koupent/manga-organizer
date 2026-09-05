@@ -341,6 +341,57 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/jobs/split-scan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Submit Split Scan
+     * @description 見開きを割る画面に並べる行を、ジョブとして走査する（#58 段階 2）。
+     *
+     *     数百枚の ZIP を 1 枚ずつ開くので要求の中では終わらない。パスの検証と
+     *     「そもそも開けるか」は投入のこの時点で済ませる。ジョブを作ってから
+     *     失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
+     *     残らず、画面は投入できたと思ってしまう。
+     */
+    post: operations["submit_split_scan_api_jobs_split_scan_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/jobs/split": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Submit Split
+     * @description 割った結果を書き込むジョブを投入する（#58 段階 2）。
+     *
+     *     断るものは、すべてジョブを作る前に断る。ZIP を丸ごと書き直す処理
+     *     なので、受け付けてから失敗させると、画面は割れたつもりで先へ進む。
+     *     見るのは順に、許可された場所か・走査したときから本が動いていないか
+     *     （印）・行の名前を並べたものがいまのページ順と一致するか。どこで
+     *     断ってもアーカイブは 1 バイトも変わらない。
+     */
+    post: operations["submit_split_api_jobs_split_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/jobs/analyze": {
     parameters: {
       query?: never;
@@ -795,6 +846,65 @@ export interface components {
        * @default []
        */
       searched_roots: string[];
+    };
+    /**
+     * SplitConfirmRequest
+     * @description 割った結果を書き込む依頼。行は差分ではなく全部を送る。
+     *
+     *     確定は連番を振り直すので、どのみち ZIP を丸ごと書き直す。全部あれば
+     *     「行の名前を並べたもの＝いまのページ順」をサイドカーが照合できる。
+     */
+    SplitConfirmRequest: {
+      /**
+       * Archive
+       * @description 対象アーカイブの絶対パス
+       */
+      archive: string;
+      /**
+       * Token
+       * @description 走査が返した印
+       */
+      token: string;
+      /**
+       * Rows
+       * @description ページ順に並べた行ぜんぶ
+       */
+      rows: components["schemas"]["SplitIntentRowView"][];
+    };
+    /**
+     * SplitIntentRowView
+     * @description 画面が送り返す 1 行。名前と割る位置の 2 つきり。
+     *
+     *     寸法や出どころは受け取らない。受け取ると、画面が抱えている古い寸法で
+     *     切られる余地が残る。
+     */
+    SplitIntentRowView: {
+      /**
+       * Names
+       * @description この行が占める、いま存在するページ名（割った対は 2 つ）
+       */
+      names: string[];
+      /** @description 割る位置。割らない（割る前へ戻す）なら null */
+      split: components["schemas"]["SplitPositionView"] | null;
+    };
+    /**
+     * SplitPositionView
+     * @description 割る位置。行の width / height と同じ座標系で読む
+     */
+    SplitPositionView: {
+      /** X */
+      x: number;
+    };
+    /**
+     * SplitScanRequest
+     * @description 見開きを割る画面を開くための走査の依頼
+     */
+    SplitScanRequest: {
+      /**
+       * Archive
+       * @description 対象アーカイブの絶対パス
+       */
+      archive: string;
     };
     /**
      * SuggestRequest
@@ -1395,6 +1505,78 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["ReorderRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_split_scan_api_jobs_split_scan_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SplitScanRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_split_api_jobs_split_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SplitConfirmRequest"];
       };
     };
     responses: {

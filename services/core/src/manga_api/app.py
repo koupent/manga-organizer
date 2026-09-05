@@ -21,6 +21,14 @@ from pydantic import BaseModel, Field, field_validator
 from manga_api import thumbnails
 from manga_api.analysis_job import analysis_work
 from manga_api.jobs import Job, JobCancelled, JobNotFound, JobStore
+from manga_api.split_job import (
+    SplitConfirmRequest,
+    SplitScanRequest,
+    confirm_work,
+    intent_rows,
+    refuse_stale_token,
+    scan_work,
+)
 from manga_core.cover_editor import (
     COVER_ASPECT_RATIO,
     CoverEditError,
@@ -969,6 +977,56 @@ def create_app(
             }
 
         _start(app, job_id, work)
+        return JobAccepted(id=job_id)
+
+    @app.post(
+        "/api/jobs/split-scan",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_split_scan(request: SplitScanRequest) -> JobAccepted:
+        """見開きを割る画面に並べる行を、ジョブとして走査する（#58 段階 2）。
+
+        数百枚の ZIP を 1 枚ずつ開くので要求の中では終わらない。パスの検証と
+        「そもそも開けるか」は投入のこの時点で済ませる。ジョブを作ってから
+        失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
+        残らず、画面は投入できたと思ってしまう。
+        """
+        editor = open_editor(request.archive)
+        path = editor.zip_path
+        editor.close()
+        job_id = app.state.jobs.submit("split-scan", {"archive": str(path)})
+        _start(app, job_id, scan_work(path))
+        return JobAccepted(id=job_id)
+
+    @app.post(
+        "/api/jobs/split",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_split(request: SplitConfirmRequest) -> JobAccepted:
+        """割った結果を書き込むジョブを投入する（#58 段階 2）。
+
+        断るものは、すべてジョブを作る前に断る。ZIP を丸ごと書き直す処理
+        なので、受け付けてから失敗させると、画面は割れたつもりで先へ進む。
+        見るのは順に、許可された場所か・走査したときから本が動いていないか
+        （印）・行の名前を並べたものがいまのページ順と一致するか。どこで
+        断ってもアーカイブは 1 バイトも変わらない。
+        """
+        editor = open_editor(request.archive)
+        path = editor.zip_path
+        try:
+            pages = editor.pages
+        finally:
+            editor.close()
+        refuse_stale_token(pages, request.token)
+        rows = intent_rows(pages, request.rows)
+        job_id = app.state.jobs.submit(
+            "split", {"archive": str(path), "rows": len(rows)}
+        )
+        _start(app, job_id, confirm_work(path, rows, app.state.thumbnails))
         return JobAccepted(id=job_id)
 
     @app.post(

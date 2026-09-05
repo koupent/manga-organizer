@@ -96,6 +96,10 @@ class OpenApiTest(ApiTestBase):
         schema = response.json()
         self.assertIn("/api/jobs/organize", schema["paths"])
         self.assertIn("/api/pages", schema["paths"])
+        # 見開きを割る 2 つ（#58 段階 2）。画面はここから生成した型で叩くので、
+        # 載っていないと経路があっても画面から呼べない
+        self.assertIn("/api/jobs/split-scan", schema["paths"])
+        self.assertIn("/api/jobs/split", schema["paths"])
 
 
 class PagesTest(ApiTestBase):

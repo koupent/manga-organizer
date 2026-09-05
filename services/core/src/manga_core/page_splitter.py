@@ -17,6 +17,7 @@
 """
 
 import io
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +66,12 @@ _SPLIT_KIND = "split"
 _SIDE_EARLIER = "right"
 _SIDE_LATER = "left"
 
+# 1 行に起きたこと。3 つに分けて数えるので、行ごとにどれだったかを持ち回る
+_CHANGE_NONE = "none"
+_CHANGE_SPLIT = "split"
+_CHANGE_RESTORED = "restored"
+_CHANGE_ADJUSTED = "adjusted"
+
 
 class PageSplitError(RuntimeError):
     """見開きを割れない"""
@@ -93,6 +100,41 @@ class SplitRow:
     height: int
     is_spread: bool
     split: SplitPosition | None
+
+
+@dataclass(frozen=True)
+class SplitIntent:
+    """画面が送り返してくる「こうしたい」だけの行（#58 段階 2）。
+
+    名前と割る位置の 2 つきり。寸法・出どころ・見開きの印は走査が ZIP と
+    同梱の記録から読んだ事実であって、画面はそれを送り返さない。送り返させ
+    ると、画面が抱えている古い寸法で切られる余地が残る。
+
+    ``apply_rows`` がこの型も受けるのは、**受け口が知らない欄を埋めずに
+    済ませるため**。いまの ``_apply_row`` は names と split しか見ないので、
+    寸法に 0 を詰めた ``SplitRow`` を組んでも同じ結果になる。だが詰めた 0 は
+    「幅 0 の見開き」として黙って通り、のちにコアがその欄を読み始めた日に
+    初めて牙をむく。埋める値はコアだけが決める。
+    """
+
+    names: tuple[str, ...]
+    split: SplitPosition | None
+
+
+@dataclass(frozen=True)
+class SplitResult:
+    """行ぜんぶを適用した結果（#58）。
+
+    数え方を 3 つに分けるのは、画面が「割った」「戻した」「位置を動かした」を
+    言い分けるため。1 つにまとめると、ページが 1 枚増えたことは分かっても、
+    自分のどの操作が効いたのかを利用者に言えない。
+    """
+
+    changed: bool
+    page_count: int
+    split_count: int
+    restored_count: int
+    adjusted_count: int
 
 
 def split_halves(image: Image.Image, x: int) -> tuple[Image.Image, Image.Image]:
@@ -130,9 +172,9 @@ def scan_rows(
 
 def apply_rows(
     archive_path: Path,
-    rows: Sequence[SplitRow],
+    rows: Sequence[SplitRow | SplitIntent],
     progress: ProgressCallback | None = None,
-) -> None:
+) -> SplitResult:
     """行ぜんぶを受け取り、split の変化を 1 回の書き直しで適用する。
 
     変わった行だけではなく全部を受け取るのは、書き直しがページの並びそのものを
@@ -142,6 +184,10 @@ def apply_rows(
     名前を 2 つ持つ行は、書き直す前に畳み込みと同じ規則で確かめ直す。行は
     画面から戻ってくるので、走査と確定の間にアーカイブが変われば古い名前を
     指しうる。
+
+    数えるのはここでしかできない。「位置を動かした」かどうかは、いま記録
+    されている位置と見比べて初めて決まる。受け口が行の形だけで数えると、
+    変えていない対を送り返しただけで「動かした」と報告する。
     """
     path = Path(archive_path)
     try:
@@ -152,11 +198,13 @@ def apply_rows(
         outputs: list[OutputPage] = []
         dropped: list[str] = []
         extras: dict[str, bytes] = {}
+        changes: Counter[str] = Counter()
         for row in rows:
             planned = _apply_row(editor, path, row, extras)
             outputs.extend(planned.outputs)
             dropped.extend(planned.dropped)
             extras = planned.extras
+            changes[planned.change] += 1
         editor.apply_pages(
             outputs,
             progress=progress,
@@ -167,6 +215,24 @@ def apply_rows(
         raise PageSplitError(str(error)) from error
     finally:
         editor.close()
+    return _tally(len(outputs), changes)
+
+
+def _tally(page_count: int, changes: Counter[str]) -> SplitResult:
+    """行ごとに起きたことを、画面へ返す数え方へまとめる"""
+    split = changes[_CHANGE_SPLIT]
+    restored = changes[_CHANGE_RESTORED]
+    adjusted = changes[_CHANGE_ADJUSTED]
+    return SplitResult(
+        # 1 行も動いていない確定もありうる（画面が走査の結果をそのまま
+        # 送り返したとき）。書き直したかどうかではなく、利用者の意図が
+        # 何か効いたかどうかを返す
+        changed=bool(split or restored or adjusted),
+        page_count=page_count,
+        split_count=split,
+        restored_count=restored,
+        adjusted_count=adjusted,
+    )
 
 
 @dataclass(frozen=True)
@@ -360,15 +426,21 @@ class _RowPlan:
     dropped: tuple[str, ...]
     # ここまでに積み上がった書き足しエントリ（元画像と manifest）
     extras: dict[str, bytes]
+    # この行に何が起きたか（_CHANGE_*）。数えるのは行を組むこの場所でしか
+    # できない。位置を動かしたかどうかは、記録された位置と見比べて決まる
+    change: str
 
 
 def _apply_row(
-    editor: ZipPageEditor, path: Path, row: SplitRow, extras: dict[str, bytes]
+    editor: ZipPageEditor,
+    path: Path,
+    row: SplitRow | SplitIntent,
+    extras: dict[str, bytes],
 ) -> _RowPlan:
     """1 行ぶんの出力ページと記録を組み立てる"""
     if len(row.names) == 1:
         if row.split is None:
-            return _RowPlan((OutputPage(row.names[0]),), (), extras)
+            return _RowPlan((OutputPage(row.names[0]),), (), extras, _CHANGE_NONE)
         return _split_page(editor, path, row.names[0], row.split, extras)
     if len(row.names) == 2:
         return _rewrite_pair(editor, path, row, extras)
@@ -404,11 +476,15 @@ def _split_page(
             superseded=(content_hash(stored),),
             planned=extras,
         ),
+        change=_CHANGE_SPLIT,
     )
 
 
 def _rewrite_pair(
-    editor: ZipPageEditor, path: Path, row: SplitRow, extras: dict[str, bytes]
+    editor: ZipPageEditor,
+    path: Path,
+    row: SplitRow | SplitIntent,
+    extras: dict[str, bytes],
 ) -> _RowPlan:
     """割った対を、位置を変えて割り直すか、割る前へ戻す。
 
@@ -448,6 +524,7 @@ def _rewrite_pair(
                 superseded=superseded,
                 planned=extras,
             ),
+            change=_CHANGE_RESTORED,
         )
 
     earlier, later = _halves_of(original, earlier_name, row.split.x)
@@ -465,6 +542,10 @@ def _rewrite_pair(
             superseded=superseded,
             planned=extras,
         ),
+        # 同じ位置で送り返された対は、画面が走査の結果をそのまま返しただけ。
+        # 動かしたと数えると、1 か所を割っただけの確定が「10 か所動かした」と
+        # 報告される
+        change=_CHANGE_NONE if row.split.x == pair.x else _CHANGE_ADJUSTED,
     )
 
 
