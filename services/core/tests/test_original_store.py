@@ -75,6 +75,7 @@ import contextlib
 import hashlib
 import io
 import json
+import struct
 import sys
 import threading
 import tracemalloc
@@ -235,6 +236,53 @@ def bomb_digest(prefix: bytes = b"", suffix: bytes = b"") -> str:
         digest.update(BOMB_CHUNK)
     digest.update(suffix)
     return digest.hexdigest()
+
+
+def lie_about_size(archive_path: Path, entry: str, pretend: int) -> None:
+    """展開後の大きさだけを偽った ZIP に書き換える。
+
+    申告された大きさは ZIP のヘッダに書いてあるだけで、本を配る側が自由に
+    決められる。中身と食い違っていても、展開し終えるまで誰も気付かない。
+    申告を信じて上限を判定すると、小さいと言い張るだけで素通りできてしまう。
+    """
+    raw = bytearray(archive_path.read_bytes())
+    with zipfile.ZipFile(archive_path) as archive:
+        info = archive.getinfo(entry)
+    name = entry.encode()
+
+    def patch(at: int, size_at: int, extra_at: int, extra_len: int) -> None:
+        """32 ビットの欄か、zip64 の拡張領域か、書いてある方を書き換える"""
+        if struct.unpack_from("<I", raw, size_at)[0] != 0xFFFFFFFF:
+            struct.pack_into("<I", raw, size_at, pretend)
+            return
+        # zip64 拡張領域。識別子 1 の塊の先頭 8 バイトが展開後の大きさ
+        cursor = extra_at
+        while cursor < extra_at + extra_len:
+            block, length = struct.unpack_from("<HH", raw, cursor)
+            if block == 0x0001:
+                struct.pack_into("<Q", raw, cursor + 4, pretend)
+                return
+            cursor += 4 + length
+        raise AssertionError("zip64 の拡張領域に大きさが無い")
+
+    # local file header
+    at = info.header_offset
+    if raw[at : at + 4] != b"PK\x03\x04":
+        raise AssertionError("local header が見つからない")
+    name_len, extra_len = struct.unpack_from("<HH", raw, at + 26)
+    patch(at, at + 22, at + 30 + name_len, extra_len)
+
+    # central directory
+    at = raw.find(b"PK\x01\x02")
+    while at != -1:
+        name_len, extra_len = struct.unpack_from("<HH", raw, at + 28)
+        if raw[at + 46 : at + 46 + name_len] == name:
+            patch(at, at + 24, at + 46 + name_len, extra_len)
+            break
+        at = raw.find(b"PK\x01\x02", at + 1)
+    else:
+        raise AssertionError("central directory に項目が無い")
+    archive_path.write_bytes(raw)
 
 
 def repack_with_a_bomb(
@@ -1032,6 +1080,44 @@ class OversizedMemberTest(EditedArchiveFixture):
             peak[0],
             MEMORY_ALLOWANCE,
             f"読まずに拒むはずが {peak[0] // (1024 * 1024)} MiB 確保している",
+        )
+
+    def test_refuses_an_original_that_lies_about_its_size(self):
+        # Arrange - 展開すると 128 MiB になるエントリを置き、記録をそこへ向ける
+        digest = bomb_digest()
+        entry = f"{self.store.ORIGINALS_PREFIX}{digest}.jpg"
+        repack_with_a_bomb(self.archive, entry, manifest=self.record(digest, entry))
+        ref = self.store.find_original(self.archive, self.edited)
+        self.assertIsNotNone(ref, "参照が引けない。以降の検証が意味を失う")
+
+        # Arrange - 申告だけを 1000 バイトに書き換える。上限の判定を申告に
+        # 委ねている限り、ここを小さいと言い張るだけで検査を素通りできる
+        lie_about_size(self.archive, entry, 1000)
+
+        # Arrange - 仕掛けが本物であること。申告は上限の内側なのに、
+        # 書庫は小さく、中身は 128 MiB ある
+        self.assertLess(
+            declared_size(self.archive, entry),
+            ORIGINAL_SIZE_LIMIT,
+            "申告が上限を超えている。申告を見るだけで弾けてしまう",
+        )
+        self.assertLess(
+            self.archive.stat().st_size,
+            5 * 1024 * 1024,
+            "書庫自体が大きい。小さな書庫が展開で膨らむ形になっていない",
+        )
+
+        # Act / Assert - 申告ではなく、読みながら量で決める
+        with peak_allocation() as peak:
+            with self.assertRaises(
+                self.store.OriginalStoreError,
+                msg="申告を信じて 128 MiB の元画像を返している",
+            ):
+                self.store.read_original(self.archive, ref)
+        self.assertLess(
+            peak[0],
+            MEMORY_ALLOWANCE,
+            f"読む量を抑えられず {peak[0] // (1024 * 1024)} MiB 確保している",
         )
 
 

@@ -239,11 +239,24 @@ def _read_member(path: Path, entry: str, limit: int) -> bytes:
                 )
                 raise OriginalStoreError(_UNREADABLE_MESSAGE)
             try:
-                return archive.read(entry)
+                with archive.open(entry) as member:
+                    # 申告は書いてあるだけで、中身がその通りだとは限らない。
+                    # 申告より 1 バイト多く読んで、食い違えばそこで止める。
+                    # 全部読んでから確かめると、嘘の申告 1 つで数百 MiB 掴む
+                    data = member.read(declared + 1)
             except (RuntimeError, NotImplementedError) as error:
                 # 暗号化されたエントリ、zipfile が知らない圧縮方式。
                 # ZIP としては整合しているので、開くまで分からない
                 raise OriginalStoreError(_UNREADABLE_MESSAGE) from error
+            if len(data) > declared:
+                logger.warning(
+                    "申告 %d バイトより中身が大きいエントリです: %s (%s)",
+                    declared,
+                    entry,
+                    path.name,
+                )
+                raise OriginalStoreError(_UNREADABLE_MESSAGE)
+            return data
     except (OSError, KeyError, zipfile.BadZipFile) as error:
         raise OriginalStoreError(_UNREADABLE_MESSAGE) from error
 
