@@ -341,6 +341,35 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/jobs/analyze": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Submit Analysis
+     * @description 展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。
+     *
+     *     利用者はチェックを外す前に「何が出来るのか」を見る必要がある。
+     *     整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が
+     *     そのまま実行の結果になる。
+     *
+     *     走査と目次読みはジョブに任せ、ここでは受け付けたことだけを返す。
+     *     ただしパスの検証は投入のこの時点で済ませる。ジョブを作ってから
+     *     失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
+     *     残らず、画面は投入できたと思ってしまう。
+     */
+    post: operations["submit_analysis_api_jobs_analyze_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/analyze": {
     parameters: {
       query?: never;
@@ -352,11 +381,11 @@ export interface paths {
     put?: never;
     /**
      * Analyze
-     * @description 展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。
+     * @description まとめて解析し、出来上がる本を 1 度で返す（第 3 段階の入口）。
      *
-     *     利用者はチェックを外す前に「何が出来るのか」を見る必要がある。
-     *     整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が
-     *     そのまま実行の結果になる。
+     *     画面は ``POST /api/jobs/analyze`` に移った。こちらを残しているのは
+     *     ``tests/test_plan_selection.py`` がこの入口を叩いているためで、
+     *     撤去はその移し替えと一組で行う。
      */
     post: operations["analyze_api_analyze_post"];
     delete?: never;
@@ -1417,6 +1446,42 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["ReorderRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_analysis_api_jobs_analyze_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AnalyzeRequest"];
       };
     };
     responses: {

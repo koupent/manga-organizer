@@ -285,5 +285,115 @@ class JobStoreTest(unittest.TestCase):
         self.assertEqual([second, first], listed)
 
 
+class PartialResultTest(unittest.TestCase):
+    """途中経過を result に載せる（#70 第 4 段階）。
+
+    解析は「走査で行が先に並び、目次を読めた順に本の行が生える」形になる。
+    育っていく中身を画面へ渡す場所は result しかない。いまは終わったときに
+    1 度だけ書かれるので、実行中はずっと null のままになる。
+
+    ここで求める公開契約は、進捗報告に result を足せること。
+
+        report(current=1, total=3, result={...})
+
+    進捗と同じロック・同じトランザクションで書く。別々に書くと「件数は
+    2 冊目なのに中身は 1 冊目まで」という状態が途中で見えてしまう。
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.store = JobStore(Path(self._temp.name) / "jobs.db")
+        self.addCleanup(self.store.close)
+
+    def test_a_partial_result_is_visible_while_the_job_is_still_running(self):
+        # Arrange - 途中で止め、走っている最中の見え方をその場で読む
+        job_id = self.store.submit("analyze", {})
+        released = threading.Event()
+        partial = {
+            "scanned": True,
+            "containers": ["/蔵書/a_01.zip", "/蔵書/b_02.zip"],
+            "books": [{"source": "/蔵書/a_01.zip", "entry": ""}],
+            "unreadable": [],
+        }
+
+        def work(report):
+            report(current=1, total=2, result=partial)
+            released.wait(5)
+            return {"scanned": True, "containers": [], "books": [], "unreadable": []}
+
+        worker = threading.Thread(target=self.store.run, args=(job_id, work))
+        worker.start()
+        # 後入れ先出しで片付くので、先に join を積んでおくと解放が先に走る
+        self.addCleanup(worker.join)
+        self.addCleanup(released.set)
+        worker_started = wait_until(lambda: self.store.get(job_id).result is not None)
+
+        # Assert - 途中経過と「まだ走っている」ことを 1 つの見え方から読む。
+        # 終わってから result を見るだけでは、いまの実装でも通ってしまう
+        self.assertTrue(worker_started, "実行中に途中経過が読めない")
+        observed = self.store.get(job_id)
+        self.assertEqual(partial, observed.result, f"途中経過が違う: {observed}")
+        self.assertEqual(
+            JobState.RUNNING,
+            observed.state,
+            f"終わってからしか書かれていない: {observed}",
+        )
+        self.assertEqual(
+            (1, 2),
+            (observed.current, observed.total),
+            f"途中経過を書いたら進捗が消えた: {observed}",
+        )
+
+        # Act / Assert - 最後の結果で上書きされる
+        released.set()
+        worker.join(5)
+        self.assertEqual([], self.store.get(job_id).result["containers"])
+
+    def test_a_partial_result_is_not_written_after_cancellation(self):
+        # Arrange - 1 度書いてから止められ、その後にもう 1 度書こうとする
+        job_id = self.store.submit("analyze", {})
+        first = {"scanned": True, "containers": ["/蔵書/a_01.zip"], "books": []}
+        second = {"scanned": True, "containers": ["/蔵書/a_01.zip"], "books": [{}]}
+        reported = threading.Event()
+        cancelled = threading.Event()
+        raised: list[BaseException] = []
+
+        def work(report):
+            report(current=1, total=2, result=first)
+            reported.set()
+            cancelled.wait(5)
+            # ここで止まる。止まらなければ下の result が書かれてしまう
+            report(current=2, total=2, result=second)
+            return "ok"
+
+        def runner():
+            try:
+                self.store.run(job_id, work)
+            except JobCancelled as error:
+                raised.append(error)
+
+        worker = threading.Thread(target=runner)
+        worker.start()
+        self.addCleanup(worker.join)
+        self.addCleanup(cancelled.set)
+        self.assertTrue(reported.wait(5), "最初の途中経過が書かれていない")
+
+        # Act
+        self.store.cancel(job_id)
+        cancelled.set()
+        worker.join(5)
+
+        # Assert - 報告そのものが止める。止まらないと、キャンセル後も
+        # 画面の一覧が増え続ける
+        self.assertEqual(1, len(raised), "キャンセル後の報告が素通りしている")
+        self.assertEqual(
+            first,
+            self.store.get(job_id).result,
+            "キャンセル後の途中経過まで書かれている",
+        )
+        self.assertEqual(JobState.CANCELLED, self.store.get(job_id).state)
+
+
 if __name__ == "__main__":
     unittest.main()

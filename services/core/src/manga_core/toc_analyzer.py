@@ -22,6 +22,10 @@
 
 RAR / 7z は目次の読み方が ZIP と異なるため対象外（第 5 段階）。
 
+入口は 2 つある。``analyze_stream`` は「走査 → 1 つずつ目次を読む」を 1 件ずつ
+返し、``analyze_inputs`` はそれを最後まで畳む。畳んだ結果が 1 件でも変わると、
+予告した名前と実際に出来る名前が食い違うため、後者は前者の消費者にしてある。
+
 **将来の足し方**: 「整理済みのアーカイブを判定する」（#73）は同じ目次解析を使う。
 ``_scan_directory`` は既に 1 冊分のページ名をすべて見ているので、判定はそこで
 足せる。結果は ``PlannedBook.issues`` に印を 1 つ増やす形で載せられる。
@@ -29,7 +33,7 @@ RAR / 7z は目次の読み方が ZIP と異なるため対象外（第 5 段階
 
 import logging
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -74,20 +78,88 @@ class PlannedBook:
     issues: tuple[str, ...] = ()
 
 
-def analyze_inputs(paths: Iterable[Path], author: str, title: str) -> list[PlannedBook]:
-    """投入されたパスから、出来上がる本を実行前に並べる。
+@dataclass(frozen=True)
+class AnalysisScan:
+    """走査だけが終わった状態。目次はまだ 1 つも読んでいない。
+
+    入れ物が 0 件でも必ず 1 度出す。出さないと画面の側で「まだ走査中」と
+    「1 件も見つからなかった」を区別できない。
+    """
+
+    containers: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class AnalysisStep:
+    """入れ物 1 つ分の結果。
+
+    ``error`` は目次を読めなかった理由で、読めたときは ``None``。読めなくても
+    そこで流れは止めない。1 つ壊れているだけで残り全部を諦めると、利用者は
+    原因の分からない空の一覧を見ることになる。
+    """
+
+    container: Path
+    books: tuple[PlannedBook, ...]
+    error: str | None = None
+
+
+def analyze_stream(
+    paths: Iterable[Path], author: str, title: str
+) -> Iterator[AnalysisScan | AnalysisStep]:
+    """投入されたパスを「走査 → 1 つずつ目次を読む」の流れで返す。
+
+    数百 GB の蔵書では全部読み終わるまで数分かかる。待っている間ずっと空の
+    画面を見せないよう、走査の結果を先に出し、以降は入れ物 1 つを読むごとに
+    1 件返す。呼び出し側が次を求めるまで次の目次は読まない。
 
     投入の展開は実処理と同じ ``expand_inputs`` を通す。処理順が変わると同名衝突の
     ``_1`` の付き方が変わり、予告と実際の出来上がりが食い違うため。
     """
+    containers = tuple(expand_inputs(paths))
+    yield AnalysisScan(containers=containers)
+
+    # 名前の帳簿は 1 回の解析で 1 つ。入れ物ごとに作り直すと、出力先が同じでも
+    # ``_1`` の付き方が実処理とずれる
     planner = _Planner(author, title)
-    books: list[PlannedBook] = []
-    for path in expand_inputs(paths):
-        if path.is_dir():
-            books.append(planner.plan_folder(path))
-        else:
-            books.extend(planner.plan_archive(path))
-    return books
+    for container in containers:
+        yield _read_container(planner, container)
+
+
+def _read_container(planner: "_Planner", container: Path) -> AnalysisStep:
+    """入れ物 1 つを読む。読めなくても理由を添えて返し、流れは止めない。
+
+    ``locate_books`` は ``BadZipFile`` と ``OSError`` を自分で握りつぶすので、
+    ここで受け止めるのはそれ以外（``MemoryError``・``LargeZipFile``・
+    名前の復号に失敗した場合など）になる。
+    """
+    try:
+        books = (
+            (planner.plan_folder(container),)
+            if container.is_dir()
+            else tuple(planner.plan_archive(container))
+        )
+    except Exception as error:  # noqa: BLE001 - 1 つの失敗で残りを諦めない
+        logger.warning("目次を読めませんでした: %s (%s)", container, error)
+        return AnalysisStep(
+            container=container,
+            books=(),
+            error=str(error) or type(error).__name__,
+        )
+    return AnalysisStep(container=container, books=books, error=None)
+
+
+def analyze_inputs(paths: Iterable[Path], author: str, title: str) -> list[PlannedBook]:
+    """投入されたパスから、出来上がる本を実行前に並べる。
+
+    途中経過を要らない呼び出しのための入口。``analyze_stream`` を最後まで
+    畳んだだけで、返るものは 1 件も変わらない。
+    """
+    return [
+        book
+        for event in analyze_stream(paths, author, title)
+        if isinstance(event, AnalysisStep)
+        for book in event.books
+    ]
 
 
 @dataclass(frozen=True)

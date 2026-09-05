@@ -910,10 +910,63 @@
         }
       }
     },
+    "/api/jobs/analyze": {
+      "post": {
+        "summary": "Submit Analysis",
+        "description": "展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。\n\n利用者はチェックを外す前に「何が出来るのか」を見る必要がある。\n整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が\nそのまま実行の結果になる。\n\n走査と目次読みはジョブに任せ、ここでは受け付けたことだけを返す。\nただしパスの検証は投入のこの時点で済ませる。ジョブを作ってから\n失敗させると、許可の外を指したことが「失敗したジョブ」としてしか\n残らず、画面は投入できたと思ってしまう。",
+        "operationId": "submit_analysis_api_jobs_analyze_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/analyze": {
       "post": {
         "summary": "Analyze",
-        "description": "展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。\n\n利用者はチェックを外す前に「何が出来るのか」を見る必要がある。\n整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が\nそのまま実行の結果になる。",
+        "description": "まとめて解析し、出来上がる本を 1 度で返す（第 3 段階の入口）。\n\n画面は ``POST /api/jobs/analyze`` に移った。こちらを残しているのは\n``tests/test_plan_selection.py`` がこの入口を叩いているためで、\n撤去はその移し替えと一組で行う。",
         "operationId": "analyze_api_analyze_post",
         "parameters": [
           {

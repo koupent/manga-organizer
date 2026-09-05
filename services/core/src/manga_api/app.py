@@ -19,6 +19,7 @@ from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 
 from manga_api import thumbnails
+from manga_api.analysis_job import PlannedBookView, analysis_work
 from manga_api.jobs import Job, JobNotFound, JobStore
 from manga_core.cover_editor import (
     COVER_ASPECT_RATIO,
@@ -100,18 +101,6 @@ class AnalyzeRequest(BaseModel):
     )
     title: str = Field(default="", description="作品名")
     author: str = Field(default="", description="著者名")
-
-
-class PlannedBookView(BaseModel):
-    """実行すると 1 冊出来る、という予告"""
-
-    source: str
-    entry: str
-    output_name: str
-    volume: int | None = None
-    issues: list[str] = Field(
-        default_factory=list, description="実行前に利用者へ見せる印"
-    )
 
 
 class AnalyzeResult(BaseModel):
@@ -988,13 +977,50 @@ def create_app(
         _start(app, job_id, work)
         return JobAccepted(id=job_id)
 
-    @app.post("/api/analyze", dependencies=guarded, response_model=AnalyzeResult)
-    def analyze(request: AnalyzeRequest) -> AnalyzeResult:
+    @app.post(
+        "/api/jobs/analyze",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_analysis(request: AnalyzeRequest) -> JobAccepted:
         """展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。
 
         利用者はチェックを外す前に「何が出来るのか」を見る必要がある。
         整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が
         そのまま実行の結果になる。
+
+        走査と目次読みはジョブに任せ、ここでは受け付けたことだけを返す。
+        ただしパスの検証は投入のこの時点で済ませる。ジョブを作ってから
+        失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
+        残らず、画面は投入できたと思ってしまう。
+        """
+        targets = [resolve_organize_target(raw) for raw in request.archives]
+        # 前回までの解析は用済み。1 件ずつ入れ物と本の一覧を抱えるうえ、
+        # 投入を編集するたびに増える。履歴を読む画面も無い
+        app.state.jobs.prune_finished("analyze")
+        job_id = app.state.jobs.submit(
+            "analyze",
+            {
+                "archives": [str(target) for target in targets],
+                "title": request.title,
+                "author": request.author,
+            },
+        )
+        _start(
+            app,
+            job_id,
+            analysis_work(targets, request.author, request.title, within_allowed),
+        )
+        return JobAccepted(id=job_id)
+
+    @app.post("/api/analyze", dependencies=guarded, response_model=AnalyzeResult)
+    def analyze(request: AnalyzeRequest) -> AnalyzeResult:
+        """まとめて解析し、出来上がる本を 1 度で返す（第 3 段階の入口）。
+
+        画面は ``POST /api/jobs/analyze`` に移った。こちらを残しているのは
+        ``tests/test_plan_selection.py`` がこの入口を叩いているためで、
+        撤去はその移し替えと一組で行う。
         """
         return AnalyzeResult(
             books=[

@@ -167,6 +167,27 @@ class JobStore:
             ).fetchall()
         return [_to_job(row) for row in rows]
 
+    def prune_finished(self, kind: str) -> None:
+        """終わっている同じ種類のジョブを、記録ごと落とす。
+
+        解析は投入の中身が変わるたびに走り直し、1 件ずつ入れ物と本の一覧を
+        result に抱える。履歴を読む画面は無いので、残しても増え続けるだけに
+        なる。走っているものは消さない。消すと、そのワーカーが書き戻す先を
+        失う。
+        """
+        unfinished = (JobState.QUEUED.value, JobState.RUNNING.value)
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM job_logs WHERE job_id IN"
+                " (SELECT id FROM jobs WHERE kind = ? AND state NOT IN (?, ?))",
+                (kind, *unfinished),
+            )
+            self._connection.execute(
+                "DELETE FROM jobs WHERE kind = ? AND state NOT IN (?, ?)",
+                (kind, *unfinished),
+            )
+            self._connection.commit()
+
     def cancel(self, job_id: str) -> None:
         """キャンセルを要求する。実行中なら次の進捗報告で止まる"""
         with self._lock:
@@ -185,18 +206,22 @@ class JobStore:
         `work` には進捗報告用の関数を渡す。キャンセル済みのジョブで報告すると
         `JobCancelled` が送出され、処理はそこで打ち切られる。
 
-        報告は「進捗（何件目か）」と「ログ 1 行」の 2 つの用途を兼ねる。
-        ログだけを出したい呼び出しは current と total を省くため、省いた
-        引数は 0 で上書きせず現在値を保つ。
+        報告は「進捗（何件目か）」「ログ 1 行」「途中経過（result）」の 3 つの
+        用途を兼ねる。用が無い引数を省いた呼び出しは、省いた分を現在値のまま
+        保つ。0 や None で上書きすると、ログだけを出したい報告が進捗を 0 に
+        戻し続けたり、進捗だけの報告が途中経過を消したりする。
         """
         if self._state_of(job_id) is JobState.CANCELLED:
             raise JobCancelled(job_id)
         self._update(job_id, state=JobState.RUNNING)
 
         def report(
-            current: int | None = None, total: int | None = None, message: str = ""
+            current: int | None = None,
+            total: int | None = None,
+            message: str = "",
+            result: Any | None = None,
         ) -> None:
-            self._report(job_id, current, total, message)
+            self._report(job_id, current, total, message, result)
 
         try:
             result = work(report)
@@ -227,23 +252,33 @@ class JobStore:
         return [row["message"] for row in reversed(rows)]
 
     def _report(
-        self, job_id: str, current: int | None, total: int | None, message: str
+        self,
+        job_id: str,
+        current: int | None,
+        total: int | None,
+        message: str,
+        result: Any | None = None,
     ) -> None:
-        """進捗とログを 1 度のロックとトランザクションで書く。
+        """進捗・ログ・途中経過を 1 度のロックとトランザクションで書く。
 
-        別々に書くと、進捗だけ進んでログが残らない状態が途中で見えてしまう。
-        キャンセルの確認も同じロックの中で行い、判定と書き込みの間に状態が
-        変わらないようにする。
+        別々に書くと、進捗だけ進んでログが残らない状態や、「件数は 2 冊目な
+        のに中身は 1 冊目まで」という状態が途中で見えてしまう。キャンセルの
+        確認も同じロックの中で、書き込みより先に行う。判定と書き込みの間に
+        状態が変わると、止めた後の途中経過まで書かれてしまう。
 
         current と total が None の報告は「ログを 1 行足すだけ」を意味する。
         整理は 1 件につき数行のログを出すので、ここで件数を書きに行くと、
-        設定された直後の進捗をログが 0 に戻し続けてしまう。
+        設定された直後の進捗をログが 0 に戻し続けてしまう。result も同じで、
+        渡されたときだけ書く。渡されない報告で消すと、解析が育てている
+        途中経過が進捗の報告 1 つで白紙に戻る。
         """
         fields: dict[str, Any] = {"message": message}
         if current is not None:
             fields["current"] = current
         if total is not None:
             fields["total"] = total
+        if result is not None:
+            fields["result"] = result
         with self._lock:
             if self._read_state(job_id) is JobState.CANCELLED:
                 raise JobCancelled(job_id)

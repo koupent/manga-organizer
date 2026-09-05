@@ -48,8 +48,8 @@ test.afterAll(() => sidecar?.stop());
 /** 著者は全部のテストで共通。作品名だけ、テストごとに変える */
 const AUTHOR = "テスト著者";
 
-/** 解析中を捉えるために、サイドカーへの往復をわざと遅くする幅 */
-const API_DELAY_MS = 2_500;
+/** 解析中を捉えるために、解析の投入をわざと遅くする幅 */
+const ANALYZE_DELAY_MS = 2_500;
 
 /** 出来上がるはずのファイル名。組み立て方は VolumeDetector と同じ */
 function volumeName(title: string, volume: number): string {
@@ -556,11 +556,11 @@ test.describe("解析した本の一覧", () => {
     makeFolder(name);
     await openOrganize(page, output);
 
-    // 解析の往復を遅くする。どの入口を叩くかは実装に任せるので、
-    // サイドカーへの往復をまとめて遅らせる（外部検索の差し替えが先に
-    // 当たるよう、この登録を先に置く）
-    await page.route("**/api/**", async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, API_DELAY_MS));
+    // 解析の投入だけを遅くする。解析はジョブになり、投入のあと状態を
+    // 何度も取りに行くので、往復をまとめて遅らせるとフォルダの追加
+    // （/api/browse）や毎回の問い合わせまで遅くなり、待ち時間が積み上がる
+    await page.route("**/api/jobs/analyze*", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, ANALYZE_DELAY_MS));
       await route.continue();
     });
     // 作品名と著者は先に埋める。未入力を理由にした無効と区別するため
