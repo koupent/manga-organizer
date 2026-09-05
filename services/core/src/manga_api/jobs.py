@@ -174,6 +174,11 @@ class JobStore:
         result に抱える。履歴を読む画面は無いので、残しても増え続けるだけに
         なる。走っているものは消さない。消すと、そのワーカーが書き戻す先を
         失う。
+
+        ただし「終わっている」は行の状態のことで、ワーカーが止まったことでは
+        ない。キャンセルはワーカーが気づくより先に行を終わりの状態にするので、
+        止めた直後の解析はここで消えうる。書き戻す先を失ったワーカーの
+        始末は ``_read_state`` を見ること。
         """
         unfinished = (JobState.QUEUED.value, JobState.RUNNING.value)
         with self._lock:
@@ -311,12 +316,20 @@ class JobStore:
             return self._read_state(job_id)
 
     def _read_state(self, job_id: str) -> JobState:
-        """状態を読む。ロックは呼び出し側で取る"""
+        """ワーカーから見た状態を読む。ロックは呼び出し側で取る。
+
+        行が消えていたらキャンセル扱いにする。解析は投入の中身が変わるたびに
+        走り直し、新しい投入はまず終わっている解析を ``prune_finished`` で
+        落とす。キャンセルはワーカーが気づくより先に行を終わりの状態にするので、
+        「まだ走っているのに行はもう無い」は例外ではなく普通に起きる。ここで
+        ``JobNotFound`` を投げると、利用者は投入を編集しただけなのに
+        「解析が失敗しました」という記録と例外を受け取ることになる。
+        """
         row = self._connection.execute(
             "SELECT state FROM jobs WHERE id = ?", (job_id,)
         ).fetchone()
         if row is None:
-            raise JobNotFound(job_id)
+            return JobState.CANCELLED
         return JobState(row["state"])
 
     def _update(self, job_id: str, **fields: Any) -> None:

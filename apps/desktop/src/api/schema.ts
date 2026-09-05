@@ -370,30 +370,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/analyze": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Analyze
-     * @description まとめて解析し、出来上がる本を 1 度で返す（第 3 段階の入口）。
-     *
-     *     画面は ``POST /api/jobs/analyze`` に移った。こちらを残しているのは
-     *     ``tests/test_plan_selection.py`` がこの入口を叩いているためで、
-     *     撤去はその移し替えと一組で行う。
-     */
-    post: operations["analyze_api_analyze_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/jobs/organize": {
     parameters: {
       query?: never;
@@ -443,14 +419,6 @@ export interface components {
        * @default
        */
       author: string;
-    };
-    /**
-     * AnalyzeResult
-     * @description 解析の結果。出来上がる本を、実行するのと同じ順に並べる
-     */
-    AnalyzeResult: {
-      /** Books */
-      books: components["schemas"]["PlannedBookView"][];
     };
     /**
      * AuthorCandidate
@@ -786,25 +754,6 @@ export interface components {
       size: number;
       /** Modified */
       modified: string;
-    };
-    /**
-     * PlannedBookView
-     * @description 実行すると 1 冊出来る、という予告
-     */
-    PlannedBookView: {
-      /** Source */
-      source: string;
-      /** Entry */
-      entry: string;
-      /** Output Name */
-      output_name: string;
-      /** Volume */
-      volume?: number | null;
-      /**
-       * Issues
-       * @description 実行前に利用者へ見せる印
-       */
-      issues?: string[];
     };
     /**
      * ReorderRequest
@@ -1492,42 +1441,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["JobAccepted"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  analyze_api_analyze_post: {
-    parameters: {
-      query?: {
-        /** @description 使い捨てトークン */
-        token?: string;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["AnalyzeRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["AnalyzeResult"];
         };
       };
       /** @description Validation Error */

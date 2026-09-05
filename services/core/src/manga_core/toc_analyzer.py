@@ -128,9 +128,10 @@ def analyze_stream(
 def _read_container(planner: "_Planner", container: Path) -> AnalysisStep:
     """入れ物 1 つを読む。読めなくても理由を添えて返し、流れは止めない。
 
-    ``locate_books`` は ``BadZipFile`` と ``OSError`` を自分で握りつぶすので、
-    ここで受け止めるのはそれ以外（``MemoryError``・``LargeZipFile``・
-    名前の復号に失敗した場合など）になる。
+    受け止めるのは壊れたアーカイブ（``BadZipFile``）・開けないアーカイブ
+    （``OSError``）のほか、``MemoryError``・``LargeZipFile``・名前の復号に
+    失敗した場合など、目次を読めなかったすべて。理由を捨てずにここまで
+    上げてくるので、画面は「目次を読めません」の印を実行前に出せる。
     """
     try:
         books = (
@@ -303,21 +304,21 @@ def _volume_issues(
 def locate_books(archive_path: Path) -> list[BookLocation]:
     """アーカイブの目次から、1 冊になる場所を拾う。
 
-    読めなかったときは空を返す。「1 冊も無い」と「読めなかった」を呼び分けて
-    いないのは、どちらでも実行前に予告できることが無い点で同じだから。
-    実行時には展開してみて初めて分かる（RAR・壊れたアーカイブ）。
+    **読めなかったときは例外がそのまま出る。** 以前は ``BadZipFile`` と
+    ``OSError`` をここで握りつぶして空を返していたが、それだと呼び出し側には
+    「読めたうえで 1 冊も無かった」として届く。壊れたアーカイブも本を持たない
+    入れ物として既定で選ばれ、印も警告も無いまま整理の実行に載ってしまう
+    （#70 第 4 段階）。読めなかったことは、握りつぶさずに上へ渡す。
+
+    目次の読み方が違うだけの形式（RAR・7z）は、読めなかったのではないので
+    空を返す。こちらは実行時に展開すれば 1 冊になる。
     """
     if archive_path.suffix.lower() not in ZIP_SUFFIXES:
         # RAR / 7z は目次の読み方が違う（第 5 段階）
         return []
-    try:
-        with zipfile.ZipFile(archive_path) as archive:
-            # 展開先は一時領域の「アーカイブ名」フォルダ。巻数はその名前から読まれる
-            return _scan(archive, _Place("", "", archive_path.stem), depth=0)
-    except (zipfile.BadZipFile, OSError) as error:
-        # 壊れたアーカイブは目次すら読めない。実行時には失敗として現れる（#62）
-        logger.warning("目次を読めませんでした: %s (%s)", archive_path, error)
-        return []
+    with zipfile.ZipFile(archive_path) as archive:
+        # 展開先は一時領域の「アーカイブ名」フォルダ。巻数はその名前から読まれる
+        return _scan(archive, _Place("", "", archive_path.stem), depth=0)
 
 
 def _scan(archive: zipfile.ZipFile, place: _Place, depth: int) -> list[BookLocation]:

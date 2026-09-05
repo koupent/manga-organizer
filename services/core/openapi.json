@@ -963,59 +963,6 @@
         }
       }
     },
-    "/api/analyze": {
-      "post": {
-        "summary": "Analyze",
-        "description": "まとめて解析し、出来上がる本を 1 度で返す（第 3 段階の入口）。\n\n画面は ``POST /api/jobs/analyze`` に移った。こちらを残しているのは\n``tests/test_plan_selection.py`` がこの入口を叩いているためで、\n撤去はその移し替えと一組で行う。",
-        "operationId": "analyze_api_analyze_post",
-        "parameters": [
-          {
-            "name": "token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "使い捨てトークン",
-              "default": "",
-              "title": "Token"
-            },
-            "description": "使い捨てトークン"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnalyzeRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnalyzeResult"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/jobs/organize": {
       "post": {
         "summary": "Submit Organize",
@@ -1101,23 +1048,6 @@
         ],
         "title": "AnalyzeRequest",
         "description": "出来上がる本を実行前に調べる依頼"
-      },
-      "AnalyzeResult": {
-        "properties": {
-          "books": {
-            "items": {
-              "$ref": "#/components/schemas/PlannedBookView"
-            },
-            "type": "array",
-            "title": "Books"
-          }
-        },
-        "type": "object",
-        "required": [
-          "books"
-        ],
-        "title": "AnalyzeResult",
-        "description": "解析の結果。出来上がる本を、実行するのと同じ順に並べる"
       },
       "AuthorCandidate": {
         "properties": {
@@ -1771,49 +1701,6 @@
         ],
         "title": "PageView",
         "description": "ページ 1 枚の情報"
-      },
-      "PlannedBookView": {
-        "properties": {
-          "source": {
-            "type": "string",
-            "title": "Source"
-          },
-          "entry": {
-            "type": "string",
-            "title": "Entry"
-          },
-          "output_name": {
-            "type": "string",
-            "title": "Output Name"
-          },
-          "volume": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Volume"
-          },
-          "issues": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Issues",
-            "description": "実行前に利用者へ見せる印"
-          }
-        },
-        "type": "object",
-        "required": [
-          "source",
-          "entry",
-          "output_name"
-        ],
-        "title": "PlannedBookView",
-        "description": "実行すると 1 冊出来る、という予告"
       },
       "ReorderRequest": {
         "properties": {

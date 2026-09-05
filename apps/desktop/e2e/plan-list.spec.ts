@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
@@ -607,5 +607,54 @@ test.describe("解析した本の一覧", () => {
 
     // Assert - 一覧そのものは出ている。空の画面を見て「無い」と言わない
     await waitForBooks(page, 4);
+  });
+
+  test("目次を読めないアーカイブに、目次を読めません の印が出る", async ({
+    page,
+  }) => {
+    // Arrange - 読める ZIP と、ZIP の名前をした壊れたファイルを 1 つずつ。
+    // 台本には差し替えない。印が出るかどうかは「サイドカーが読めなかったと
+    // 言うか」で決まるので、作り物の応答を返すと確かめたことにならない
+    const title = "壊れた作品";
+    const name = "壊れている";
+    const output = join(sidecar.workDir, `out-${name}`);
+    mkdirSync(output, { recursive: true });
+    const folder = join(sidecar.workDir, name);
+    mkdirSync(folder, { recursive: true });
+    const healthy = writeArchive(sidecar.workDir, join(name, "a_01.zip"), [
+      { name: "001.jpg", color: "#0000ff" },
+    ]);
+    const corrupt = join(folder, "b_02.zip");
+    writeFileSync(corrupt, "これは ZIP ではありません");
+
+    // Act
+    await openOrganize(page, output);
+    await fillMangaInfo(page, title);
+    await addFolder(page, name);
+    await waitForBooks(page, 1);
+
+    // Assert - 壊れたアーカイブの行は残ったまま、印が付く。第 4 段階から
+    // 本を持たない入れ物も既定で選ばれて整理されるので、印が出なければ
+    // 壊れたアーカイブは何の警告も無いまま実行に載る
+    const broken = archiveRow(page, corrupt);
+    await expect(broken, "壊れたアーカイブの行が無い").toHaveCount(1);
+    await expect(
+      broken,
+      "目次を読めなかったのに、行に印が付いていない",
+    ).toHaveAttribute("data-issues", /toc-unreadable/, { timeout: 30_000 });
+    await expect(broken.getByTestId("plan-row-issue")).toHaveText(
+      "目次を読めません",
+    );
+
+    // Assert - 対照。読めたアーカイブには付けない。全部に付ける実装では
+    // 印そのものが意味を失う
+    await expect(
+      archiveRow(page, healthy),
+      "読めているアーカイブにまで印が付いている",
+    ).toHaveAttribute("data-issues", "");
+
+    // Assert - 印は出るが、チェックは既定のまま。読めなかったことと
+    // 「整理しない」ことは別で、中身は実行時に展開して初めて分かる
+    await expect(checkOf(broken)).toHaveAttribute("aria-checked", "true");
   });
 });

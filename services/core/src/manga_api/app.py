@@ -19,8 +19,8 @@ from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 
 from manga_api import thumbnails
-from manga_api.analysis_job import PlannedBookView, analysis_work
-from manga_api.jobs import Job, JobNotFound, JobStore
+from manga_api.analysis_job import analysis_work
+from manga_api.jobs import Job, JobCancelled, JobNotFound, JobStore
 from manga_core.cover_editor import (
     COVER_ASPECT_RATIO,
     CoverEditError,
@@ -38,7 +38,7 @@ from manga_core.original_store import (
     read_original,
 )
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
-from manga_core.toc_analyzer import analyze_inputs, locate_books
+from manga_core.toc_analyzer import locate_books
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +101,6 @@ class AnalyzeRequest(BaseModel):
     )
     title: str = Field(default="", description="作品名")
     author: str = Field(default="", description="著者名")
-
-
-class AnalyzeResult(BaseModel):
-    """解析の結果。出来上がる本を、実行するのと同じ順に並べる"""
-
-    books: list[PlannedBookView]
 
 
 class OrganizeRequest(BaseModel):
@@ -1014,29 +1008,6 @@ def create_app(
         )
         return JobAccepted(id=job_id)
 
-    @app.post("/api/analyze", dependencies=guarded, response_model=AnalyzeResult)
-    def analyze(request: AnalyzeRequest) -> AnalyzeResult:
-        """まとめて解析し、出来上がる本を 1 度で返す（第 3 段階の入口）。
-
-        画面は ``POST /api/jobs/analyze`` に移った。こちらを残しているのは
-        ``tests/test_plan_selection.py`` がこの入口を叩いているためで、
-        撤去はその移し替えと一組で行う。
-        """
-        return AnalyzeResult(
-            books=[
-                PlannedBookView(
-                    source=str(book.source),
-                    entry=book.entry,
-                    output_name=book.output_name,
-                    volume=book.volume,
-                    issues=list(book.issues),
-                )
-                for book in analyze_inputs(
-                    expand_targets(request.archives), request.author, request.title
-                )
-            ]
-        )
-
     @app.post(
         "/api/jobs/organize",
         dependencies=guarded,
@@ -1132,10 +1103,16 @@ def _skipped_locations(
     if wanted is None:
         return frozenset()
     chosen = wanted.get(archive.resolve(), set())
+    try:
+        located = locate_books(archive)
+    except Exception as error:  # noqa: BLE001 - 読めないなら 1 冊も外さない
+        # 目次を読めなければ、外していい本を 1 つも特定できない。ここで
+        # 落とすと壊れた 1 つのせいで整理そのものが失敗する。読めなかった
+        # ことは解析が先に印として出しているので、黙って消えることはない
+        logger.warning("外す本を決められませんでした: %s (%s)", archive, error)
+        return frozenset()
     return frozenset(
-        location.extracted_path
-        for location in locate_books(archive)
-        if location.entry not in chosen
+        location.extracted_path for location in located if location.entry not in chosen
     )
 
 
@@ -1154,5 +1131,10 @@ def _run_quietly(app: FastAPI, job_id: str, work) -> None:
     """ワーカースレッドの例外でプロセスを落とさない"""
     try:
         app.state.jobs.run(job_id, work)
+    except JobCancelled:
+        # 打ち切りは失敗ではない。解析は投入を編集するたびに走り直して前のものを
+        # 止めるので、これを失敗として書き残すと、利用者は編集しただけで
+        # 「ジョブが失敗しました」の山を見ることになる
+        logger.debug("ジョブが打ち切られました: %s", job_id)
     except Exception:  # noqa: BLE001 - 状態は JobStore が記録済み
         logger.exception("ジョブが失敗しました: %s", job_id)

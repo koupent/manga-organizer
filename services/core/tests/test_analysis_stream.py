@@ -323,5 +323,136 @@ class UnreadableContainerTest(AnalysisStreamTestBase):
         )
 
 
+class CorruptContainerTest(AnalysisStreamTestBase):
+    """4. 目次そのものを読めなかった入れ物は、理由付きで報告する
+
+    ``locate_books`` は ``BadZipFile`` と ``OSError`` を自分で握りつぶして空を
+    返す（``toc_analyzer.py``）。``_read_container`` にはそれが「読めたうえで
+    1 冊も無かった」として届くので、壊れたアーカイブに理由が付かない。
+
+    第 4 段階から、本を 1 冊も持たない入れ物も走査の行として残り、既定で
+    選ばれてそのまま整理される。読めなかったことを誰も言わなければ、壊れた
+    アーカイブは印すら出ないまま実行に載り、失敗して初めて分かる。
+
+    ここで求める契約は「目次を読めなかった入れ物には ``error`` が入る」。
+    ただし **読めたうえで 1 冊も無い入れ物には入らない**。両方を 1 つの
+    テストに入れてあるのは、「本が 0 冊なら読めなかったことにする」実装で
+    通らないようにするため。
+    """
+
+    def steps_of(self, targets: list[Path]) -> list:
+        """入れ物ごとの報告を、読んだ順のまま取り出す"""
+        return [
+            event
+            for event in toc_analyzer.analyze_stream(
+                targets, author=AUTHOR, title=TITLE
+            )
+            if isinstance(event, toc_analyzer.AnalysisStep)
+        ]
+
+    def write_corrupt_archive(self, path: Path) -> Path:
+        """ZIP の名前をした、ZIP ではないファイル"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x00\x01 not a zip at all \x02\x03" * 16)
+        with self.assertRaises(zipfile.BadZipFile):
+            # 下準備の確認。本当に壊れていなければ、以下の検証に意味が無い
+            zipfile.ZipFile(path)
+        return path
+
+    def write_bookless_archive(self, path: Path) -> Path:
+        """壊れてはいないが、画像を 1 枚も含まない ZIP"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("おまけ/memo.txt", "画像は 1 枚も入っていません")
+        return path
+
+    def test_a_corrupt_archive_is_reported_but_an_empty_one_is_not(self):
+        # Arrange - 壊れたもの・画像の無いもの・読めるものを混ぜる。並びは
+        # 名前順（expand_inputs）なので、壊れたものの後ろにも読めるものが来る
+        folder = self.work_dir / "壊れている"
+        first = self.write_archive(folder / "a_01.zip")
+        corrupt = self.write_corrupt_archive(folder / "b_02.zip")
+        bookless = self.write_bookless_archive(folder / "c_03.zip")
+        last = self.write_archive(folder / "d_04.zip")
+        self.assertEqual(
+            [first, corrupt, bookless, last],
+            expand_inputs([folder]),
+            "下準備の並び順が想定と違う",
+        )
+
+        # Act
+        steps = self.steps_of([folder])
+        by_container = {step.container: step for step in steps}
+
+        # Assert - 壊れたものには理由が付く。空で返されると、画面に
+        # 「目次を読めません」の印が出ないまま整理へ流れる
+        self.assertIn(corrupt, by_container, f"壊れた入れ物の報告が無い: {steps}")
+        self.assertTrue(
+            by_container[corrupt].error,
+            f"壊れているのに読めなかった理由が入っていない: {by_container[corrupt]}",
+        )
+        self.assertEqual((), tuple(by_container[corrupt].books), by_container[corrupt])
+
+        # Assert - 読めたうえで 1 冊も無いものには付けない。ここが無いと
+        # 「本が 0 冊なら読めなかったことにする」実装でも上を通せる
+        self.assertIsNone(
+            by_container[bookless].error,
+            f"読めているのに読めなかったことにしている: {by_container[bookless]}",
+        )
+        self.assertEqual(
+            (), tuple(by_container[bookless].books), by_container[bookless]
+        )
+
+        # Assert - 壊れた 1 つで流れは止まらない。後ろの本まで出そろう
+        self.assertEqual(
+            [first, corrupt, bookless, last],
+            [step.container for step in steps],
+            f"壊れた入れ物で解析が打ち切られている: {steps}",
+        )
+        self.assertEqual(
+            [last],
+            [book.source for book in by_container[last].books],
+            f"壊れた入れ物の後ろが解析されていない: {by_container[last]}",
+        )
+        self.assertIsNone(by_container[first].error, by_container[first])
+        self.assertIsNone(by_container[last].error, by_container[last])
+
+    def test_an_archive_that_cannot_be_opened_is_reported(self):
+        """開こうとして OSError になる入れ物も、理由付きで報告する。
+
+        解析はジョブなので、投入から目次を読むまでには間がある。その間に
+        動かされた・消された・読み取りを許されていないアーカイブは、開いた
+        時点で ``OSError`` になる。``locate_books`` はこれも握りつぶすので、
+        壊れた ZIP と同じく黙って素通りする。
+        """
+        # Arrange - 名指しされたが、読む時点にはもう無いアーカイブ
+        folder = self.work_dir / "消えた"
+        healthy = self.write_archive(folder / "a_01.zip")
+        vanished = folder / "b_02.zip"
+        self.assertFalse(vanished.exists(), "下準備で作ってしまっている")
+
+        # Act - 走査は名指しされたファイルをそのまま通す（expand_inputs）
+        by_container = {
+            step.container: step for step in self.steps_of([healthy, vanished])
+        }
+
+        # Assert - 開けなかったことが理由として残る
+        self.assertIn(
+            vanished, by_container, f"開けない入れ物の報告が無い: {by_container}"
+        )
+        self.assertTrue(
+            by_container[vanished].error,
+            f"開けないのに読めなかった理由が入っていない: {by_container[vanished]}",
+        )
+
+        # Assert - 対照。隣の読めるアーカイブは、今までどおり本になる
+        self.assertIsNone(by_container[healthy].error, by_container[healthy])
+        self.assertEqual(
+            [healthy],
+            [book.source for book in by_container[healthy].books],
+            f"読める入れ物まで巻き添えにしている: {by_container[healthy]}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

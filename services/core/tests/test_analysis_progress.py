@@ -38,6 +38,7 @@
 """
 
 import io
+import os
 import sys
 import threading
 import time
@@ -586,6 +587,194 @@ class SilentlySkippedArchiveTest(AnalysisJobTestBase):
             ],
             self.files_under(output),
             "目次を読めないアーカイブが黙って整理されないままになっている",
+        )
+
+
+class ScanCancellationTest(AnalysisJobTestBase):
+    """5. 走っている最中の走査も、打ち切れる
+
+    解析をジョブにしたのは途中経過のためだけではない。投入を編集するたびに
+    解析は走り直し、前のものは打ち切られる。打ち切りが効かないと、蔵書を
+    歩くだけのワーカーが編集の回数だけ溜まり、画面が見ている経路まで詰まる
+    （``analysis_job`` の冒頭に書かれている、ジョブにした理由そのもの）。
+
+    ところが打ち切りを投げるのは ``JobStore._report`` だけで、走査
+    （``expand_inputs``）はその手前で最後まで走り切る。数百 GB の蔵書では
+    ここが数分あり、その間の打ち切りは何も止めない。
+
+    ここで求める契約は「走査も折々で打ち切りを見に行く」。1 件ごとである
+    必要は無い。1 パスごとにロックと確定を取ると走査そのものが重くなるので、
+    確かめるのは「全部を歩き切る前に止まる」ことにしてある。
+    """
+
+    inline = False
+
+    # 走査だけで通り抜けるフォルダの数。見張りの間隔がどうであれ「途中で
+    # 止まった」と言えるだけの数を置く
+    TREE_WIDTH = 2000
+
+    def build_walk_only_tree(self, name: str) -> tuple[Path, list[Path]]:
+        """アーカイブを 1 つも置かないフォルダの木。
+
+        目次読みが 1 件も無いので、ここで起きることは走査だけになる。
+        「目次を読み始める前に止まったか」を、他の仕事と混ぜずに見られる。
+        """
+        root = self.work_dir / name
+        folders = [root / f"{index:04d}" for index in range(self.TREE_WIDTH)]
+        for folder in folders:
+            folder.mkdir(parents=True)
+        return root, folders
+
+    def spy_on_the_walk(self, root: Path, pause_after: int | None = None):
+        """木を歩いた跡を控える。指定の件数まで来たら、そこで待たせる。
+
+        状態が "cancelled" になったことを見ても、打ち切りが効いた証拠には
+        ならない。``JobStore.cancel`` はワーカーが気づくかどうかに関わらず
+        その状態を書く。実際に歩くのをやめたかは、歩いた跡でしか分からない。
+
+        見張るのは ``os.scandir``。``os.walk`` も中でこれを呼ぶので、走査を
+        ``os.walk`` で書いても ``os.scandir`` で書いても同じ 1 つの見張りで
+        数えられる。
+        """
+        visited: list[str] = []
+        reached = threading.Event()
+        released = threading.Event()
+        pause = [pause_after]
+        original = os.scandir
+        prefix = str(root)
+
+        def spy(path=".", *args, **kwargs):
+            if str(path).startswith(prefix):
+                visited.append(str(path))
+                if pause[0] is not None and len(visited) == pause[0]:
+                    reached.set()
+                    released.wait(15)
+            return original(path, *args, **kwargs)
+
+        def disarm():
+            pause[0] = None
+
+        patcher = mock.patch.object(os, "scandir", spy)
+        patcher.start()
+        # 止めたまま片付けに入るとワーカースレッドが残るので、必ず解放する
+        self.addCleanup(patcher.stop)
+        self.addCleanup(released.set)
+        return visited, reached, released, disarm
+
+    def test_cancelling_during_the_scan_stops_the_walk(self):
+        # Arrange - 目次を読むものが 1 つも無い木。仕事は走査だけになる
+        root, folders = self.build_walk_only_tree("走査の打ち切り")
+        visited, reached, released, disarm = self.spy_on_the_walk(root, pause_after=10)
+
+        # Act - 走査の入口あたりで止め、まだ 1 つも目次を読んでいない時点で
+        # 打ち切りを頼む
+        job_id = self.accepted_id([root])
+        self.assertTrue(reached.wait(15), f"走査が始まらない: {visited}")
+        cancelled = self.client.post(
+            f"/api/jobs/{job_id}/cancel", params=self.auth(), json={}
+        )
+        self.assertEqual(202, cancelled.status_code, cancelled.text)
+        released.set()
+
+        # Assert - 残りを歩き切らずに止まる。「ちょうど 10 件目で止まる」
+        # ことは求めない（1 パスごとの見張りは重すぎる）。求めるのは、
+        # 木の半分にも届かないうちに止まること
+        limit = len(folders) // 2
+        self.assertFalse(
+            wait_until(lambda: len(visited) > limit, timeout=5.0),
+            f"打ち切ったのに走査が続いている: {len(visited)} / {len(folders)} 件",
+        )
+
+        # Assert - 対照。止めなければ木を最後まで歩く。見張りが呼ばれて
+        # いない・パスが合っていないだけの実装でも、上の「歩いていない」は
+        # 通ってしまう
+        disarm()
+        visited.clear()
+        again = self.accepted_id([root])
+        self.assertTrue(
+            wait_until(lambda: self.job(again)["state"] == "succeeded", timeout=30.0),
+            f"対照の実行が終わらない: {self.job(again)}",
+        )
+        self.assertEqual(
+            set(),
+            {str(folder) for folder in folders} - set(visited),
+            f"対照でも木を歩き切っていない: {len(visited)} / {len(folders)} 件",
+        )
+
+
+class CorruptArchiveIsNotSilentTest(AnalysisJobTestBase):
+    """6. 壊れたアーカイブを、印も付けずに整理へ通さない
+
+    第 4 段階から、本を 1 冊も持たない入れ物も走査の行として残り、既定で
+    選ばれてそのまま整理される（``SilentlySkippedArchiveTest``）。裏を返せば、
+    壊れたアーカイブも黙って整理の投入に載る。実行して失敗するまで、利用者に
+    伝わる手掛かりが 1 つも無い。
+
+    ``locate_books`` は ``BadZipFile`` と ``OSError`` を自分で握りつぶして空を
+    返すので、壊れたアーカイブは「読めたが 1 冊も無い」として届き、
+    ``unreadable`` に載らない。載らなければ画面の行に「目次を読めません」の
+    印も出ない（``PlanList`` の ``ISSUE_LABELS``）。
+    """
+
+    def write_corrupt_archive(self, path: Path) -> Path:
+        """ZIP の名前をした、ZIP ではないファイル"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x00\x01 not a zip at all \x02\x03" * 16)
+        with self.assertRaises(zipfile.BadZipFile):
+            # 下準備の確認。本当に壊れていなければ、以下の検証に意味が無い
+            zipfile.ZipFile(path)
+        return path
+
+    def write_bookless_archive(self, path: Path) -> Path:
+        """壊れてはいないが、画像を 1 枚も含まない ZIP"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("おまけ/memo.txt", "画像は 1 枚も入っていません")
+        return path
+
+    def test_a_corrupt_archive_is_reported_but_an_empty_one_is_not(self):
+        # Arrange - 壊れたもの・画像の無いもの・読めるもの
+        folder = self.work_dir / "壊れている"
+        corrupt = self.write_corrupt_archive(folder / "a_01.zip")
+        self.write_bookless_archive(folder / "b_02.zip")
+        healthy = self.write_archive(folder / "c_03.zip")
+
+        # Act
+        job = self.finished([folder])
+        result = job["result"]
+
+        # Assert - 挙がるのは壊れたものだけ。画像が無いだけの ZIP まで挙げる
+        # 実装（「本が 0 冊なら読めなかったことにする」）では通らない
+        self.assertEqual(
+            [str(corrupt)],
+            [item["source"] for item in result["unreadable"]],
+            f"読めなかったアーカイブの挙げ方が違う: {result['unreadable']}",
+        )
+        self.assertTrue(
+            result["unreadable"][0]["reason"],
+            f"読めなかった理由が入っていない: {result['unreadable'][0]}",
+        )
+
+        # Assert - 行としては残る。既定で選ばれ、実行時に展開して初めて
+        # 分かる結果に委ねる。印だけを先に出す
+        self.assertIn(
+            str(corrupt),
+            result["containers"],
+            f"壊れたアーカイブが走査の一覧から抜けている: {result['containers']}",
+        )
+
+        # Assert - 壊れた 1 つで解析は止まらない
+        self.assertEqual(
+            [str(healthy)],
+            [book["source"] for book in result["books"]],
+            f"壊れた 1 つで解析が止まっている: {result['books']}",
+        )
+
+        # Assert - 経過にも 1 行残る。進捗の message は上書きされるので、
+        # ポーリングの間隔次第で見落とす
+        self.assertTrue(
+            any(corrupt.name in line for line in job["log"]),
+            f"読めなかったことが経過に残っていない: {job['log']}",
         )
 
 

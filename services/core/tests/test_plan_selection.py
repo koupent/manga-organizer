@@ -18,6 +18,11 @@
         {"archives": [...絶対パス], "title": "作品", "author": "著者"}
       → {"books": [{"source", "entry", "output_name", "volume", "issues"}, ...]}
 
+    この入口は第 4 段階で ``POST /api/jobs/analyze`` に移り、投入は 202 を返して
+    結果は後から取りに行く形になった（``test_analysis_progress.py``）。運び方だけの
+    変更なので、以下で確かめる中身は 1 つも変えていない。運び方の差は
+    ``PlanApiTestBase.analyze`` が吸収する。
+
     ``books`` の各項目は ``toc_analyzer.PlannedBook`` をそのまま写した形にする。
     ``source`` は元のアーカイブ（または裸の画像フォルダ）の絶対パス、``entry`` は
     アーカイブ内での位置でアーカイブ全体が 1 冊なら空文字。この 2 つの組が本の
@@ -37,8 +42,10 @@
 
 import io
 import sys
+import time
 import unittest
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -70,6 +77,23 @@ def page() -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", (40, 60), "navy").save(buffer, "JPEG")
     return buffer.getvalue()
+
+
+@dataclass(frozen=True)
+class AnalyzedResponse:
+    """解析ジョブの結果を、第 3 段階の応答と同じ形で見せる包み。
+
+    解析の入口は第 4 段階でジョブに移り、投入は 202 を返して結果は後から
+    取りに行く形になった（``test_analysis_progress.py``）。この段階で確かめる
+    のは「解析が何を返すか」なので、運び方の違いだけをここで吸収する。
+    """
+
+    status_code: int
+    text: str
+    books: list[dict]
+
+    def json(self) -> dict:
+        return {"books": self.books}
 
 
 class PlanApiTestBase(unittest.TestCase):
@@ -104,9 +128,14 @@ class PlanApiTestBase(unittest.TestCase):
         return self.write_archive(path, COMPOUND_ENTRIES)
 
     def analyze(self, targets: list[Path], title: str = TITLE, author: str = AUTHOR):
-        """解析の入口を叩く。受け付けたかどうかは呼び出し側が見る"""
-        return self.client.post(
-            "/api/analyze",
+        """解析の入口を叩く。受け付けたかどうかは呼び出し側が見る。
+
+        入口は ``POST /api/jobs/analyze``（#70 第 4 段階）。受け付けられたら
+        終わるまで待ち、第 3 段階の応答と同じ形にして返す。断られた応答は
+        包まずそのまま返す。包むと 400 / 401 を確かめられない。
+        """
+        accepted = self.client.post(
+            "/api/jobs/analyze",
             params=self.auth(),
             json={
                 "archives": [str(target) for target in targets],
@@ -114,6 +143,24 @@ class PlanApiTestBase(unittest.TestCase):
                 "author": author,
             },
         )
+        if accepted.status_code != 202:
+            return accepted
+        return self.wait_for_analysis(accepted.json()["id"])
+
+    def wait_for_analysis(self, job_id: str) -> AnalyzedResponse:
+        """解析ジョブが終わるのを待ち、出来上がる本を取り出す"""
+        deadline = time.monotonic() + 30.0
+        while True:
+            response = self.client.get(f"/api/jobs/{job_id}", params=self.auth())
+            job = response.json()
+            running = job["state"] in {"queued", "running"}
+            if not running or time.monotonic() > deadline:
+                return AnalyzedResponse(
+                    status_code=200 if job["state"] == "succeeded" else 500,
+                    text=response.text,
+                    books=(job.get("result") or {}).get("books", []),
+                )
+            time.sleep(0.01)
 
     def analyzed_books(self, targets: list[Path]) -> list[dict]:
         """解析が返した本の一覧。応答の形もここで確かめる"""
@@ -240,7 +287,7 @@ class PlanAnalysisTest(PlanApiTestBase):
 
         # Act
         response = self.client.post(
-            "/api/analyze",
+            "/api/jobs/analyze",
             json={"archives": [str(folder)], "title": TITLE, "author": AUTHOR},
         )
 
