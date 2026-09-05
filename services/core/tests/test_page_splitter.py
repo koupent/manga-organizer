@@ -505,5 +505,85 @@ class RestoresTheOriginalTest(SplitFixture):
         self.assertEqual(1, len(originals_of(self.archive_path)))
 
 
+class SplitsSeveralSpreadsAtOnceTest(SplitFixture):
+    """1 回の確定で見開きを 2 つ割る。
+
+    画面は変えた行だけでなく全行を送り返すので、1 回の書き直しで複数の
+    見開きが割られる。記録はアーカイブの中の 1 つの manifest に集まるため、
+    1 枚ぶんずつ独立に組み立てると、後の 1 枚が前の 1 枚の記録を消す。
+
+    消えた側は開き直しても対として畳まれず、ただの 2 ページになる。
+    利用者から見ると、割った覚えのある見開きの片方だけが、二度と
+    位置を直せなくなる。
+    """
+
+    def build_two_spreads(self) -> None:
+        """見開き・縦・見開き。間に縦を挟み、隣接だけで畳んでいないことも見る"""
+        build_archive(
+            self.archive_path,
+            {
+                "p1.png": spread_bytes(),
+                "p2.png": tall_bytes("#202020"),
+                "p3.png": spread_bytes(width=1200, height=900, stripe_x=700),
+            },
+        )
+
+    def test_records_every_spread_split_in_the_same_save(self):
+        # Arrange
+        self.build_two_spreads()
+        rows = list(self.splitter.scan_rows(self.archive_path))
+        self.assertEqual(3, len(rows))
+        # 対照 - 2 枚とも見開きとして拾えている。ここが 1 枚だと
+        # 「まとめて割る」状況そのものが作れていない
+        self.assertEqual(
+            [True, False, True], [row.is_spread for row in rows], f"素材が違う: {rows}"
+        )
+
+        # Act - 2 つとも、別々の位置で割って 1 回で確定する
+        positions = {0: SPLIT_X, 2: 700}
+        self.splitter.apply_rows(
+            self.archive_path,
+            [
+                replace(row, split=self.splitter.SplitPosition(x=positions[index]))
+                if index in positions
+                else row
+                for index, row in enumerate(rows)
+            ],
+        )
+
+        # Assert - 3 ページが 5 ページになる
+        names = page_names(self.archive_path)
+        self.assertEqual(5, len(names), f"ページ数が合わない: {names}")
+
+        # Assert - 割った 4 枚ぶんの記録が全部残っている。個数ではなく
+        # 中身のハッシュで見る。個数だけだと、片方の記録が消えて別の
+        # 何かが増えても釣り合ってしまう
+        halves = {
+            content_hash(entry_data(self.archive_path, names[index]))
+            for index in (0, 1, 3, 4)
+        }
+        self.assertEqual(
+            halves,
+            set(derived_of(self.archive_path)),
+            "同じ保存で割った見開きの、片方の記録が失われている",
+        )
+
+        # Assert - 元画像は見開きの数だけ。2 枚とも遡れる
+        self.assertEqual(2, len(originals_of(self.archive_path)))
+
+        # Assert - 開き直すと、どちらも対として畳まれる。これが
+        # 利用者に見える結果で、記録が欠けた側はここでただの 2 ページになる
+        reopened = list(self.splitter.scan_rows(self.archive_path))
+        self.assertEqual(
+            [2, 1, 2],
+            [len(row.names) for row in reopened],
+            f"畳まれ方が違う: {[row.names for row in reopened]}",
+        )
+        self.assertEqual(
+            [SPLIT_X, None, 700],
+            [row.split.x if row.split else None for row in reopened],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
