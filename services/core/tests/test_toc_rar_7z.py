@@ -525,7 +525,7 @@ class NestedRarAndSevenZipTest(TocFormatTestBase):
     def test_a_rar_inside_a_zip_is_read_without_extracting_it(self):
         # Arrange - 外側 ZIP の中に RAR。比較用に、同じ形で中身が ZIP のものも
         # 作る。実処理は入れ子を `_extracted_内_05_rar` へ展開し、その名前から
-        # 巻数を読むので、05 ではなく並び順の 1 になる（#74 の既知の欠陥）
+        # 巻数を読む。接頭辞と形式の接尾辞を外した `内_05` から 5 巻になる（#74）
         inner_rar = rar_with(self.work_dir / "素材" / "内_05.rar", pages())
         inner_zip = zip_with(self.work_dir / "素材" / "内_05.zip", pages())
         rar_root = self.work_dir / "rar" / "蔵書"
@@ -543,19 +543,23 @@ class NestedRarAndSevenZipTest(TocFormatTestBase):
         with_rar = self.analyze(self.work_dir / "rar")
         with_zip = self.analyze(self.work_dir / "zip")
 
-        # Assert - ZIP 側の基準。中の ZIP と外の 表紙 で 2 冊
+        # Assert - ZIP 側の基準。中の ZIP と外の 表紙 で 2 冊。
+        # 内_05.zip は自分の名前から 5 巻（#74）。数字を持たない 表紙 だけが
+        # 並び順の 2 巻に落ち、そちらには volume-uncertain の印が残る
         self.assertEqual(
             [
-                ("内_05.zip", "[著者] 作品 第001巻.zip", 1, ("volume-uncertain",)),
+                ("内_05.zip", "[著者] 作品 第005巻.zip", 5, ()),
                 ("表紙", "[著者] 作品 第002巻.zip", 2, ("volume-uncertain",)),
             ],
             self.shape(with_zip),
             f"比較の基準になる ZIP 側が想定と違う: {self.shape(with_zip)}",
         )
 
-        # Assert - 中身が RAR でも同じ 2 冊。位置だけが拡張子ぶん違う
+        # Assert - 中身が RAR でも同じ 2 冊。位置だけが拡張子ぶん違う。
+        # 展開先は `_extracted_内_05_rar` なので、接尾辞 `_rar` を落とさないと
+        # ここだけ巻数が変わる
         self.assertEqual(
-            [("内_05.rar", "[著者] 作品 第001巻.zip", 1, ("volume-uncertain",))]
+            [("内_05.rar", "[著者] 作品 第005巻.zip", 5, ())]
             + self.shape(with_zip)[1:],
             self.shape(with_rar),
             "ZIP の中の RAR から出来る本が、ZIP の中の ZIP と食い違う",
@@ -580,20 +584,20 @@ class NestedRarAndSevenZipTest(TocFormatTestBase):
         with_7z = self.analyze(self.work_dir / "7z")
         with_zip = self.analyze(self.work_dir / "zip")
 
-        # Assert - ZIP 側の基準
+        # Assert - ZIP 側の基準（#74。内_05.zip は自分の名前から 5 巻）
         self.assertEqual(
             [
-                ("内_05.zip", "[著者] 作品 第001巻.zip", 1, ("volume-uncertain",)),
+                ("内_05.zip", "[著者] 作品 第005巻.zip", 5, ()),
                 ("表紙", "[著者] 作品 第002巻.zip", 2, ("volume-uncertain",)),
             ],
             self.shape(with_zip),
             f"比較の基準になる ZIP 側が想定と違う: {self.shape(with_zip)}",
         )
 
-        # Assert
+        # Assert - 展開先は `_extracted_内_05_7z`。接尾辞 `_7z` には数字の 7 が
+        # 入っているので、落とし損ねると 5 巻が 7 巻になる
         self.assertEqual(
-            [("内_05.7z", "[著者] 作品 第001巻.zip", 1, ("volume-uncertain",))]
-            + self.shape(with_zip)[1:],
+            [("内_05.7z", "[著者] 作品 第005巻.zip", 5, ())] + self.shape(with_zip)[1:],
             self.shape(with_7z),
             "ZIP の中の 7z から出来る本が、ZIP の中の ZIP と食い違う",
         )
@@ -617,10 +621,10 @@ class NestedRarAndSevenZipTest(TocFormatTestBase):
         from_7z = self.analyze(self.work_dir / "7z")
         from_zip = self.analyze(self.work_dir / "zip")
 
-        # Assert - ZIP 側の基準
+        # Assert - ZIP 側の基準（#74。内_05.zip は自分の名前から 5 巻）
         self.assertEqual(
             [
-                ("内_05.zip", "[著者] 作品 第001巻.zip", 1, ("volume-uncertain",)),
+                ("内_05.zip", "[著者] 作品 第005巻.zip", 5, ()),
                 ("表紙", "[著者] 作品 第002巻.zip", 2, ("volume-uncertain",)),
             ],
             self.shape(from_zip),
@@ -919,14 +923,16 @@ class NoExternalToolTest(TocFormatTestBase):
         # 7-Zip の入った開発機で通り、この環境と CI と利用者の機械で落ちる
         self.assertEqual([], attempts, f"外部ツールを起動しにいった: {attempts}")
 
-        # Assert - 道具が無くても本は出る。0 冊で「起動しなかった」では意味が無い
+        # Assert - 道具が無くても本は出る。0 冊で「起動しなかった」では意味が無い。
+        # 003 / 007 は 分冊.7z の巻フォルダ、004 は raw_04.rar、
+        # 005 / 009 は 外_00.zip の中の 内_05.rar / 内_09.7z（#74 で名前から読む）
         self.assertEqual(
             [
-                "[著者] 作品 第001巻.zip",
-                "[著者] 作品 第002巻.zip",
                 "[著者] 作品 第003巻.zip",
                 "[著者] 作品 第004巻.zip",
+                "[著者] 作品 第005巻.zip",
                 "[著者] 作品 第007巻.zip",
+                "[著者] 作品 第009巻.zip",
             ],
             sorted(book.output_name for book in books),
             f"外部ツール無しで目次を読み切れていない: {self.shape(books)}",
