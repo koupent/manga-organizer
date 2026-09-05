@@ -910,6 +910,112 @@
         }
       }
     },
+    "/api/jobs/split-scan": {
+      "post": {
+        "summary": "Submit Split Scan",
+        "description": "見開きを割る画面に並べる行を、ジョブとして走査する（#58 段階 2）。\n\n数百枚の ZIP を 1 枚ずつ開くので要求の中では終わらない。パスの検証と\n「そもそも開けるか」は投入のこの時点で済ませる。ジョブを作ってから\n失敗させると、許可の外を指したことが「失敗したジョブ」としてしか\n残らず、画面は投入できたと思ってしまう。",
+        "operationId": "submit_split_scan_api_jobs_split_scan_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitScanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/split": {
+      "post": {
+        "summary": "Submit Split",
+        "description": "割った結果を書き込むジョブを投入する（#58 段階 2）。\n\n断るものは、すべてジョブを作る前に断る。ZIP を丸ごと書き直す処理\nなので、受け付けてから失敗させると、画面は割れたつもりで先へ進む。\n見るのは順に、許可された場所か・走査したときから本が動いていないか\n（印）・行の名前を並べたものがいまのページ順と一致するか。どこで\n断ってもアーカイブは 1 バイトも変わらない。",
+        "operationId": "submit_split_api_jobs_split_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/analyze": {
       "post": {
         "summary": "Submit Analysis",
@@ -1783,6 +1889,95 @@
         ],
         "title": "ResolveResult",
         "description": "見つかったもの、見つからなかったもの、絞りきれなかったもの"
+      },
+      "SplitConfirmRequest": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive",
+            "description": "対象アーカイブの絶対パス"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token",
+            "description": "走査が返した印"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/SplitIntentRowView"
+            },
+            "type": "array",
+            "title": "Rows",
+            "description": "ページ順に並べた行ぜんぶ"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive",
+          "token",
+          "rows"
+        ],
+        "title": "SplitConfirmRequest",
+        "description": "割った結果を書き込む依頼。行は差分ではなく全部を送る。\n\n確定は連番を振り直すので、どのみち ZIP を丸ごと書き直す。全部あれば\n「行の名前を並べたもの＝いまのページ順」をサイドカーが照合できる。"
+      },
+      "SplitIntentRowView": {
+        "properties": {
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Names",
+            "description": "この行が占める、いま存在するページ名（割った対は 2 つ）"
+          },
+          "split": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SplitPositionView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "割る位置。割らない（割る前へ戻す）なら null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "names",
+          "split"
+        ],
+        "title": "SplitIntentRowView",
+        "description": "画面が送り返す 1 行。名前と割る位置の 2 つきり。\n\n寸法や出どころは受け取らない。受け取ると、画面が抱えている古い寸法で\n切られる余地が残る。"
+      },
+      "SplitPositionView": {
+        "properties": {
+          "x": {
+            "type": "integer",
+            "title": "X"
+          }
+        },
+        "type": "object",
+        "required": [
+          "x"
+        ],
+        "title": "SplitPositionView",
+        "description": "割る位置。行の width / height と同じ座標系で読む"
+      },
+      "SplitScanRequest": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive",
+            "description": "対象アーカイブの絶対パス"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive"
+        ],
+        "title": "SplitScanRequest",
+        "description": "見開きを割る画面を開くための走査の依頼"
       },
       "SuggestRequest": {
         "properties": {
