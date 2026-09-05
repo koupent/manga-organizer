@@ -1,5 +1,11 @@
 import { FolderOpen, Package, TriangleAlert, Upload } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { parentDirectory } from "../path";
 import { resolveDroppedPaths } from "../lib/dropped";
 import { cn } from "../lib/utils";
@@ -113,20 +119,27 @@ export function FilePicker({
   const locked = useRef(disabled);
   locked.current = disabled;
 
-  const load = (path = "") => {
-    client
-      .browse(path)
-      .then((result) => {
-        setLocation({ path: result.path, parent: result.parent ?? null });
-        setEntries(result.entries as BrowseEntry[]);
-        setError("");
-      })
-      .catch((reason) => setError(String(reason.message ?? reason)));
-  };
+  // 描画のたびに作り直すと、これを切っ掛けにする効果が毎回走る。
+  // client は接続できたときに一度作るきりなので、ここで留めておく
+  const load = useCallback(
+    (path = "") => {
+      client
+        .browse(path)
+        .then((result) => {
+          setLocation({ path: result.path, parent: result.parent ?? null });
+          setEntries(result.entries as BrowseEntry[]);
+          setError("");
+        })
+        .catch((reason) => setError(String(reason.message ?? reason)));
+    },
+    [client],
+  );
 
+  // 辿り始めたときに、まだ何も読んでいなければ根から読む。読み込めた後は
+  // location.path が埋まるので、この効果が走り直しても何もしない
   useEffect(() => {
     if (browsing && !location.path) load();
-  }, [browsing]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [browsing, location.path, load]);
 
   /**
    * 一覧を書き換える唯一の入り口。

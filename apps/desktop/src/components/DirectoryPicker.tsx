@@ -1,5 +1,5 @@
 import { ChevronUp, Folder, FolderOpen } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import { Button } from "./ui/button";
 import { CardHeader } from "./ui/card";
@@ -33,18 +33,26 @@ export function DirectoryPicker({
   });
   const [entries, setEntries] = useState<Entry[]>([]);
 
-  const load = (path = "") => {
-    client.browse(path).then((result) => {
-      setLocation({ path: result.path, parent: result.parent ?? null });
-      setEntries(
-        (result.entries as Entry[]).filter((entry) => entry.is_directory),
-      );
-    });
-  };
+  // 描画のたびに作り直すと、これを切っ掛けにする効果が毎回走る。
+  // client は接続できたときに一度作るきりなので、ここで留めておく
+  const load = useCallback(
+    (path = "") => {
+      client.browse(path).then((result) => {
+        setLocation({ path: result.path, parent: result.parent ?? null });
+        setEntries(
+          (result.entries as Entry[]).filter((entry) => entry.is_directory),
+        );
+      });
+    },
+    [client],
+  );
 
+  // 開いたときに、まだ何も読んでいなければ手で入れてある所から読む。
+  // 読み込めた後は location.path が埋まるので、この効果が走り直しても
+  // 何もしない。開いている間は重ねて出しているので value も動かない
   useEffect(() => {
     if (open && !location.path) load(value || "");
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, location.path, load, value]);
 
   return (
     <div className="flex flex-col gap-1.5">

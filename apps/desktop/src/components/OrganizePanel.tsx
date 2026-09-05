@@ -408,8 +408,12 @@ export function OrganizePanel({
       controller.abort();
       stopAnalysis();
     };
-    // title と author は依存に入れない（上の理由）
-  }, [client, sources]); // eslint-disable-line react-hooks/exhaustive-deps
+    // title と author は依存に入れない（上の理由）。この 2 つは組み立てに
+    // 使うだけの材料で、読み直す切っ掛けではない。依存に入れると 1 文字
+    // 打つたびに目次を読み直しに行く。exhaustive-deps は「読んでいる値は
+    // すべて切っ掛け」としか言えないため、ここでは規則の側が合わない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, sources]);
 
   const rows = useMemo(
     () =>
@@ -511,10 +515,13 @@ export function OrganizePanel({
 
   // 隠れている間に止めた監視を、戻ってきたところで引き継ぐ。
   // 切っ掛けは active だけにする。watchJob は描画のたびに作り直されるので、
-  // 依存に入れると往復と関係なく二重に見に行く
+  // 依存に入れると往復と関係なく二重に見に行く。useCallback で留めるには
+  // watchJob が呼ぶ loadEntries から先まで留め直すことになり、この画面の
+  // 状態の持ち方ごと変える話になるので、ここでは規則を外す
   useEffect(() => {
     if (active && jobId.current) void watchJob(jobId.current);
-  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   const run = async () => {
     // 主操作は足りないものがある間は押せない。ここで弾くのは、押せない

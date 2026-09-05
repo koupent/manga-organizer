@@ -53,6 +53,9 @@ export function CoverPreview({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [source, setSource] = useState<HTMLImageElement | null>(null);
   const height = width / TARGET_RATIO;
+  // 原稿の寸法は値で取り出しておく。呼び出し元は描画のたびに入れ物を
+  // 作り直すので、入れ物のまま持つと中身が同じでも別物として扱われる
+  const { width: imageWidth, height: imageHeight } = image;
 
   useEffect(() => {
     // 画面に貼らない Image で読む。document.images に混ざらないので、
@@ -106,14 +109,16 @@ export function CoverPreview({
     );
     context.scale(scale, scale);
     context.translate(-crop.x, -crop.y);
-    turnContext(context, angle, rotatedSize(image, angle));
-    context.drawImage(source, 0, 0, image.width, image.height);
-    // 依存は値そのもので並べる。呼び出し元が毎回作り直す入れ物の同一性で
-    // 描き直すと、何も変わっていない描画を繰り返すことになる
+    turnContext(
+      context,
+      angle,
+      rotatedSize({ width: imageWidth, height: imageHeight }, angle),
+    );
+    context.drawImage(source, 0, 0, imageWidth, imageHeight);
   }, [
     source,
-    image.width,
-    image.height,
+    imageWidth,
+    imageHeight,
     angle,
     crop.x,
     crop.y,
