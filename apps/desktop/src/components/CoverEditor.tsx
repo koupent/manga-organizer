@@ -90,6 +90,8 @@ type CoverEditorProps = {
   archive: string;
   archiveName?: string;
   onChangeArchive?: () => void;
+  /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
+  onArchiveChanged?: () => void;
 };
 
 /**
@@ -107,6 +109,7 @@ export function CoverEditor({
   archive,
   archiveName,
   onChangeArchive,
+  onArchiveChanged,
 }: CoverEditorProps) {
   const [pages, setPages] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
@@ -219,6 +222,9 @@ export function CoverEditor({
       if (produced?.name) setSelected(produced.name);
       setStatus("表紙を加工しました");
       setReloadKey((key) => key + 1);
+      // 先頭へ移すと連番が振り直される。この本を抱えている他の画面は、
+      // そのままでは無くなった名前のページを並べ続ける
+      onArchiveChanged?.();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {

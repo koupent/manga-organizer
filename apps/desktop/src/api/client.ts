@@ -37,6 +37,32 @@ type ResolveResult =
   paths["/api/resolve"]["post"]["responses"][200]["content"]["application/json"];
 type JobAccepted =
   paths["/api/jobs/reorder"]["post"]["responses"][202]["content"]["application/json"];
+export type SplitConfirmRequest =
+  paths["/api/jobs/split"]["post"]["requestBody"]["content"]["application/json"];
+
+/**
+ * 失敗の理由だけを取り出す。
+ *
+ * 断られた要求の本文は `{"detail":"..."}` という JSON で届く。そのまま状態欄へ
+ * 出すと、利用者は理由を JSON の殻ごと読まされる。読める理由が取り出せない
+ * ときは、握り潰さずに元の文字列を返す。
+ */
+export function sidecarReason(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof (parsed as { detail?: unknown }).detail === "string"
+    ) {
+      return (parsed as { detail: string }).detail;
+    }
+  } catch {
+    // JSON でなければ、そのままの文字列が理由
+  }
+  return raw;
+}
 
 /** ジョブ待ちの調整。signal で呼び出し側から打ち切れる */
 type WaitForJobOptions = {
@@ -116,6 +142,21 @@ export class SidecarClient {
 
   reorder(archive: string, order: string[]): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/reorder", { archive, order });
+  }
+
+  /**
+   * ページ分割の画面に並べる行を走査する（#58 段階 3）。
+   *
+   * 数百枚の ZIP を 1 枚ずつ開くので、返るのはジョブの番号だけ。途中経過は
+   * `waitForJob` で受け取る。
+   */
+  splitScan(archive: string): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/split-scan", { archive });
+  }
+
+  /** 割った結果を書き込む。行は差分ではなくページ順に全部を送る */
+  applySplit(request: SplitConfirmRequest): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/split", request);
   }
 
   /** ドロップされたファイルを実パスに結びつける */

@@ -138,6 +138,8 @@ type PageGridProps = {
   onSaved?: (message: string) => void;
   /** 別のアーカイブを選び直す。渡さなければ選び直す導線を出さない */
   onChangeArchive?: () => void;
+  /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
+  onArchiveChanged?: () => void;
 };
 
 /** サムネイルを並べ、ドラッグで順番を入れ替えて保存する */
@@ -149,6 +151,7 @@ export function PageGrid({
   active = true,
   onSaved,
   onChangeArchive,
+  onArchiveChanged,
 }: PageGridProps) {
   const original = useMemo(() => pages.map((page) => page.name), [pages]);
   // 表示サイズはこの画面だけの設定なので、この画面が持つ。
@@ -286,6 +289,9 @@ export function PageGrid({
       setStatus(message);
       setHistory([]);
       onSaved?.(message);
+      // 並べ替えると連番が振り直され、同じ名前が別の絵を指す。
+      // この本を抱えている他の画面は、そのままでは古い中身を見せ続ける
+      onArchiveChanged?.();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
