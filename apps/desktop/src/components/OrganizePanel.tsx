@@ -2,14 +2,15 @@ import { BookMarked, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import {
-  allLeaves,
   buildPlanRows,
   droppedBookCount,
+  effectiveExcluded,
   keptBooks,
   keptIssueCounts,
   outputNames,
   selectedBooks,
   toggleLeaves,
+  toggleTargets,
   type PlanRow,
   type PlannedBook,
 } from "../lib/plan";
@@ -96,6 +97,65 @@ function organizeResult(result: unknown): {
   return { produced: value?.produced ?? [], failed: value?.failed ?? [] };
 }
 
+/**
+ * 解析ジョブから読み取った、いまの解析の様子。
+ *
+ * 走っているかどうかまで同じジョブから決めるのは、行の中身と「解析中」の
+ * 表示がずれないようにするため。別々に持つと、本が出そろっているのに主操作が
+ * 押せない（あるいはその逆）という食い違いが起こる。
+ */
+type Analysis = {
+  running: boolean;
+  /** 走査で見つかった入れ物。処理する順 */
+  containers: string[];
+  /** 目次を読めた入れ物から出来る本 */
+  books: PlannedBook[];
+  /** 目次を読めなかった入れ物 */
+  unreadable: string[];
+};
+
+const IDLE_ANALYSIS: Analysis = {
+  running: false,
+  containers: [],
+  books: [],
+  unreadable: [],
+};
+
+/**
+ * 解析ジョブの結果から、一覧に要るものを取り出す。
+ *
+ * 走り始めた直後の結果は空なので、受け取る側が毎回それを気にしなくて済むよう
+ * ここで形を揃える。
+ */
+function analysisResult(result: unknown): Omit<Analysis, "running"> {
+  const value = result as {
+    containers?: string[];
+    books?: PlannedBook[];
+    unreadable?: { source: string; reason: string }[];
+  } | null;
+  return {
+    containers: value?.containers ?? [],
+    books: value?.books ?? [],
+    unreadable: (value?.unreadable ?? []).map((item) => item.source),
+  };
+}
+
+/**
+ * 応答が前と同じかを見分ける印。
+ *
+ * 解析の途中経過は入れ物 1 つを読むごとにしか書かれないので、その合間の
+ * 応答は前と同じものになる。中身を突き合わせると、1 万冊の一覧を毎回
+ * 比べることになるため、動く所だけを見る。
+ */
+function snapshotMark(job: {
+  updated_at: string;
+  state: string;
+  current: number;
+  total: number;
+}): string {
+  return [job.updated_at, job.state, job.current, job.total].join("/");
+}
+
 type OrganizePanelProps = {
   client: SidecarClient;
   /** いま見えている画面かどうか。隠れている間はジョブの監視を止める */
@@ -138,9 +198,8 @@ export function OrganizePanel({
   const [log, setLog] = useState<string[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
 
-  // 解析で分かった、出来上がる本。走査が終わるまでは空
-  const [books, setBooks] = useState<PlannedBook[]>([]);
-  const [analyzing, setAnalyzing] = useState(false);
+  // 解析で分かったこと。走査が終わるまでは入れ物も空
+  const [analysis, setAnalysis] = useState<Analysis>(IDLE_ANALYSIS);
 
   // 利用者がチェックを外した葉。既定は全部オンなので、覚えるのは外した方だけ。
   // オンの側を覚えると、解析で本の行が増えたときに既定がオフになってしまう
@@ -288,47 +347,104 @@ export function OrganizePanel({
    */
   useEffect(() => {
     if (sources.length === 0) {
-      setBooks([]);
-      setAnalyzing(false);
+      setAnalysis(IDLE_ANALYSIS);
       return;
     }
     const controller = new AbortController();
-    setAnalyzing(true);
+    // 投入が変われば前の解析は用済み。番号が分かる前に変わることもあるので、
+    // run() / cancel() と同じように「見限った」ことを残しておき、番号を得た
+    // 直後に届ける。届けないと、読む必要のなくなった目次をサイドカーが
+    // 読み続け、画面が見ている経路まで詰まる
+    let analyzeId: string | null = null;
+    let abandoned = false;
+    const stopAnalysis = () => {
+      if (analyzeId) void client.cancelJob(analyzeId).catch(() => undefined);
+    };
+
+    // 投入した瞬間から解析中。往復を待つ間に主操作を押せてしまわないよう、
+    // ジョブの番号が返るより先に立てる
+    setAnalysis({ ...IDLE_ANALYSIS, running: true });
+    // 前と同じ応答は、行を組み直さずに見送る
+    let seen = "";
+
+    // 投入そのものは中断しない。応答を捨てると、サイドカーが作ったジョブの
+    // 番号が分からなくなり、要らなくなった解析を止められなくなる
     client
-      .analyze(sources, title, author, controller.signal)
-      .then((result) => {
-        if (controller.signal.aborted) return;
-        setBooks(result.books as PlannedBook[]);
+      .analyze(sources, title, author)
+      .then(async (accepted) => {
+        analyzeId = accepted.id;
+        if (abandoned) {
+          stopAnalysis();
+          return;
+        }
+        const job = await client.waitForJob(
+          accepted.id,
+          (snapshot) => {
+            if (snapshotMark(snapshot) === seen) return;
+            seen = snapshotMark(snapshot);
+            // 経過（log）はここで読まない。整理の実行に取っておく。
+            // 解析の行を混ぜると、整理で何が起きたのかがその中に埋もれる
+            setAnalysis({
+              running:
+                snapshot.state === "queued" || snapshot.state === "running",
+              ...analysisResult(snapshot.result),
+            });
+            setProgress({ current: snapshot.current, total: snapshot.total });
+          },
+          { signal: controller.signal },
+        );
+        if (!controller.signal.aborted) {
+          setAnalysis({ running: false, ...analysisResult(job.result) });
+        }
       })
       .catch(() => {
         // 解析できなくても投入そのものは生きている。行はそのまま残し、
         // 実行時に展開してみて分かる結果に委ねる
-        if (!controller.signal.aborted) setBooks([]);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setAnalyzing(false);
+        if (!controller.signal.aborted) setAnalysis(IDLE_ANALYSIS);
       });
-    return () => controller.abort();
+
+    return () => {
+      abandoned = true;
+      controller.abort();
+      stopAnalysis();
+    };
     // title と author は依存に入れない（上の理由）
   }, [client, sources]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const rows = useMemo(() => buildPlanRows(sources, books), [sources, books]);
+  const rows = useMemo(
+    () =>
+      buildPlanRows(
+        sources,
+        analysis.containers,
+        analysis.books,
+        analysis.unreadable,
+      ),
+    [sources, analysis],
+  );
   const names = useMemo(
     () => outputNames(rows, author, title),
     [rows, author, title],
   );
-  const keptCount = keptBooks(rows, excluded).length;
-  const droppedCount = droppedBookCount(rows, excluded);
-  const issues = keptIssueCounts(rows, excluded);
+  // 上を外したことを下へ伝えた形。解析中に外した入れ物へ後から本が生えても、
+  // その本は外れたまま出る。1 度だけ導いて、読む所すべてで同じものを使う
+  const effective = useMemo(
+    () => effectiveExcluded(rows, excluded),
+    [rows, excluded],
+  );
+  const keptCount = keptBooks(rows, effective).length;
+  const droppedCount = droppedBookCount(rows, effective);
+  const issues = keptIssueCounts(rows, effective);
 
   /** チェックを付け外しする。親を触ったら下の葉をまとめて動かす */
   const toggleRow = (row: PlanRow, keep: boolean) => {
-    setExcluded((current) => toggleLeaves(current, row.leaves, keep));
+    setExcluded((current) => toggleLeaves(current, toggleTargets(row), keep));
   };
 
   /** 一覧ごとまとめて付け外しする。主操作の行の全体チェックが使う */
   const toggleAll = (keep: boolean) => {
-    setExcluded((current) => toggleLeaves(current, allLeaves(rows), keep));
+    setExcluded((current) =>
+      toggleLeaves(current, rows.flatMap(toggleTargets), keep),
+    );
   };
 
   /** 落としたものを一覧から外す。実行中は中身を変えさせない */
@@ -437,7 +553,7 @@ export function OrganizePanel({
         keep_originals: keepOriginals,
         // 一覧で残した本だけを作る。空の配列は「1 冊も作らない」であって
         // 「指定なし」ではないので、省かずに必ず載せる
-        books: selectedBooks(rows, excluded),
+        books: selectedBooks(rows, effective),
       });
       jobId.current = accepted.id;
 
@@ -479,7 +595,7 @@ export function OrganizePanel({
    */
   const blockedBy = running
     ? "実行中です"
-    : analyzing
+    : analysis.running
       ? "解析しています..."
       : problems.join(" / ");
   const blocked = blockedBy !== "";
@@ -646,7 +762,7 @@ export function OrganizePanel({
           actions={
             <PlanActions
               rows={rows}
-              excluded={excluded}
+              excluded={effective}
               status={statusText}
               issues={issues}
               progress={progress}
@@ -660,7 +776,7 @@ export function OrganizePanel({
           list={
             <PlanList
               rows={rows}
-              excluded={excluded}
+              excluded={effective}
               names={names}
               locked={running}
               onToggle={toggleRow}

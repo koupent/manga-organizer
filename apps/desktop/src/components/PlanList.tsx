@@ -1,6 +1,11 @@
 import { BookMarked, Folder, Package, TriangleAlert, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
-import { checkStateOf, type CheckState, type PlanRow } from "../lib/plan";
+import {
+  checkStateOf,
+  TOC_UNREADABLE,
+  type CheckState,
+  type PlanRow,
+} from "../lib/plan";
 import { cn } from "../lib/utils";
 import { parentDirectory } from "../path";
 import { Badge } from "./ui/badge";
@@ -17,6 +22,7 @@ export const VOLUME_UNCERTAIN = "volume-uncertain";
 const ISSUE_LABELS: Record<string, string> = {
   [VOLUME_UNKNOWN]: "巻数が読めません",
   [VOLUME_UNCERTAIN]: "巻数が怪しい",
+  [TOC_UNREADABLE]: "目次を読めません",
 };
 
 /** 印の説明。主操作の行のチップと一覧の行で同じ言葉を使う */

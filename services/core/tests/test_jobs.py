@@ -285,5 +285,212 @@ class JobStoreTest(unittest.TestCase):
         self.assertEqual([second, first], listed)
 
 
+class PartialResultTest(unittest.TestCase):
+    """途中経過を result に載せる（#70 第 4 段階）。
+
+    解析は「走査で行が先に並び、目次を読めた順に本の行が生える」形になる。
+    育っていく中身を画面へ渡す場所は result しかない。いまは終わったときに
+    1 度だけ書かれるので、実行中はずっと null のままになる。
+
+    ここで求める公開契約は、進捗報告に result を足せること。
+
+        report(current=1, total=3, result={...})
+
+    進捗と同じロック・同じトランザクションで書く。別々に書くと「件数は
+    2 冊目なのに中身は 1 冊目まで」という状態が途中で見えてしまう。
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.store = JobStore(Path(self._temp.name) / "jobs.db")
+        self.addCleanup(self.store.close)
+
+    def test_a_partial_result_is_visible_while_the_job_is_still_running(self):
+        # Arrange - 途中で止め、走っている最中の見え方をその場で読む
+        job_id = self.store.submit("analyze", {})
+        released = threading.Event()
+        partial = {
+            "scanned": True,
+            "containers": ["/蔵書/a_01.zip", "/蔵書/b_02.zip"],
+            "books": [{"source": "/蔵書/a_01.zip", "entry": ""}],
+            "unreadable": [],
+        }
+
+        def work(report):
+            report(current=1, total=2, result=partial)
+            released.wait(5)
+            return {"scanned": True, "containers": [], "books": [], "unreadable": []}
+
+        worker = threading.Thread(target=self.store.run, args=(job_id, work))
+        worker.start()
+        # 後入れ先出しで片付くので、先に join を積んでおくと解放が先に走る
+        self.addCleanup(worker.join)
+        self.addCleanup(released.set)
+        worker_started = wait_until(lambda: self.store.get(job_id).result is not None)
+
+        # Assert - 途中経過と「まだ走っている」ことを 1 つの見え方から読む。
+        # 終わってから result を見るだけでは、いまの実装でも通ってしまう
+        self.assertTrue(worker_started, "実行中に途中経過が読めない")
+        observed = self.store.get(job_id)
+        self.assertEqual(partial, observed.result, f"途中経過が違う: {observed}")
+        self.assertEqual(
+            JobState.RUNNING,
+            observed.state,
+            f"終わってからしか書かれていない: {observed}",
+        )
+        self.assertEqual(
+            (1, 2),
+            (observed.current, observed.total),
+            f"途中経過を書いたら進捗が消えた: {observed}",
+        )
+
+        # Act / Assert - 最後の結果で上書きされる
+        released.set()
+        worker.join(5)
+        self.assertEqual([], self.store.get(job_id).result["containers"])
+
+    def test_a_partial_result_is_not_written_after_cancellation(self):
+        # Arrange - 1 度書いてから止められ、その後にもう 1 度書こうとする
+        job_id = self.store.submit("analyze", {})
+        first = {"scanned": True, "containers": ["/蔵書/a_01.zip"], "books": []}
+        second = {"scanned": True, "containers": ["/蔵書/a_01.zip"], "books": [{}]}
+        reported = threading.Event()
+        cancelled = threading.Event()
+        raised: list[BaseException] = []
+
+        def work(report):
+            report(current=1, total=2, result=first)
+            reported.set()
+            cancelled.wait(5)
+            # ここで止まる。止まらなければ下の result が書かれてしまう
+            report(current=2, total=2, result=second)
+            return "ok"
+
+        def runner():
+            try:
+                self.store.run(job_id, work)
+            except JobCancelled as error:
+                raised.append(error)
+
+        worker = threading.Thread(target=runner)
+        worker.start()
+        self.addCleanup(worker.join)
+        self.addCleanup(cancelled.set)
+        self.assertTrue(reported.wait(5), "最初の途中経過が書かれていない")
+
+        # Act
+        self.store.cancel(job_id)
+        cancelled.set()
+        worker.join(5)
+
+        # Assert - 報告そのものが止める。止まらないと、キャンセル後も
+        # 画面の一覧が増え続ける
+        self.assertEqual(1, len(raised), "キャンセル後の報告が素通りしている")
+        self.assertEqual(
+            first,
+            self.store.get(job_id).result,
+            "キャンセル後の途中経過まで書かれている",
+        )
+        self.assertEqual(JobState.CANCELLED, self.store.get(job_id).state)
+
+
+class PrunedWhileRunningTest(unittest.TestCase):
+    """走っている最中に記録ごと消されたジョブ（#70 第 4 段階）。
+
+    解析は投入の中身が変わるたびに走り直す。新しい解析の投入は、まず
+    ``prune_finished("analyze")`` で「終わっている」解析の記録を落とす
+    （``app.py`` の ``submit_analysis``）。ところがキャンセルは、ワーカーが
+    気づくより先に行を終わりの状態にする。差し替えられた解析は毎回
+    キャンセルされるので、「終わりの状態なのにワーカーはまだ走っている」は
+    例外ではなく普通に起きる。
+
+    そのとき、まだアーカイブを読んでいるワーカーの次の報告先は消えている。
+    利用者から見ると、投入を編集しただけなのに「解析が失敗した」という
+    記録と例外が残る。止めたものが静かに終わるのと、失敗として残るのとでは
+    見え方がまるで違う。
+
+    ここで求める振る舞いは「報告先が消えていたら、キャンセルされたときと
+    同じ終わり方をする」こと。どの例外で終わるか（あるいは終わらせ方を
+    変えるか）は実装の選択なので、キャンセルされた場合と突き合わせて見る。
+    """
+
+    def setUp(self):
+        self._temp = TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.store = JobStore(Path(self._temp.name) / "jobs.db")
+        self.addCleanup(self.store.close)
+
+    def outcome_of(self, *, prune: bool) -> tuple[str, list[int]]:
+        """止められたジョブを最後まで走らせ、終わり方と進んだ歩数を返す。
+
+        ``prune`` は、止めた後に新しい解析が投入されたかどうか。投入は
+        ``submit`` の前に ``prune_finished`` を呼ぶので、ここでも同じ順序で
+        並べる。返すのは ``run`` から漏れたものの名前（何も漏れなければ
+        「返った」）と、ワーカーが越えられた報告の数。
+        """
+        job_id = self.store.submit("analyze", {})
+        steps: list[int] = []
+        reported = threading.Event()
+        released = threading.Event()
+        escaped = ["返った"]
+
+        def work(report):
+            report(current=1, total=2, result={"containers": ["/蔵書/a_01.zip"]})
+            steps.append(1)
+            reported.set()
+            released.wait(5)
+            # 止められた後の報告。ここで止まらなければ、消された行へ
+            # 書き続けることになる
+            report(current=2, total=2, result={"containers": ["/蔵書/b_02.zip"]})
+            steps.append(2)
+            return "ok"
+
+        def runner():
+            try:
+                self.store.run(job_id, work)
+            except BaseException as error:  # noqa: BLE001 - 種類を控えるだけ
+                escaped[0] = type(error).__name__
+
+        worker = threading.Thread(target=runner)
+        worker.start()
+        self.addCleanup(worker.join)
+        self.addCleanup(released.set)
+        self.assertTrue(reported.wait(5), "ワーカーが動き出していない")
+
+        # 差し替えの順序どおりに並べる。止めてから、新しい解析が投入される
+        self.store.cancel(job_id)
+        if prune:
+            self.store.prune_finished("analyze")
+        released.set()
+        worker.join(5)
+        self.assertFalse(worker.is_alive(), "ワーカーが終わらない")
+        return escaped[0], steps
+
+    def test_a_pruned_job_ends_the_same_way_as_a_cancelled_one(self):
+        # Act - 記録ごと消された場合と、止められただけの場合
+        abandoned, abandoned_steps = self.outcome_of(prune=True)
+        cancelled, cancelled_steps = self.outcome_of(prune=False)
+
+        # Assert - どちらも同じ終わり方をする。例外の名前を直に書かないのは、
+        # 「消えていたらキャンセル扱い」を実装がどう表すかまでは縛らないため
+        self.assertEqual(
+            cancelled,
+            abandoned,
+            "記録を消されたワーカーが、止められたときと違う終わり方をしている",
+        )
+
+        # Assert - 対照。どちらも 1 歩目までで止まる。ここを見ないと、
+        # 「何が来ても素通りさせる」実装でも上の突き合わせを通せる
+        self.assertEqual([1], abandoned_steps, "記録が消えたのに、その先まで進んでいる")
+        self.assertEqual([1], cancelled_steps, "止めたのに、その先まで進んでいる")
+
+    def test_a_pruned_job_is_not_recorded_as_a_failure(self):
+        # Act / Assert - 消えた行への報告を、失敗として残さない。利用者は
+        # 投入を編集しただけで、失敗させた覚えはない
+        with self.assertNoLogs("manga_api.jobs", level="ERROR"):
+            self.outcome_of(prune=True)
+
+
 if __name__ == "__main__":
     unittest.main()

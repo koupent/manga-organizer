@@ -1,0 +1,182 @@
+"""解析ジョブの中身（#70 第 4 段階）。
+
+解析は「走査で入れ物を全部見つける → 1 つずつ目次を読む」の 2 段構えで、
+数百 GB の蔵書では数分かかる。要求の中で最後まで走らせると、その間ずっと
+空の画面が続き、受け付けられたのかどうかも分からない。そこで整理と同じ
+ジョブにして、育っていく結果を ``result`` に書き足していく。
+
+**ジョブにするのは、途中経過のためだけではない。** 解析は投入の中身が
+変わるたびに走り直す。要求の中で走らせると、投入を編集し続けた分だけ
+解析がスレッドプールに溜まり、画面が見ている経路まで詰まる。同期の関数は
+接続が切れても止まらないので、流し込みでは解けない。ジョブなら
+``JobStore._report`` が進捗を書くのと同じロックで ``JobCancelled`` を
+投げるので、打ち切りが自然に効く。
+
+経路（``POST /api/jobs/analyze``）は ``app.py``。ここに中身を置いてあるのは、
+``app.py`` が既に長く、経路の定義でさらに膨らませないため。
+"""
+
+import logging
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from manga_api.jobs import ProgressReporter
+from manga_core.input_expander import iter_inputs
+from manga_core.toc_analyzer import AnalysisScan, PlannedBook, analyze_stream
+
+logger = logging.getLogger(__name__)
+
+# 走査の途中で打ち切りを見に行く間隔（歩いたフォルダの数）。1 つごとに
+# 見に行くと、ロックと確定（``JobStore._report``）が走査そのものより重くなる。
+# ここが粗すぎると、打ち切ったのに蔵書を歩き続けるワーカーが溜まる
+SCAN_CHECKPOINT_PATHS = 200
+
+# 育っていく途中経過を書き直す間隔（秒）。この報告は「いままでに分かったこと」を
+# まるごと JSON にして確定するので、入れ物 1 件ごとに書くと書き込み量が件数の
+# 二乗になる（1 万件なら延べ 5000 万冊分）。画面は 1 件ずつ増えなくても、
+# 目に見えて伸びていれば足りる
+RESULT_WRITE_INTERVAL = 0.2
+
+
+class PlannedBookView(BaseModel):
+    """実行すると 1 冊出来る、という予告"""
+
+    source: str
+    entry: str
+    output_name: str
+    volume: int | None = None
+    issues: list[str] = Field(
+        default_factory=list, description="実行前に利用者へ見せる印"
+    )
+
+
+def analysis_work(
+    targets: list[Path],
+    author: str,
+    title: str,
+    is_allowed: Callable[[Path], bool],
+) -> Callable[[ProgressReporter], dict[str, Any]]:
+    """解析ジョブの中身を組み立てる。
+
+    ``targets`` は利用者が名指ししたパスで、許可の検証は投入の時点で済んで
+    いる。その下を辿って見つけたものは名指しされていないので、1 件ずつ
+    ``is_allowed`` に掛ける。**辿るのと落とすのは必ず一組で動かす。**
+    離すと、許可された場所に置かれた「外を指すリンク」が解析の対象に戻る。
+    """
+
+    def work(report: ProgressReporter) -> dict[str, Any]:
+        # 走査そのものをワーカーで行う。投入の応答の中で数百 GB を歩くと、
+        # 受け付けられたことすら画面に返らない
+        found = _scan(targets, is_allowed, report)
+
+        containers: list[str] = []
+        books: list[dict[str, Any]] = []
+        unreadable: list[dict[str, str]] = []
+
+        def snapshot() -> dict[str, Any]:
+            """いまの時点までに分かったこと。
+
+            4 つの鍵は常に揃える。``scanned`` を別に持つのは、``containers``
+            が空のときに「走査がまだ終わっていない」と「1 件も見つからな
+            かった」を画面から区別するため。``unreadable`` も鍵ごと省かない。
+            省くと「読めなかったものが無い」のか「数えていない」のかが
+            分からない。
+            """
+            return {
+                "scanned": True,
+                "containers": list(containers),
+                "books": list(books),
+                "unreadable": list(unreadable),
+            }
+
+        # 進捗の分母は入れ物の数、分子は目次を読み終えた数。本を数えると、
+        # 走査が終わっても分母が決まらず、進捗が伸び縮みする
+        read = 0
+        # 途中経過を最後に書いた時刻。None は「まだ一度も書いていない」
+        written: float | None = None
+        for event in analyze_stream(found, author, title):
+            if isinstance(event, AnalysisScan):
+                # 走査が終わった時点で入れ物を全部渡す。画面はここで行を
+                # 並べ切ってしまい、あとは本が生えるだけになる
+                containers = [str(path) for path in event.containers]
+                report(current=0, total=len(containers), result=snapshot())
+                continue
+
+            read += 1
+            books.extend(_book_view(book) for book in event.books)
+            if event.error:
+                unreadable.append(
+                    {"source": str(event.container), "reason": event.error}
+                )
+            # 件数だけは 1 件ごとに進める。整数 2 つの書き換えなので軽く、
+            # 間引くと進捗の分子が止まって見える。重いのは途中経過のほうで、
+            # そちらは間隔を空ける。1 件目は必ず書く（画面が「解析が進んで
+            # いる」と分かる最初の合図で、ここを間引くと空のまま待たされる）
+            now = time.monotonic()
+            growing = written is None or now - written >= RESULT_WRITE_INTERVAL
+            # 読めたものには経過を残さない。1 万件のアーカイブで 1 行ずつ
+            # 出すと、上限を溢れて本当に困っている報告が流れて消える
+            report(
+                current=read,
+                total=len(containers),
+                message=_failure_line(event.container, event.error),
+                result=snapshot() if growing else None,
+            )
+            if growing:
+                written = now
+
+        # 最後の 1 件は間引かれているかもしれない。終わりの形は必ず全部を返す
+        return snapshot()
+
+    return work
+
+
+def _scan(
+    targets: list[Path],
+    is_allowed: Callable[[Path], bool],
+    report: ProgressReporter,
+) -> list[Path]:
+    """投入されたパスの下を歩き、許可された入れ物だけを拾う。
+
+    **辿るのと落とすのは必ず一組。** 1 つの式にしてあるのは、離すと許可された
+    場所に置かれた「外を指すリンク」が解析の対象に戻るため。
+
+    歩いている最中も折々で ``report`` を呼ぶ。欄は 1 つも書き換えない報告だが、
+    打ち切られていればここで ``JobCancelled`` が上がる。歩き切ってから初めて
+    見に行くのでは、数百 GB の蔵書で数分のあいだ打ち切りが効かない。
+    """
+    walked = 0
+
+    def checkpoint() -> None:
+        nonlocal walked
+        walked += 1
+        if walked % SCAN_CHECKPOINT_PATHS == 0:
+            report()
+
+    return [path for path in iter_inputs(targets, checkpoint) if is_allowed(path)]
+
+
+def _failure_line(container: Path, error: str | None) -> str:
+    """読めなかったことを経過に残す 1 行。読めたときは空。
+
+    進捗の message は次の報告で上書きされるので、ポーリングの間隔次第では
+    見落とす。どのアーカイブだったかが後から分かるよう、名前を入れる。
+    """
+    if error is None:
+        return ""
+    return f"目次を読めませんでした: {container.name}（{error}）"
+
+
+def _book_view(book: PlannedBook) -> dict[str, Any]:
+    """本 1 冊を、画面へ渡す形にする"""
+    return PlannedBookView(
+        source=str(book.source),
+        entry=book.entry,
+        output_name=book.output_name,
+        volume=book.volume,
+        issues=list(book.issues),
+    ).model_dump()

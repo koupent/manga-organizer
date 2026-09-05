@@ -19,7 +19,8 @@ from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 
 from manga_api import thumbnails
-from manga_api.jobs import Job, JobNotFound, JobStore
+from manga_api.analysis_job import analysis_work
+from manga_api.jobs import Job, JobCancelled, JobNotFound, JobStore
 from manga_core.cover_editor import (
     COVER_ASPECT_RATIO,
     CoverEditError,
@@ -37,7 +38,7 @@ from manga_core.original_store import (
     read_original,
 )
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
-from manga_core.toc_analyzer import analyze_inputs, locate_books
+from manga_core.toc_analyzer import locate_books
 
 logger = logging.getLogger(__name__)
 
@@ -100,24 +101,6 @@ class AnalyzeRequest(BaseModel):
     )
     title: str = Field(default="", description="作品名")
     author: str = Field(default="", description="著者名")
-
-
-class PlannedBookView(BaseModel):
-    """実行すると 1 冊出来る、という予告"""
-
-    source: str
-    entry: str
-    output_name: str
-    volume: int | None = None
-    issues: list[str] = Field(
-        default_factory=list, description="実行前に利用者へ見せる印"
-    )
-
-
-class AnalyzeResult(BaseModel):
-    """解析の結果。出来上がる本を、実行するのと同じ順に並べる"""
-
-    books: list[PlannedBookView]
 
 
 class OrganizeRequest(BaseModel):
@@ -988,28 +971,42 @@ def create_app(
         _start(app, job_id, work)
         return JobAccepted(id=job_id)
 
-    @app.post("/api/analyze", dependencies=guarded, response_model=AnalyzeResult)
-    def analyze(request: AnalyzeRequest) -> AnalyzeResult:
+    @app.post(
+        "/api/jobs/analyze",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_analysis(request: AnalyzeRequest) -> JobAccepted:
         """展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。
 
         利用者はチェックを外す前に「何が出来るのか」を見る必要がある。
         整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が
         そのまま実行の結果になる。
+
+        走査と目次読みはジョブに任せ、ここでは受け付けたことだけを返す。
+        ただしパスの検証は投入のこの時点で済ませる。ジョブを作ってから
+        失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
+        残らず、画面は投入できたと思ってしまう。
         """
-        return AnalyzeResult(
-            books=[
-                PlannedBookView(
-                    source=str(book.source),
-                    entry=book.entry,
-                    output_name=book.output_name,
-                    volume=book.volume,
-                    issues=list(book.issues),
-                )
-                for book in analyze_inputs(
-                    expand_targets(request.archives), request.author, request.title
-                )
-            ]
+        targets = [resolve_organize_target(raw) for raw in request.archives]
+        # 前回までの解析は用済み。1 件ずつ入れ物と本の一覧を抱えるうえ、
+        # 投入を編集するたびに増える。履歴を読む画面も無い
+        app.state.jobs.prune_finished("analyze")
+        job_id = app.state.jobs.submit(
+            "analyze",
+            {
+                "archives": [str(target) for target in targets],
+                "title": request.title,
+                "author": request.author,
+            },
         )
+        _start(
+            app,
+            job_id,
+            analysis_work(targets, request.author, request.title, within_allowed),
+        )
+        return JobAccepted(id=job_id)
 
     @app.post(
         "/api/jobs/organize",
@@ -1106,10 +1103,16 @@ def _skipped_locations(
     if wanted is None:
         return frozenset()
     chosen = wanted.get(archive.resolve(), set())
+    try:
+        located = locate_books(archive)
+    except Exception as error:  # noqa: BLE001 - 読めないなら 1 冊も外さない
+        # 目次を読めなければ、外していい本を 1 つも特定できない。ここで
+        # 落とすと壊れた 1 つのせいで整理そのものが失敗する。読めなかった
+        # ことは解析が先に印として出しているので、黙って消えることはない
+        logger.warning("外す本を決められませんでした: %s (%s)", archive, error)
+        return frozenset()
     return frozenset(
-        location.extracted_path
-        for location in locate_books(archive)
-        if location.entry not in chosen
+        location.extracted_path for location in located if location.entry not in chosen
     )
 
 
@@ -1128,5 +1131,10 @@ def _run_quietly(app: FastAPI, job_id: str, work) -> None:
     """ワーカースレッドの例外でプロセスを落とさない"""
     try:
         app.state.jobs.run(job_id, work)
+    except JobCancelled:
+        # 打ち切りは失敗ではない。解析は投入を編集するたびに走り直して前のものを
+        # 止めるので、これを失敗として書き残すと、利用者は編集しただけで
+        # 「ジョブが失敗しました」の山を見ることになる
+        logger.debug("ジョブが打ち切られました: %s", job_id)
     except Exception:  # noqa: BLE001 - 状態は JobStore が記録済み
         logger.exception("ジョブが失敗しました: %s", job_id)

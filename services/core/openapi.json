@@ -910,11 +910,11 @@
         }
       }
     },
-    "/api/analyze": {
+    "/api/jobs/analyze": {
       "post": {
-        "summary": "Analyze",
-        "description": "展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。\n\n利用者はチェックを外す前に「何が出来るのか」を見る必要がある。\n整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が\nそのまま実行の結果になる。",
-        "operationId": "analyze_api_analyze_post",
+        "summary": "Submit Analysis",
+        "description": "展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。\n\n利用者はチェックを外す前に「何が出来るのか」を見る必要がある。\n整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が\nそのまま実行の結果になる。\n\n走査と目次読みはジョブに任せ、ここでは受け付けたことだけを返す。\nただしパスの検証は投入のこの時点で済ませる。ジョブを作ってから\n失敗させると、許可の外を指したことが「失敗したジョブ」としてしか\n残らず、画面は投入できたと思ってしまう。",
+        "operationId": "submit_analysis_api_jobs_analyze_post",
         "parameters": [
           {
             "name": "token",
@@ -940,12 +940,12 @@
           }
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnalyzeResult"
+                  "$ref": "#/components/schemas/JobAccepted"
                 }
               }
             }
@@ -1048,23 +1048,6 @@
         ],
         "title": "AnalyzeRequest",
         "description": "出来上がる本を実行前に調べる依頼"
-      },
-      "AnalyzeResult": {
-        "properties": {
-          "books": {
-            "items": {
-              "$ref": "#/components/schemas/PlannedBookView"
-            },
-            "type": "array",
-            "title": "Books"
-          }
-        },
-        "type": "object",
-        "required": [
-          "books"
-        ],
-        "title": "AnalyzeResult",
-        "description": "解析の結果。出来上がる本を、実行するのと同じ順に並べる"
       },
       "AuthorCandidate": {
         "properties": {
@@ -1718,49 +1701,6 @@
         ],
         "title": "PageView",
         "description": "ページ 1 枚の情報"
-      },
-      "PlannedBookView": {
-        "properties": {
-          "source": {
-            "type": "string",
-            "title": "Source"
-          },
-          "entry": {
-            "type": "string",
-            "title": "Entry"
-          },
-          "output_name": {
-            "type": "string",
-            "title": "Output Name"
-          },
-          "volume": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Volume"
-          },
-          "issues": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Issues",
-            "description": "実行前に利用者へ見せる印"
-          }
-        },
-        "type": "object",
-        "required": [
-          "source",
-          "entry",
-          "output_name"
-        ],
-        "title": "PlannedBookView",
-        "description": "実行すると 1 冊出来る、という予告"
       },
       "ReorderRequest": {
         "properties": {

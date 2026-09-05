@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
@@ -48,8 +48,8 @@ test.afterAll(() => sidecar?.stop());
 /** 著者は全部のテストで共通。作品名だけ、テストごとに変える */
 const AUTHOR = "テスト著者";
 
-/** 解析中を捉えるために、サイドカーへの往復をわざと遅くする幅 */
-const API_DELAY_MS = 2_500;
+/** 解析中を捉えるために、解析の投入をわざと遅くする幅 */
+const ANALYZE_DELAY_MS = 2_500;
 
 /** 出来上がるはずのファイル名。組み立て方は VolumeDetector と同じ */
 function volumeName(title: string, volume: number): string {
@@ -556,11 +556,11 @@ test.describe("解析した本の一覧", () => {
     makeFolder(name);
     await openOrganize(page, output);
 
-    // 解析の往復を遅くする。どの入口を叩くかは実装に任せるので、
-    // サイドカーへの往復をまとめて遅らせる（外部検索の差し替えが先に
-    // 当たるよう、この登録を先に置く）
-    await page.route("**/api/**", async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, API_DELAY_MS));
+    // 解析の投入だけを遅くする。解析はジョブになり、投入のあと状態を
+    // 何度も取りに行くので、往復をまとめて遅らせるとフォルダの追加
+    // （/api/browse）や毎回の問い合わせまで遅くなり、待ち時間が積み上がる
+    await page.route("**/api/jobs/analyze*", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, ANALYZE_DELAY_MS));
       await route.continue();
     });
     // 作品名と著者は先に埋める。未入力を理由にした無効と区別するため
@@ -607,5 +607,54 @@ test.describe("解析した本の一覧", () => {
 
     // Assert - 一覧そのものは出ている。空の画面を見て「無い」と言わない
     await waitForBooks(page, 4);
+  });
+
+  test("目次を読めないアーカイブに、目次を読めません の印が出る", async ({
+    page,
+  }) => {
+    // Arrange - 読める ZIP と、ZIP の名前をした壊れたファイルを 1 つずつ。
+    // 台本には差し替えない。印が出るかどうかは「サイドカーが読めなかったと
+    // 言うか」で決まるので、作り物の応答を返すと確かめたことにならない
+    const title = "壊れた作品";
+    const name = "壊れている";
+    const output = join(sidecar.workDir, `out-${name}`);
+    mkdirSync(output, { recursive: true });
+    const folder = join(sidecar.workDir, name);
+    mkdirSync(folder, { recursive: true });
+    const healthy = writeArchive(sidecar.workDir, join(name, "a_01.zip"), [
+      { name: "001.jpg", color: "#0000ff" },
+    ]);
+    const corrupt = join(folder, "b_02.zip");
+    writeFileSync(corrupt, "これは ZIP ではありません");
+
+    // Act
+    await openOrganize(page, output);
+    await fillMangaInfo(page, title);
+    await addFolder(page, name);
+    await waitForBooks(page, 1);
+
+    // Assert - 壊れたアーカイブの行は残ったまま、印が付く。第 4 段階から
+    // 本を持たない入れ物も既定で選ばれて整理されるので、印が出なければ
+    // 壊れたアーカイブは何の警告も無いまま実行に載る
+    const broken = archiveRow(page, corrupt);
+    await expect(broken, "壊れたアーカイブの行が無い").toHaveCount(1);
+    await expect(
+      broken,
+      "目次を読めなかったのに、行に印が付いていない",
+    ).toHaveAttribute("data-issues", /toc-unreadable/, { timeout: 30_000 });
+    await expect(broken.getByTestId("plan-row-issue")).toHaveText(
+      "目次を読めません",
+    );
+
+    // Assert - 対照。読めたアーカイブには付けない。全部に付ける実装では
+    // 印そのものが意味を失う
+    await expect(
+      archiveRow(page, healthy),
+      "読めているアーカイブにまで印が付いている",
+    ).toHaveAttribute("data-issues", "");
+
+    // Assert - 印は出るが、チェックは既定のまま。読めなかったことと
+    // 「整理しない」ことは別で、中身は実行時に展開して初めて分かる
+    await expect(checkOf(broken)).toHaveAttribute("aria-checked", "true");
   });
 });

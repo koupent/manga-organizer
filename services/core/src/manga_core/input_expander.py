@@ -13,7 +13,7 @@
 """
 
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 from manga_core.naming import natural_sort_key
@@ -35,26 +35,42 @@ def expand_inputs(paths: Iterable[Path]) -> list[Path]:
     裸の画像フォルダを拾う。渡された順番は処理順そのものなので入れ替えず、
     1 つのフォルダから出てきたものの中だけを自然順に並べる。
     """
-    expanded: list[Path] = []
+    return list(iter_inputs(paths))
+
+
+def iter_inputs(
+    paths: Iterable[Path], checkpoint: Callable[[], None] = lambda: None
+) -> Iterator[Path]:
+    """``expand_inputs`` と同じものを、見つけた順に 1 件ずつ返す。
+
+    数百 GB の蔵書ではフォルダを歩くだけで数分かかる。一覧を作り終えるまで
+    呼び出し側へ制御が戻らないと、その数分のあいだ打ち切りが何も止められない
+    （``manga_api.analysis_job`` の言う「解析がスレッドプールに溜まる」状態）。
+
+    ``checkpoint`` はフォルダを 1 つ覗くたびに呼ぶ。**拾ったものを返すだけでは
+    打ち切りの機会にならない。** アーカイブが 1 つも無い木では 1 件も返さない
+    まま数分歩き続けるので、区切りは「歩いた回数」の側に付ける。
+    """
+    seen: set[Path] = set()
     for path in paths:
-        if path.is_dir():
-            expanded.extend(_expand_directory(path))
-        else:
-            expanded.append(path)
-    # 同じものを二度処理しないよう、順番を保ったまま重複を落とす
-    return list(dict.fromkeys(expanded))
+        found = _walk_directory(path, checkpoint) if path.is_dir() else (path,)
+        for item in found:
+            # 同じものを二度処理しないよう、順番を保ったまま重複を落とす
+            if item not in seen:
+                seen.add(item)
+                yield item
 
 
-def _expand_directory(root: Path) -> list[Path]:
+def _walk_directory(root: Path, checkpoint: Callable[[], None]) -> Iterator[Path]:
     """フォルダの下から、1 冊分になるものを拾い集める。
 
     リンクの先へは降りない（os.walk の既定）。降りると許可された場所の外の木を
     歩きかねないうえ、リンクが輪になっていると終わらない。ただしリンクされた
     ファイルは拾えるため、許可の検証は呼び出し側で 1 件ずつ行う。
     """
-    found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         current = Path(dirpath)
+        checkpoint()
         # 走査順は OS 任せなので、毎回同じ順番になるようここで揃える
         dirnames.sort(key=natural_sort_key)
 
@@ -62,12 +78,11 @@ def _expand_directory(root: Path) -> list[Path]:
             # 画像が直接置かれたフォルダは、ZIP に入っていなくても 1 冊。
             # その下にあるものは同じ 1 冊の中身なので、これ以上は掘らない
             dirnames.clear()
-            found.append(current)
+            yield current
             continue
 
-        found.extend(
+        yield from (
             current / name
             for name in sorted(filenames, key=natural_sort_key)
             if is_archive_name(name)
         )
-    return found

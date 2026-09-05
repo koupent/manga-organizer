@@ -341,7 +341,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/analyze": {
+  "/api/jobs/analyze": {
     parameters: {
       query?: never;
       header?: never;
@@ -351,14 +351,19 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Analyze
+     * Submit Analysis
      * @description 展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。
      *
      *     利用者はチェックを外す前に「何が出来るのか」を見る必要がある。
      *     整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が
      *     そのまま実行の結果になる。
+     *
+     *     走査と目次読みはジョブに任せ、ここでは受け付けたことだけを返す。
+     *     ただしパスの検証は投入のこの時点で済ませる。ジョブを作ってから
+     *     失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
+     *     残らず、画面は投入できたと思ってしまう。
      */
-    post: operations["analyze_api_analyze_post"];
+    post: operations["submit_analysis_api_jobs_analyze_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -414,14 +419,6 @@ export interface components {
        * @default
        */
       author: string;
-    };
-    /**
-     * AnalyzeResult
-     * @description 解析の結果。出来上がる本を、実行するのと同じ順に並べる
-     */
-    AnalyzeResult: {
-      /** Books */
-      books: components["schemas"]["PlannedBookView"][];
     };
     /**
      * AuthorCandidate
@@ -757,25 +754,6 @@ export interface components {
       size: number;
       /** Modified */
       modified: string;
-    };
-    /**
-     * PlannedBookView
-     * @description 実行すると 1 冊出来る、という予告
-     */
-    PlannedBookView: {
-      /** Source */
-      source: string;
-      /** Entry */
-      entry: string;
-      /** Output Name */
-      output_name: string;
-      /** Volume */
-      volume?: number | null;
-      /**
-       * Issues
-       * @description 実行前に利用者へ見せる印
-       */
-      issues?: string[];
     };
     /**
      * ReorderRequest
@@ -1440,7 +1418,7 @@ export interface operations {
       };
     };
   };
-  analyze_api_analyze_post: {
+  submit_analysis_api_jobs_analyze_post: {
     parameters: {
       query?: {
         /** @description 使い捨てトークン */
@@ -1457,12 +1435,12 @@ export interface operations {
     };
     responses: {
       /** @description Successful Response */
-      200: {
+      202: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["AnalyzeResult"];
+          "application/json": components["schemas"]["JobAccepted"];
         };
       };
       /** @description Validation Error */
