@@ -1,12 +1,26 @@
-import { BookMarked, Loader2, Play, Square, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { BookMarked, Loader2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SidecarClient } from "../api/client";
+import {
+  allLeaves,
+  buildPlanRows,
+  droppedBookCount,
+  keptBooks,
+  keptIssueCounts,
+  outputNames,
+  selectedBooks,
+  toggleLeaves,
+  type PlanRow,
+  type PlannedBook,
+} from "../lib/plan";
 import { cn } from "../lib/utils";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FailedList, type OrganizeFailure } from "./FailedList";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
 import { OrganizeLog } from "./OrganizeLog";
+import { PlanActions } from "./PlanActions";
+import { PlanList } from "./PlanList";
 import { ProducedList, type HandoffMode } from "./ProducedList";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -18,7 +32,6 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { Progress } from "./ui/progress";
 import { SectionTitle } from "./ui/section-title";
 
 type Entry = { title: string; author: string };
@@ -53,6 +66,17 @@ function organizeSummary(producedCount: number, failedCount: number): string {
   if (producedCount === 0)
     return `整理できませんでした（${failedCount} 件失敗）`;
   return `${producedCount} 冊を整理しました（${failedCount} 件失敗）`;
+}
+
+/**
+ * 主操作の行に出す、押したら何が起きるかの 1 行。
+ *
+ * 外した冊数は 0 のときに出さない。何も外していないのに「0 冊を外した」と
+ * 書くと、外す操作をした後の状態と見分けが付かない。
+ */
+function planSummary(keptCount: number, droppedCount: number): string {
+  const made = `${keptCount} 冊を作ります`;
+  return droppedCount > 0 ? `${made} · ${droppedCount} 冊を外した` : made;
 }
 
 /**
@@ -109,9 +133,18 @@ export function OrganizePanel({
 
   const [keepOriginals, setKeepOriginals] = useState(true);
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState("待機中");
+  // 実行に絡む状態の文言。実行していない間は空にして、一覧の集計に場所を譲る
+  const [status, setStatus] = useState("");
   const [log, setLog] = useState<string[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+
+  // 解析で分かった、出来上がる本。走査が終わるまでは空
+  const [books, setBooks] = useState<PlannedBook[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  // 利用者がチェックを外した葉。既定は全部オンなので、覚えるのは外した方だけ。
+  // オンの側を覚えると、解析で本の行が増えたときに既定がオフになってしまう
+  const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
 
   // 整理して出来たファイルの絶対パス。実際に出来たものだけを持つので、
   // 中断・失敗のときは空のままになる
@@ -230,7 +263,13 @@ export function OrganizePanel({
     }, SEARCH_DELAY_MS);
   };
 
-  const problems = (): string[] => {
+  /**
+   * 実行に足りていないもの。
+   *
+   * 揃うまで主操作は押せない。押せないだけでは何が足りないのか分からないので、
+   * 同じ内容を主操作の行に文字でも出す。
+   */
+  const problems = useMemo(() => {
     const found: string[] = [];
     if (!title.trim()) found.push("作品名を入れてください");
     if (!author.trim()) found.push("著者を入れてください");
@@ -238,6 +277,64 @@ export function OrganizePanel({
     if (sources.length === 0)
       found.push("処理対象のファイルを追加してください");
     return found;
+  }, [title, author, outputDirectory, sources]);
+
+  /**
+   * 投入したものを解析し直す。
+   *
+   * 切っ掛けは投入の中身だけにする。作品名と著者は名前の組み立てにしか
+   * 効かず、一覧の名前は巻数から組み立て直すので、打つたびに目次を
+   * 読み直す必要は無い。
+   */
+  useEffect(() => {
+    if (sources.length === 0) {
+      setBooks([]);
+      setAnalyzing(false);
+      return;
+    }
+    const controller = new AbortController();
+    setAnalyzing(true);
+    client
+      .analyze(sources, title, author, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setBooks(result.books as PlannedBook[]);
+      })
+      .catch(() => {
+        // 解析できなくても投入そのものは生きている。行はそのまま残し、
+        // 実行時に展開してみて分かる結果に委ねる
+        if (!controller.signal.aborted) setBooks([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setAnalyzing(false);
+      });
+    return () => controller.abort();
+    // title と author は依存に入れない（上の理由）
+  }, [client, sources]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rows = useMemo(() => buildPlanRows(sources, books), [sources, books]);
+  const names = useMemo(
+    () => outputNames(rows, author, title),
+    [rows, author, title],
+  );
+  const keptCount = keptBooks(rows, excluded).length;
+  const droppedCount = droppedBookCount(rows, excluded);
+  const issues = keptIssueCounts(rows, excluded);
+
+  /** チェックを付け外しする。親を触ったら下の葉をまとめて動かす */
+  const toggleRow = (row: PlanRow, keep: boolean) => {
+    setExcluded((current) => toggleLeaves(current, row.leaves, keep));
+  };
+
+  /** 一覧ごとまとめて付け外しする。主操作の行の全体チェックが使う */
+  const toggleAll = (keep: boolean) => {
+    setExcluded((current) => toggleLeaves(current, allLeaves(rows), keep));
+  };
+
+  /** 落としたものを一覧から外す。実行中は中身を変えさせない */
+  const removeSource = (path: string) => {
+    if (running) return;
+    onSourcesChange(sources.filter((item) => item !== path));
   };
 
   /**
@@ -257,10 +354,9 @@ export function OrganizePanel({
       const job = await client.waitForJob(
         id,
         (snapshot) => {
-          setProgress({
-            current: snapshot.current,
-            total: snapshot.total || sources.length,
-          });
+          // 総数はサイドカーが投入時に決める。フォルダは中身へ展開され、
+          // 外した本のぶんも引かれるので、画面の件数で補うと食い違う（#65）
+          setProgress({ current: snapshot.current, total: snapshot.total });
           setLog(snapshot.log ?? []);
         },
         { signal },
@@ -278,13 +374,6 @@ export function OrganizePanel({
       // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
       // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
       const outcome = organizeResult(job.result);
-      // 総数はサイドカーが投入時に決める。フォルダは中身へ展開されるので、
-      // 一覧の件数（フォルダなら 1 件）で上書きすると走り切った所で
-      // 1 / 1 に戻ってしまう。報告された総数をそのまま使い切る
-      setProgress((shown) => {
-        const total = shown.total || sources.length;
-        return { current: total, total };
-      });
       setProduced(outcome.produced);
       setFailures(outcome.failed);
       setStatus(
@@ -312,11 +401,9 @@ export function OrganizePanel({
   }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = async () => {
-    const found = problems();
-    if (found.length > 0) {
-      setStatus(found.join(" / "));
-      return;
-    }
+    // 主操作は足りないものがある間は押せない。ここで弾くのは、押せない
+    // はずの経路（Enter など）から入ってきたときの受け皿
+    if (blocked) return;
 
     setRunning(true);
     cancelRequested.current = false;
@@ -327,7 +414,9 @@ export function OrganizePanel({
     setProduced([]);
     setFailures([]);
     setStatus("整理しています...");
-    setProgress({ current: 0, total: sources.length });
+    // 総数はサイドカーが投入時に決める。ここで見込みを入れると、外した本の
+    // ぶんだけ多い数が一瞬見えてしまう
+    setProgress({ current: 0, total: 0 });
 
     try {
       // 次回以降の候補に出せるよう、実行時の組み合わせを辞書へ残す
@@ -346,6 +435,9 @@ export function OrganizePanel({
         title,
         author,
         keep_originals: keepOriginals,
+        // 一覧で残した本だけを作る。空の配列は「1 冊も作らない」であって
+        // 「指定なし」ではないので、省かずに必ず載せる
+        books: selectedBooks(rows, excluded),
       });
       jobId.current = accepted.id;
 
@@ -378,8 +470,28 @@ export function OrganizePanel({
     }
   };
 
-  const percent =
-    progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
+  /**
+   * 主操作を押せない理由。無ければ空。
+   *
+   * 解析の途中で押せてしまうと、「この内容で」の内容が揃う前に走り出す。
+   * 足りない入力があるときも同じで、押せる見た目のまま何も起きないより、
+   * 押せないうえで理由を出す。
+   */
+  const blockedBy = running
+    ? "実行中です"
+    : analyzing
+      ? "解析しています..."
+      : problems.join(" / ");
+  const blocked = blockedBy !== "";
+
+  /**
+   * 主操作の行に出す 1 行。
+   *
+   * 実行に絡む文言があればそれを優先する。無ければ、押したら何が起きるかか、
+   * 押せない理由のどちらかを出す。
+   */
+  const statusText =
+    status || (blockedBy ? blockedBy : planSummary(keptCount, droppedCount));
 
   return (
     /*
@@ -516,50 +628,6 @@ export function OrganizePanel({
             元のファイルを残す
           </label>
         </section>
-
-        {/*
-          主操作は列の最下部に固定する。設定の量で位置が上下すると、
-          押す場所を毎回探すことになる。右で何が起きても動かない。
-        */}
-        <div className="mt-auto flex flex-col gap-1.5 pt-2">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="primary"
-              size="lg"
-              className="flex-1"
-              data-testid="confirm"
-              disabled={running || sources.length === 0}
-              onClick={run}
-            >
-              <Play />
-              この内容で整理する
-            </Button>
-            {running ? (
-              <Button variant="danger" data-testid="cancel" onClick={cancel}>
-                <Square />
-                中断する
-              </Button>
-            ) : null}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span
-              className="text-[12px] text-ink-muted"
-              data-testid="organize-status"
-              role="status"
-            >
-              {status}
-            </span>
-            <div className="flex-1" />
-            {progress.total > 0 ? (
-              <span className="tabular text-[12px] text-ink-faint">
-                {progress.current} / {progress.total}
-              </span>
-            ) : null}
-          </div>
-
-          <Progress data-testid="progress" value={percent} />
-        </div>
       </aside>
 
       {/*
@@ -574,6 +642,31 @@ export function OrganizePanel({
           onChange={onSourcesChange}
           disabled={running}
           fill
+          hint="チェックを外すと作りません · Delete で落としたものを外す"
+          actions={
+            <PlanActions
+              rows={rows}
+              excluded={excluded}
+              status={statusText}
+              issues={issues}
+              progress={progress}
+              running={running}
+              blocked={blocked}
+              onToggleAll={toggleAll}
+              onRun={run}
+              onCancel={cancel}
+            />
+          }
+          list={
+            <PlanList
+              rows={rows}
+              excluded={excluded}
+              names={names}
+              locked={running}
+              onToggle={toggleRow}
+              onRemove={removeSource}
+            />
+          }
         />
         {/*
           失敗は出来たファイルより先に置く。放っておけないのはこちらで、

@@ -102,11 +102,25 @@ async function enterArchiveDirectory(page: Page) {
     .click();
 }
 
+/**
+ * 落としたものの行。
+ *
+ * 一覧は 3 階層になり（#70 第 3 段階）、落としたものは一番外側の行になる。
+ * 出来上がる本の行も同じ testid で並ぶので、深さで絞り込む。
+ */
+function droppedRows(page: Page) {
+  return page.locator('[data-testid="plan-row"][data-level="0"]');
+}
+
 /** ブラウザを閉じ、一覧が指定の件数になったことまで確かめる */
 async function closeBrowser(page: Page, count: number) {
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeHidden();
-  await expect(page.getByTestId("selected-item")).toHaveCount(count);
+  await expect(droppedRows(page)).toHaveCount(count);
+  // 解析が終わって本の行まで生えるのを待つ。伸び切る前の高さを測らない
+  await expect(
+    page.locator('[data-testid="plan-row"][data-kind="book"]'),
+  ).toHaveCount(count);
 }
 
 /** 置き場所ごとまとめて処理対象にする */
@@ -172,9 +186,7 @@ async function primaryActionPlace(page: Page) {
 async function listRegion(page: Page) {
   return page.evaluate(() => {
     const rows = [
-      ...document.querySelectorAll<HTMLElement>(
-        '[data-testid="selected-item"]',
-      ),
+      ...document.querySelectorAll<HTMLElement>('[data-testid="plan-row"]'),
     ];
     if (rows.length === 0) return null;
 
@@ -273,7 +285,7 @@ async function nameAndPathGaps(page: Page, minPathText: number) {
 
     return [
       ...document.querySelectorAll<HTMLElement>(
-        '[data-testid="selected-item"]',
+        '[data-testid="plan-row"][data-path]:not([data-path=""])',
       ),
     ].map((row) => {
       const path = row.dataset.path ?? "";
@@ -455,7 +467,8 @@ test.describe("ワークベンチ: ファイル整理", () => {
 
     // Assert - 測る対象が見つからないまま通らないようにする
     expect(region, "一覧の領域が見つからない").not.toBeNull();
-    expect(region!.rows).toBe(MANY);
+    // 落としたもの MANY 件と、そこから出来る本 MANY 冊
+    expect(region!.rows).toBe(MANY * 2);
     expect(region!.holdsRows, "測った領域が行を含んでいない").toBe(true);
     expect(region!.holdsPrimary, "画面全体を一覧として測っている").toBe(false);
 
@@ -485,8 +498,8 @@ test.describe("ワークベンチ: ファイル整理", () => {
       `主操作の下端が ${Math.round(listed!.bottom)}px（窓は ${listed!.innerHeight}px）`,
     ).toBeLessThanOrEqual(listed!.innerHeight);
 
-    // Act & Assert - 主操作は設定の列にあり、右側で何が起きても動かない。
-    // 「ファイルを選ぶ」を開いても押しに行ける
+    // Act & Assert - 主操作は一覧の直上にあり、一覧とファイルブラウザの
+    // 入れ替わりでは動かない。「ファイルを選ぶ」を開いても押しに行ける
     await page.getByTestId("open-browser").click();
     await expect(page.getByTestId("file-browser")).toBeVisible();
     const browsing = await primaryActionPlace(page);
@@ -553,7 +566,7 @@ test.describe("ワークベンチ: ファイル整理", () => {
     // Arrange - 入れ替わりが見えるよう、一覧に中身がある状態から始める
     await openOrganize(page, "out-swap");
     await addSome(page, archiveNames.slice(0, FEW));
-    const rows = page.getByTestId("selected-item");
+    const rows = droppedRows(page);
     await expect(rows.first()).toBeVisible();
 
     // Act - ファイルを選ぶ

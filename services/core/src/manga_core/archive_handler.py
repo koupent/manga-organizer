@@ -64,6 +64,9 @@ class ArchiveHandler:
         # 入れ子は合計で数える。1 段ごとの上限では多段の展開爆弾を止められない
         self.budget = budget or ExtractionBudget(limits)
         self.temp_dir = None
+        # 直近に展開したアーカイブの中身を置いた場所。実行前の解析が
+        # 予告した位置と、実際に出来たフォルダを突き合わせるのに使う（#70）
+        self.extract_root: Path | None = None
         self.progress_callback = None
         self.log_callback = log_callback  # For detailed logging to GUI
 
@@ -443,6 +446,7 @@ class ArchiveHandler:
         # for volume detection
         archive_subdir = self.temp_dir / archive_path.stem
         archive_subdir.mkdir(parents=True, exist_ok=True)
+        self.extract_root = archive_subdir
 
         try:
             # Extract the main archive
@@ -549,5 +553,6 @@ class ArchiveHandler:
             try:
                 shutil.rmtree(self.temp_dir)
                 self.temp_dir = None
+                self.extract_root = None
             except Exception as e:
                 self._log(f"Failed to cleanup temp directory: {e}", "error")

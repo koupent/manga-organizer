@@ -57,6 +57,16 @@ function producedNames(root: string): string[] {
   return producedFiles(root).map((path) => path.split("/").pop()!);
 }
 
+/**
+ * 落としたものの行。
+ *
+ * 一覧は 3 階層になり（#70 第 3 段階）、落としたものは一番外側の行になる。
+ * 出来上がる本の行も同じ testid で並ぶので、深さで絞り込む。
+ */
+function droppedRows(page: Page) {
+  return page.locator('[data-testid="plan-row"][data-level="0"]');
+}
+
 /** ファイルブラウザから対象を選ぶ。実パスはサーバー側が返す */
 async function selectArchives(page: Page, paths: string[]) {
   await page.getByTestId("open-browser").click();
@@ -73,6 +83,7 @@ async function selectArchives(page: Page, paths: string[]) {
     `${paths.length} 件`,
   );
   await page.getByTestId("open-browser").click();
+  await expect(droppedRows(page)).toHaveCount(paths.length);
 }
 
 async function openOrganize(page: Page, output: string) {
@@ -137,7 +148,9 @@ async function addArchiveViaBrowser(
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeHidden();
   await expect(
-    page.locator(`[data-testid="selected-item"][data-path="${archive}"]`),
+    page.locator(
+      `[data-testid="plan-row"][data-level="0"][data-path="${archive}"]`,
+    ),
   ).toBeVisible();
 }
 
@@ -359,7 +372,9 @@ test.describe("整理画面", () => {
     await expect(page.getByTestId("organize-author")).toHaveValue("");
   });
 
-  test("作品名と著者が空のままでは実行しない", async ({ page }) => {
+  test("作品名と著者が空のままでは実行できず、理由が見える", async ({
+    page,
+  }) => {
     // Arrange
     const paths = [
       writeArchive(sidecar.workDir, "未入力.zip", [
@@ -371,45 +386,33 @@ test.describe("整理画面", () => {
     await openOrganize(page, output);
     await selectArchives(page, paths);
 
-    // Act
-    await page.getByTestId("confirm").click();
+    // Assert - 揃っていないので押せない（#70 の確定仕様）
+    await expect(
+      page.getByTestId("confirm"),
+      "作品名も著者も空なのに実行できてしまう",
+    ).toBeDisabled();
 
-    // Assert - 何も出力されず、足りない項目を伝える
+    // Assert - 押せないだけでは何が足りないか分からない。理由が主操作の
+    // 行に出る。ここが無いと、無効なボタンの前で利用者が詰まる
     await expect(page.getByTestId("organize-status")).toContainText(
       "作品名を入れてください",
     );
+    await expect(page.getByTestId("organize-status")).toContainText(
+      "著者を入れてください",
+    );
     expect(producedFiles(output)).toEqual([]);
+
+    // Assert - 埋めれば押せるようになる。常に無効な実装で通らないようにする
+    await fillMangaInfo(page, "埋めた作品", "埋めた著者");
+    await expect(page.getByTestId("confirm")).toBeEnabled();
   });
 
-  test("処理対象の順番をドラッグで入れ替えられる", async ({ page }) => {
-    // Arrange
-    const paths = [
-      writeArchive(sidecar.workDir, "順番A.zip", [
-        { name: "001.jpg", color: "#ff0000" },
-      ]),
-      writeArchive(sidecar.workDir, "順番B.zip", [
-        { name: "001.jpg", color: "#00ff00" },
-      ]),
-    ];
-    await openOrganize(page, join(sidecar.workDir, "out-order"));
-    await selectArchives(page, paths);
-
-    const items = page.getByTestId("selected-item");
-    await expect(items.nth(0)).toHaveAttribute("data-path", paths[0]);
-
-    // Act - 1 件目を 2 件目の下へ運ぶ
-    const grip = items.nth(0).getByTestId("selected-grip");
-    const from = (await grip.boundingBox())!;
-    const to = (await items.nth(1).boundingBox())!;
-    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(to.x + to.width / 2, to.y + to.height, { steps: 12 });
-    await page.mouse.up();
-
-    // Assert
-    await expect(items.nth(0)).toHaveAttribute("data-path", paths[1]);
-    await expect(items.nth(1)).toHaveAttribute("data-path", paths[0]);
-  });
+  /*
+    「処理対象の順番をドラッグで入れ替えられる」と「キーボードだけで処理対象の
+    順番を入れ替えられる」は、#70 第 3 段階の確定仕様「並べ替えのグリップは外す」
+    （フォルダを放り込む形になり、順番に意味が無くなった）と両立しないため
+    取り除いた。掴む所を出さないことは plan-list.spec.ts が見る。
+  */
 
   test("Delete キーで処理対象から外せる", async ({ page }) => {
     // Arrange
@@ -424,16 +427,13 @@ test.describe("整理画面", () => {
     await openOrganize(page, join(sidecar.workDir, "out-delete"));
     await selectArchives(page, paths);
 
-    // Act
-    await page.getByTestId("selected-item").nth(0).focus();
+    // Act - 落としたものの行に焦点を当てて外す
+    await droppedRows(page).nth(0).focus();
     await page.keyboard.press("Delete");
 
     // Assert
     await expect(page.getByTestId("selected-count")).toHaveText("1 件");
-    await expect(page.getByTestId("selected-item")).toHaveAttribute(
-      "data-path",
-      paths[1],
-    );
+    await expect(droppedRows(page)).toHaveAttribute("data-path", paths[1]);
   });
 
   test("処理の経過がログに出る", async ({ page }) => {
@@ -561,23 +561,31 @@ test.describe("整理画面", () => {
     await fillMangaInfo(page, "実行中の作品", "実行中の著者");
     await selectArchives(page, paths);
 
+    const firstRow = droppedRows(page).first();
+    const firstCheck = firstRow.getByTestId("plan-check");
+    await expect(firstCheck).toHaveAttribute("aria-checked", "true");
+
     // Act - 実行中に一覧から 1 件外そうとする
     await page.getByTestId("confirm").click();
     await expect(page.getByTestId("cancel")).toBeVisible();
-    await page
-      .getByTestId("selected-item")
-      .first()
-      .getByRole("button", { name: "一覧から外す" })
-      .click();
 
-    // Assert - 実際に処理される内容と食い違わないよう、一覧は変わらない
+    // Assert - 外す操作もチェックも固定される。実際に処理される内容と
+    // 食い違わないため、そして再実行で `_1` が二重に付かないため
+    await expect(firstRow.getByTestId("plan-remove")).toBeDisabled();
+    await expect(firstCheck).toBeDisabled();
+    await firstCheck.click({ force: true });
+    await expect(firstCheck).toHaveAttribute("aria-checked", "true");
+
+    // Assert - 一覧は変わらない
     await expect(page.getByTestId("selected-count")).toHaveText("3 件");
-    await expect(page.getByTestId("selected-item")).toHaveCount(3);
+    await expect(droppedRows(page)).toHaveCount(3);
     await expect(page.getByTestId("organize-status")).toContainText(
       "整理しました",
       { timeout: 30_000 },
     );
     await expect(page.getByTestId("selected-count")).toHaveText("3 件");
+    // Assert - 3 冊とも出来ている。固定した結果として 1 件外れていない
+    expect(producedNames(output)).toHaveLength(3);
   });
 
   test("進捗と状態が支援技術に伝わる", async ({ page }) => {
@@ -606,33 +614,6 @@ test.describe("整理画面", () => {
     await expect(progress).toHaveAttribute("aria-valuenow", /^\d+$/);
     await expect(progress).toHaveAttribute("aria-valuemax", /^\d+$/);
     await expect(page.getByRole("status")).toContainText("整理しました");
-  });
-
-  test("キーボードだけで処理対象の順番を入れ替えられる", async ({ page }) => {
-    // Arrange
-    const paths = [
-      writeArchive(sidecar.workDir, "キー順A.zip", [
-        { name: "001.jpg", color: "#ff0000" },
-      ]),
-      writeArchive(sidecar.workDir, "キー順B.zip", [
-        { name: "001.jpg", color: "#00ff00" },
-      ]),
-    ];
-    await openOrganize(page, join(sidecar.workDir, "out-key-order"));
-    await selectArchives(page, paths);
-
-    const items = page.getByTestId("selected-item");
-    await expect(items.nth(0)).toHaveAttribute("data-path", paths[0]);
-
-    // Act - ハンドルにフォーカスし、Space で掴んで ↓ で送り、Space で置く
-    await items.nth(0).getByTestId("selected-grip").focus();
-    await page.keyboard.press("Space");
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Space");
-
-    // Assert
-    await expect(items.nth(0)).toHaveAttribute("data-path", paths[1]);
-    await expect(items.nth(1)).toHaveAttribute("data-path", paths[0]);
   });
 
   test("辞書ボタンで辞書がダイアログとして開く", async ({ page }) => {
@@ -694,7 +675,7 @@ test.describe("整理画面", () => {
 
     // Assert - 処理対象の一覧も順番ごと残る
     await expect(page.getByTestId("selected-count")).toHaveText("2 件");
-    const items = page.getByTestId("selected-item");
+    const items = droppedRows(page);
     await expect(items.nth(0)).toHaveAttribute("data-path", paths[0]);
     await expect(items.nth(1)).toHaveAttribute("data-path", paths[1]);
   });

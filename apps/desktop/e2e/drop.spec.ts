@@ -33,6 +33,17 @@ async function dropFiles(page: Page, files: { name: string; size: number }[]) {
   });
 }
 
+/**
+ * 落としたものの行。
+ *
+ * 一覧は 3 階層になり（#70 第 3 段階）、落としたものは一番外側の行になる。
+ * 中で見つかったアーカイブや出来上がる本も同じ testid で並ぶので、
+ * 深さで絞り込む。
+ */
+function droppedRows(page: Page) {
+  return page.locator('[data-testid="plan-row"][data-level="0"]');
+}
+
 async function openOrganize(page: Page) {
   await page.goto(
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
@@ -56,10 +67,7 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
 
     // Assert - 実パスが引き当てられている
     await expect(page.getByTestId("selected-count")).toHaveText("1 件");
-    await expect(page.getByTestId("selected-item")).toHaveAttribute(
-      "data-path",
-      archive,
-    );
+    await expect(droppedRows(page)).toHaveAttribute("data-path", archive);
   });
 
   test("複数まとめて落とせる", async ({ page }) => {
@@ -100,7 +108,7 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
 
     // Assert - 落とした順に一覧へ並ぶ
     await expect(page.getByTestId("selected-count")).toHaveText("2 件");
-    const items = page.getByTestId("selected-item");
+    const items = droppedRows(page);
     await expect(items.nth(0)).toHaveAttribute("data-path", /第01巻\.zip$/);
     await expect(items.nth(1)).toHaveAttribute("data-path", /第02巻\.zip$/);
   });
@@ -139,10 +147,7 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
 
     // Assert - 名前で探さずに直接使える
     await expect(page.getByTestId("selected-count")).toHaveText("1 件");
-    await expect(page.getByTestId("selected-item")).toHaveAttribute(
-      "data-path",
-      archive,
-    );
+    await expect(droppedRows(page)).toHaveAttribute("data-path", archive);
   });
 
   test("見つからないときは探した場所を示す", async ({ page }) => {
@@ -169,12 +174,8 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     await dropFiles(page, dropped);
     await expect(page.getByTestId("selected-count")).toHaveText("2 件");
 
-    // Act - 行にはドラッグハンドルもあるので、削除ボタンを直接指す
-    await page
-      .getByTestId("selected-item")
-      .first()
-      .getByTestId("selected-remove")
-      .click();
+    // Act - 行にはチェックもあるので、外すボタンを直接指す
+    await droppedRows(page).first().getByTestId("plan-remove").click();
 
     // Assert
     await expect(page.getByTestId("selected-count")).toHaveText("1 件");

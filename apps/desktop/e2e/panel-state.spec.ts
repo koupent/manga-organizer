@@ -280,9 +280,10 @@ test.describe("画面を切り替えても状態が残る", () => {
     // なお処理対象と出力先は App が持つので、この 2 つだけでは落ちない。
     // 落ちるかどうかを決めているのは上の作品名と著者
     await expect(page.getByTestId("selected-count")).toHaveText("2 件");
+    // 一覧は 3 階層になった（#70 第 3 段階）。落としたものは一番外側の行
     expect(
       await page
-        .getByTestId("selected-item")
+        .locator('[data-testid="plan-row"][data-level="0"]')
         .evaluateAll((nodes) =>
           nodes.map((node) => node.getAttribute("data-path")),
         ),

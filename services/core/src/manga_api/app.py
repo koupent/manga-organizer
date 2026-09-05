@@ -31,6 +31,7 @@ from manga_core.input_expander import ARCHIVE_SUFFIXES, expand_inputs
 from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
+from manga_core.toc_analyzer import analyze_inputs, locate_books
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,46 @@ class ReorderRequest(BaseModel):
     order: list[str] = Field(description="並べ替え後のページ名（先頭が 1 ページ目）")
 
 
+class BookRef(BaseModel):
+    """本 1 冊の指定。
+
+    名前ではなく「元のアーカイブ + その中での位置」で指す。出来上がる名前は
+    作品名と著者で毎回変わるので、名前を鍵にすると入力欄をいじった瞬間に
+    選択が外れる。``entry`` はアーカイブ全体が 1 冊なら空文字。
+    """
+
+    source: str = Field(description="元のアーカイブ（または画像フォルダ）の絶対パス")
+    entry: str = Field(default="", description="アーカイブ内での位置")
+
+
+class AnalyzeRequest(BaseModel):
+    """出来上がる本を実行前に調べる依頼"""
+
+    archives: list[str] = Field(
+        description="解析対象の絶対パス。フォルダを渡すと中を再帰的に辿る"
+    )
+    title: str = Field(default="", description="作品名")
+    author: str = Field(default="", description="著者名")
+
+
+class PlannedBookView(BaseModel):
+    """実行すると 1 冊出来る、という予告"""
+
+    source: str
+    entry: str
+    output_name: str
+    volume: int | None = None
+    issues: list[str] = Field(
+        default_factory=list, description="実行前に利用者へ見せる印"
+    )
+
+
+class AnalyzeResult(BaseModel):
+    """解析の結果。出来上がる本を、実行するのと同じ順に並べる"""
+
+    books: list[PlannedBookView]
+
+
 class OrganizeRequest(BaseModel):
     """アーカイブ整理の依頼"""
 
@@ -67,6 +108,13 @@ class OrganizeRequest(BaseModel):
     title: str = Field(default="", description="作品名")
     author: str = Field(default="", description="著者名")
     keep_originals: bool = Field(default=True, description="元ファイルを残すか")
+    books: list[BookRef] | None = Field(
+        default=None,
+        description=(
+            "作る本。省くと投入されたものを全部作る。"
+            "与えると、その本だけを作る（空の配列は 1 冊も作らない）"
+        ),
+    )
 
 
 class BrowseEntry(BaseModel):
@@ -370,6 +418,25 @@ def create_app(
                 detail="ファイルが見つかりません",
             )
         return path
+
+    def expand_targets(raws: list[str]) -> list[Path]:
+        """投入されたパスを、1 冊ずつの入力へ展開する。
+
+        辿って見つけたものは利用者が名指ししていない。リンクで許可の外を
+        指していないか、1 件ずつ確かめてから処理対象に入れる。
+
+        解析と整理で同じ展開を通すのは、処理順が同名衝突の ``_1`` の付き方を
+        決めるため。片方だけ順番が変わると、予告した名前と実際に出来る名前が
+        食い違う。
+        """
+        targets = [resolve_organize_target(raw) for raw in raws]
+        expanded: list[Path] = []
+        for found in expand_inputs(targets):
+            if within_allowed(found):
+                expanded.append(found)
+            else:
+                logger.warning("許可された場所の外を指すため除きました: %s", found)
+        return expanded
 
     def open_editor(raw: str) -> ZipPageEditor:
         """アーカイブを開く。開けない理由はそのまま伝える"""
@@ -756,6 +823,29 @@ def create_app(
         _start(app, job_id, work)
         return JobAccepted(id=job_id)
 
+    @app.post("/api/analyze", dependencies=guarded, response_model=AnalyzeResult)
+    def analyze(request: AnalyzeRequest) -> AnalyzeResult:
+        """展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。
+
+        利用者はチェックを外す前に「何が出来るのか」を見る必要がある。
+        整理と同じ展開・同じ巻数判定を通すので、ここで見えた名前が
+        そのまま実行の結果になる。
+        """
+        return AnalyzeResult(
+            books=[
+                PlannedBookView(
+                    source=str(book.source),
+                    entry=book.entry,
+                    output_name=book.output_name,
+                    volume=book.volume,
+                    issues=list(book.issues),
+                )
+                for book in analyze_inputs(
+                    expand_targets(request.archives), request.author, request.title
+                )
+            ]
+        )
+
     @app.post(
         "/api/jobs/organize",
         dependencies=guarded,
@@ -768,15 +858,12 @@ def create_app(
         フォルダを渡されたら、ここで中身を 1 冊ずつへ展開する。フォルダを
         1 件のまま走らせると、進捗の総数が 1 のまま複数冊が出来上がる。
         """
-        targets = [resolve_organize_target(raw) for raw in request.archives]
-        # 辿って見つけたものは利用者が名指ししていない。リンクで許可の外を
-        # 指していないか、1 件ずつ確かめてから処理対象に入れる
-        archives: list[Path] = []
-        for found in expand_inputs(targets):
-            if within_allowed(found):
-                archives.append(found)
-            else:
-                logger.warning("許可された場所の外を指すため除きました: %s", found)
+        archives = expand_targets(request.archives)
+        # 選んだ本が与えられていれば、その本を含まないアーカイブごと外す。
+        # 進捗の総数もここで決まるので、外したぶんは最初から数に入らない
+        wanted = _wanted_entries(request.books)
+        if wanted is not None:
+            archives = [archive for archive in archives if archive.resolve() in wanted]
         job_id = app.state.jobs.submit(
             "organize",
             {
@@ -801,7 +888,8 @@ def create_app(
             failed: list[dict[str, str]] = []
             for index, archive in enumerate(archives, 1):
                 report(current=index, total=len(archives), message=archive.name)
-                for result in organizer.process_single_archive(archive):
+                skip = _skipped_locations(archive, wanted)
+                for result in organizer.process_single_archive(archive, skip):
                     if result.success and result.output_path:
                         produced.append(str(result.output_path))
                         continue
@@ -824,6 +912,40 @@ def create_app(
         return JobAccepted(id=job_id)
 
     return app
+
+
+def _wanted_entries(books: list[BookRef] | None) -> dict[Path, set[str]] | None:
+    """作る本を、元のアーカイブごとにまとめる。
+
+    ``None``（指定なし）と空の辞書（1 冊も作らない）は別物なので、``books`` を
+    省いたときだけ ``None`` を返す。パスはリンクを解いた形に揃える。解析が
+    返した文字列と整理で辿り直したパスは、同じ物でも書き方が違いうる。
+    """
+    if books is None:
+        return None
+    wanted: dict[Path, set[str]] = {}
+    for book in books:
+        wanted.setdefault(Path(book.source).resolve(), set()).add(book.entry)
+    return wanted
+
+
+def _skipped_locations(
+    archive: Path, wanted: dict[Path, set[str]] | None
+) -> frozenset[str]:
+    """このアーカイブの中で、作らない本の位置を求める。
+
+    外すのは「解析で予告できていて、かつ選ばれなかった」本だけにする。
+    予告できなかったもの（RAR・壊れたアーカイブ・入れ子の RAR）を黙って
+    落とすと、利用者が外したつもりのない本が何も言わずに消える。
+    """
+    if wanted is None:
+        return frozenset()
+    chosen = wanted.get(archive.resolve(), set())
+    return frozenset(
+        location.extracted_path
+        for location in locate_books(archive)
+        if location.entry not in chosen
+    )
 
 
 def _start(app: FastAPI, job_id: str, work) -> None:

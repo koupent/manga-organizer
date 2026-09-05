@@ -122,10 +122,17 @@ class _Place:
 
 
 @dataclass(frozen=True)
-class _Candidate:
-    """1 冊になる場所。巻数を決める前の状態"""
+class BookLocation:
+    """1 冊になる場所。巻数を決める前の状態。
+
+    ``entry`` は利用者に見せる位置で、``extracted_path`` は実処理が展開先に
+    作るフォルダの相対パス。整理を実行するとき「予告したどの本か」を実際の
+    展開結果と突き合わせるのに使う（外した本を作らないため）。位置を 2 つ
+    持つのは、実処理が入れ子アーカイブを ``_extracted_...`` へ展開するため。
+    """
 
     entry: str
+    extracted_path: str
     extracted_name: str
 
 
@@ -160,7 +167,7 @@ class _Planner:
 
     def plan_archive(self, archive_path: Path) -> list[PlannedBook]:
         """アーカイブ 1 つから出来る本を並べる"""
-        candidates = _scan_archive(archive_path)
+        candidates = locate_books(archive_path)
         total = len(candidates)
         return [
             self._plan(
@@ -221,8 +228,13 @@ def _volume_issues(
     return ()
 
 
-def _scan_archive(archive_path: Path) -> list[_Candidate]:
-    """アーカイブの目次から、1 冊になる場所を拾う"""
+def locate_books(archive_path: Path) -> list[BookLocation]:
+    """アーカイブの目次から、1 冊になる場所を拾う。
+
+    読めなかったときは空を返す。「1 冊も無い」と「読めなかった」を呼び分けて
+    いないのは、どちらでも実行前に予告できることが無い点で同じだから。
+    実行時には展開してみて初めて分かる（RAR・壊れたアーカイブ）。
+    """
     if archive_path.suffix.lower() not in ZIP_SUFFIXES:
         # RAR / 7z は目次の読み方が違う（第 5 段階）
         return []
@@ -236,7 +248,7 @@ def _scan_archive(archive_path: Path) -> list[_Candidate]:
         return []
 
 
-def _scan(archive: zipfile.ZipFile, place: _Place, depth: int) -> list[_Candidate]:
+def _scan(archive: zipfile.ZipFile, place: _Place, depth: int) -> list[BookLocation]:
     """1 つの ZIP の目次を、展開後のフォルダ構成として読む"""
     return _scan_directory(archive, _build_tree(archive.namelist()), "", place, depth)
 
@@ -247,7 +259,7 @@ def _scan_directory(
     directory: str,
     place: _Place,
     depth: int,
-) -> list[_Candidate]:
+) -> list[BookLocation]:
     """フォルダ 1 つ分を、実処理と同じ順序でたどる。
 
     実処理（``ArchiveHandler._process_directory_for_images``）は os.walk の
@@ -256,11 +268,13 @@ def _scan_directory(
     実処理の並びは OS のフォルダ列挙任せだが、解析は何度走らせても同じ結果に
     なる必要があるため、ここでは名前順に固定する。
     """
-    found: list[_Candidate] = []
+    found: list[BookLocation] = []
     names = tree.files[directory]
 
     if any(is_page_source(_join(place.extracted_path, name)) for name in names):
-        found.append(_Candidate(place.entry, place.extracted_name))
+        found.append(
+            BookLocation(place.entry, place.extracted_path, place.extracted_name)
+        )
 
     for name in sorted(names, key=natural_sort_key):
         if is_archive_name(name):
@@ -287,7 +301,7 @@ def _scan_nested(
     stored_name: str,
     place: _Place,
     depth: int,
-) -> list[_Candidate]:
+) -> list[BookLocation]:
     """入れ子アーカイブの目次を、展開せずに読む。
 
     目次は末尾にあるので、内側のバイト列はメモリへ読み出す必要がある。読むだけで

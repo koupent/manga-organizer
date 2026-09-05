@@ -16,6 +16,14 @@ import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
 /** 一覧の 1 行の上限。現在は隠れた削除ボタン（28px）が 41px まで押し上げている */
 const ROW_MAX_HEIGHT = 30;
 
+/**
+ * 3 件のアーカイブを入れたときに一覧へ並ぶ行の数（#70 第 3 段階）。
+ *
+ * 一覧は 放り込んだもの → 出来上がる本 の階層になったので、アーカイブ 1 件
+ * につき「落としたものの行」と「そこから出来る本の行」の 2 行が並ぶ。
+ */
+const ROWS_PER_ARCHIVE = 2;
+
 /** 入力欄と既定のボタン。28px を狙い、端数だけ許す */
 const CONTROL_MIN_HEIGHT = 27;
 const CONTROL_MAX_HEIGHT = 29;
@@ -158,7 +166,11 @@ async function openOrganizeWithArchives(
   await installContentRoot(page);
   await openOrganize(page, output);
   await selectArchives(page, archives);
-  await expect(page.getByTestId("selected-item")).toHaveCount(ARCHIVE_COUNT);
+  // 解析が終わって本の行まで生えるのを待つ。落としたものの行だけを数えて
+  // 進むと、行が増える途中の高さを測ってしまう
+  await expect(page.getByTestId("plan-row")).toHaveCount(
+    ARCHIVE_COUNT * ROWS_PER_ARCHIVE,
+  );
 }
 
 /** 要素の高さを測る。見えていない要素は測らせない */
@@ -176,20 +188,24 @@ test.describe("UI の密度", () => {
     await page.setViewportSize({ width: 1280, height: 860 });
     await openOrganizeWithArchives(page, "density-row");
 
-    // Act - 3 行ぶんの高さと、行に載っている削除ボタンの高さを集める
-    const rows = await page.getByTestId("selected-item").all();
+    // Act - 一覧に並ぶ全部の行の高さと、落としたものの行に載っている
+    // 外すボタンの高さを集める。外すボタンが付くのは落としたものの行だけ
+    const rows = await page.getByTestId("plan-row").all();
     const heights = await Promise.all(
       rows.map(async (row) => (await row.boundingBox())!.height),
     );
     const removeHeights = await Promise.all(
-      rows.map(
+      (
+        await page.locator('[data-testid="plan-row"][data-level="0"]').all()
+      ).map(
         async (row) =>
-          (await row.getByTestId("selected-remove").boundingBox())!.height,
+          (await row.getByTestId("plan-remove").boundingBox())!.height,
       ),
     );
 
     // Assert - 1 行も測らないまま通らないようにする
-    expect(heights).toHaveLength(ARCHIVE_COUNT);
+    expect(heights).toHaveLength(ARCHIVE_COUNT * ROWS_PER_ARCHIVE);
+    expect(removeHeights).toHaveLength(ARCHIVE_COUNT);
     for (const height of heights) {
       expect(
         height,
@@ -202,7 +218,7 @@ test.describe("UI の密度", () => {
     for (const height of removeHeights) {
       expect(
         height,
-        `削除ボタンの高さ ${height}px が ${ICON_MAX_HEIGHT}px を超えている`,
+        `外すボタンの高さ ${height}px が ${ICON_MAX_HEIGHT}px を超えている`,
       ).toBeLessThanOrEqual(ICON_MAX_HEIGHT);
       expect(height).toBeGreaterThanOrEqual(ICON_MIN_HEIGHT);
     }
