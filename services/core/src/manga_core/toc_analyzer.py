@@ -35,9 +35,11 @@
 返し、``analyze_inputs`` はそれを最後まで畳む。畳んだ結果が 1 件でも変わると、
 予告した名前と実際に出来る名前が食い違うため、後者は前者の消費者にしてある。
 
-**将来の足し方**: 「整理済みのアーカイブを判定する」（#73）は同じ目次解析を使う。
-``_scan_directory`` は既に 1 冊分のページ名をすべて見ているので、判定はそこで
-足せる。結果は ``PlannedBook.issues`` に印を 1 つ増やす形で載せられる。
+**整理済みかどうかの判定**（#73）は ``organized_detector`` が持つ。ここは目次と
+冊数を渡すだけで、条件そのものは書かない。判定は ``PlannedBook.issues`` ではなく
+専用の欄に載せる。``issues`` は画面で警告バッジになり、``keptIssueCounts`` が
+**残した**本の印しか数えないため、除外された本の印は永久に 0 と表示される。
+整理済みは問題ではなく状態。
 """
 
 import logging
@@ -54,6 +56,7 @@ from py7zr.io import BytesIOFactory
 
 from manga_core.input_expander import expand_inputs, is_archive_name
 from manga_core.naming import natural_sort_key
+from manga_core.organized_detector import OrganizedVerdict, judge_organized
 from manga_core.safe_extract import DEFAULT_LIMITS
 from manga_core.viewer_contract import is_page_source
 from manga_core.volume_detector import (
@@ -87,6 +90,12 @@ class PlannedBook:
 
     ``entry`` はアーカイブ内での位置で、アーカイブ全体が 1 冊なら空文字。
     ``issues`` は実行前に利用者へ見せる印で、後から種類を増やせるようにしてある。
+
+    ``organized`` は「この本は既にこの道具が作る物そのもの」（#73）。
+    ``organized_reason`` はそうでない理由 1 つで、整理済みなら ``None``。
+    ``author`` / ``title`` は**本の名前から読んだ**値で、依頼の値ではない。
+    整理済みでなければ ``None``。判定を ``issues`` に混ぜないのは、``issues`` が
+    画面で警告バッジになり、除外された本の印が数えられないため。
     """
 
     source: Path
@@ -94,6 +103,10 @@ class PlannedBook:
     output_name: str
     volume: int | None
     issues: tuple[str, ...] = ()
+    organized: bool = False
+    author: str | None = None
+    title: str | None = None
+    organized_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -221,11 +234,19 @@ class BookLocation:
     作るフォルダの相対パス。整理を実行するとき「予告したどの本か」を実際の
     展開結果と突き合わせるのに使う（外した本を作らないため）。位置を 2 つ
     持つのは、実処理が入れ子アーカイブを ``_extracted_...`` へ展開するため。
+
+    ``toc_names`` はこの本が見つかったアーカイブの目次そのもの（入れ子から出た本
+    なら内側の目次）。整理済みかどうかの判定（#73）は「ページ以外に何も入って
+    いないこと」まで見るので、ページの一覧だけでは足りない。``__MACOSX/`` や
+    ドットフォルダは ``viewer_contract`` が**積極的に除外する**ため、ページの
+    一覧からは消えてしまう。目次を読み直すと同じアーカイブを 2 度開くことになる
+    ので、1 度目に読んだものをそのまま持たせる。
     """
 
     entry: str
     extracted_path: str
     extracted_name: str
+    toc_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -268,6 +289,9 @@ class _Planner:
                 self.detector.resolve_volume(
                     Path(candidate.extracted_name), archive_path, position, total
                 ),
+                judge_organized(
+                    archive_path, candidate.entry, total, candidate.toc_names
+                ),
             )
             for position, candidate in enumerate(candidates, 1)
         ]
@@ -277,12 +301,34 @@ class _Planner:
 
         実処理（``FileOrganizer._process_image_directory``）も展開を伴わず、
         巻数をフォルダ名だけで決めるので、ここでも優先順位は使わない。
-        """
-        return self._plan(folder, "", self.detector.decide_volume(folder))
 
-    def _plan(self, source: Path, entry: str, decision: VolumeDecision) -> PlannedBook:
-        base_name = self.detector.format_volume_name(
-            self.author, self.title, decision.number
+        目次は無いので空を渡す。フォルダはこの道具の成果物（ZIP）ではないため、
+        判定は必ず「整理済みでない」に落ちる。
+        """
+        return self._plan(
+            folder,
+            "",
+            self.detector.decide_volume(folder),
+            judge_organized(folder, "", 1, ()),
+        )
+
+    def _plan(
+        self,
+        source: Path,
+        entry: str,
+        decision: VolumeDecision,
+        verdict: OrganizedVerdict,
+    ) -> PlannedBook:
+        # 整理済みの本の出来上がりは自分自身。依頼の著者・作品名で名前を作り直すと、
+        # 画面には「作り直したら別人名義になる」という嘘の予告が並ぶ。帳簿へ入れる
+        # 名前も 1 冊につき 1 つだけにする。作り直した名前と自分の名前を両方
+        # 数えると、自分自身とぶつかったことになって ``_1`` が付く
+        base_name = (
+            source.stem
+            if verdict.organized
+            else self.detector.format_volume_name(
+                self.author, self.title, decision.number
+            )
         )
         output_name = unique_file_name(
             base_name, lambda candidate: candidate in self._taken
@@ -294,6 +340,10 @@ class _Planner:
             output_name=output_name,
             volume=decision.number,
             issues=_volume_issues(self.detector, decision),
+            organized=verdict.organized,
+            author=verdict.author,
+            title=verdict.title,
+            organized_reason=verdict.reason,
         )
 
 
@@ -483,7 +533,9 @@ def _scan_directory(
 
     if any(is_page_source(_join(place.extracted_path, name)) for name in names):
         found.append(
-            BookLocation(place.entry, place.extracted_path, place.extracted_name)
+            BookLocation(
+                place.entry, place.extracted_path, place.extracted_name, toc.names
+            )
         )
 
     for name in sorted(names, key=natural_sort_key):

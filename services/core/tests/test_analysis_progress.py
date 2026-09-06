@@ -60,8 +60,19 @@ from manga_core.input_expander import expand_inputs  # noqa: E402
 AUTHOR = "著者"
 TITLE = "作品"
 
-# 本 1 冊として返す項目。第 3 段階の PlannedBookView と同じ形
-BOOK_KEYS = {"source", "entry", "output_name", "volume", "issues"}
+# 本 1 冊として返す項目。PlannedBookView と同じ形。後半 4 つは整理済みかどうかの
+# 判定（#73 第 2 段階）で、整理済みでない本にも必ず載る
+BOOK_KEYS = {
+    "source",
+    "entry",
+    "output_name",
+    "volume",
+    "issues",
+    "organized",
+    "author",
+    "title",
+    "organized_reason",
+}
 
 # 1 つの ZIP に 2 冊分が入っている状態。アーカイブの件数（2）と冊数（3）を
 # 食い違わせ、total が本を数えている実装で通らないようにする
@@ -180,6 +191,10 @@ class AnalysisJobTestBase(unittest.TestCase):
                 "output_name": book.output_name,
                 "volume": book.volume,
                 "issues": list(book.issues),
+                "organized": book.organized,
+                "author": book.author,
+                "title": book.title,
+                "organized_reason": book.organized_reason,
             }
             for book in planned
         ]

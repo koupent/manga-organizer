@@ -65,6 +65,16 @@ def unique_file_name(
         counter += 1
 
 
+def format_series_dir(author: str, title: str) -> str:
+    """整理が作る、作品ごとのフォルダ名。
+
+    実処理（``FileOrganizer._create_manga_directory``）と、整理済みかどうかの
+    判定（``organized_detector``）で別々に書くと、片方を直したときに整理済みの
+    本が「置き場が違う」と判定され、既定で作り直される。
+    """
+    return f"[{author}] {title}"
+
+
 def original_nested_name(dir_name: str) -> str:
     """展開先フォルダ名から、元の入れ子アーカイブ名を取り戻す（#74）。
 
@@ -194,7 +204,7 @@ class VolumeDetector:
         title: str,
         volume: int | None,
     ) -> str:
-        base_name = f"[{author}] {title}"
+        base_name = format_series_dir(author, title)
 
         if volume is not None:
             return f"{base_name} 第{volume:03d}巻"

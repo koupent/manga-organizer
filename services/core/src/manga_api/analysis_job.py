@@ -53,7 +53,13 @@ class AnalyzeRequest(BaseModel):
 
 
 class PlannedBookView(BaseModel):
-    """実行すると 1 冊出来る、という予告"""
+    """実行すると 1 冊出来る、という予告。
+
+    ``organized`` から下の 4 つは決して省かない（#73 第 2 段階）。``unreadable``
+    と同じ理由で、省くと画面から「整理済みでない」のか「判定していない」のかを
+    区別できない。判定を ``issues`` に混ぜないのは、``issues`` が画面で警告バッジに
+    なり、状態を問題として見せてしまうため。
+    """
 
     source: str
     entry: str
@@ -61,6 +67,22 @@ class PlannedBookView(BaseModel):
     volume: int | None = None
     issues: list[str] = Field(
         default_factory=list, description="実行前に利用者へ見せる印"
+    )
+    organized: bool = Field(
+        default=False, description="この本は既に整理の出力そのものか"
+    )
+    author: str | None = Field(
+        default=None, description="本の名前から読んだ著者名。読めなければ null"
+    )
+    title: str | None = Field(
+        default=None, description="本の名前から読んだ作品名。読めなければ null"
+    )
+    organized_reason: str | None = Field(
+        default=None,
+        description=(
+            "整理済みでない理由。multiple-books / not-zip / name-mismatch / "
+            "pages-mismatch / extra-entries / folder-mismatch のいずれか"
+        ),
     )
 
 
@@ -189,4 +211,8 @@ def _book_view(book: PlannedBook) -> dict[str, Any]:
         output_name=book.output_name,
         volume=book.volume,
         issues=list(book.issues),
+        organized=book.organized,
+        author=book.author,
+        title=book.title,
+        organized_reason=book.organized_reason,
     ).model_dump()
