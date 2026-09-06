@@ -112,6 +112,14 @@ class LibraryConnectionTestBase(unittest.TestCase):
     def listing(self):
         return self.client.get("/api/library/entries", params=self.auth())
 
+    def bring_in(self, title: str = "ワンピース", author: str = "尾田栄一郎"):
+        """整理済みの対をまとめて辞書へ入れる（#73 段階 6）"""
+        return self.client.post(
+            "/api/library/import",
+            params=self.auth(),
+            json={"entries": [{"title": title, "author": author}]},
+        )
+
     def watch_the_connection(self, keep_open: bool = False) -> Closing:
         """辞書ファイルへの接続が閉じられた跡を控える。
 
@@ -225,6 +233,39 @@ class LibraryConnectionTest(LibraryConnectionTestBase):
             "接続の後始末を終了処理（__del__）に任せている。"
             "参照が残れば走らず、別スレッドで走れば sqlite3 が例外を投げて"
             "閉じ損ねる。辞書ダイアログを開くたびに 1 本ずつ積み上がる",
+        )
+
+    def test_importing_into_the_library_closes_the_connection_itself(self):
+        """まとめて取り込む経路も、開いた辞書を自分で閉じること（#73 段階 6）。
+
+        辞書を開く 4 つ目の経路になる。1 件ずつの経路と違い、押すのは
+        利用者の操作 1 回だが、開くのは同じ 1 本である。ここで閉じ忘れると、
+        Windows では辞書ファイルが掴まれたまま残る。
+        """
+        # Arrange
+        closing = self.watch_the_connection()
+
+        # Act - 先に記録の経路を通し、計測器が動いていることを確かめる
+        self.assertEqual(200, self.save().status_code)
+        self.assertEqual(
+            1,
+            len(closing.by_the_endpoint()),
+            f"計測器が壊れている: {closing.describe()}",
+        )
+        closing.clear()
+        self.assertEqual(200, self.bring_in().status_code)
+
+        # Assert
+        self.assertEqual(
+            1,
+            len(closing.by_the_endpoint()),
+            "取り込みが辞書の接続を自分で閉じていない。"
+            f"閉じた跡: {closing.describe() or 'なし'}",
+        )
+        self.assertEqual(
+            [],
+            closing.by_the_finalizer(),
+            "接続の後始末を終了処理（__del__）に任せている",
         )
 
     @unittest.skipUnless(PROC_FD.is_dir(), "開いたままの記述子を数えられない環境")
