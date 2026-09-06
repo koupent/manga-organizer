@@ -44,6 +44,9 @@ import { startSidecar, type Sidecar } from "./sidecar";
  * この 3 つは「まだ整理していない蔵書」の普通の姿で、そこに印を足すと一覧が
  * 印だらけになり、印が何も指さなくなる。
  *
+ * 段階 4c は行そのものの仕上げで、足りない契約は下の「整理済みの行の仕上げ」の
+ * 節にまとめる。素材は 4b と同じものを使う。
+ *
  * 判定そのものの契約は `services/core/tests/test_organized_detection.py`。
  * ここは判定を作り直さず、実際の整理に素材を作らせて画面まで運ぶ。
  */
@@ -1101,5 +1104,448 @@ test.describe("整理済みの本の見せ方", () => {
     await expect(hint, "使わない理由が読み分けられない").toHaveText(
       "今は使いません · 残した本は整理済み",
     );
+  });
+});
+
+/**
+ * 行の中の見え方を仕上げる（#73 段階 4c）。
+ *
+ * 段階 4b までで、整理済みの本は既定で外れ、行は消えずに残り、入れ直せば
+ * 自分の名前で作られるようになった。残っているのは行そのものの見え方で、
+ * 直すのは次の 3 つ。
+ *
+ * - **薄めるのを `li` から中の子へ移す。** いまは行を丸ごと 45% にしている。
+ *   すると「整理済み」の印まで薄くなる。その印はこの行が外れている理由
+ *   そのものなので、利用者から見ると答えの側が読みにくくなる。チェックと
+ *   整理済みの印と近道は 100% のまま残し、名前・場所・絵・理由の印だけを
+ *   薄める。行に乗せている間（ホバー・焦点）は全部 100% に戻す
+ * - **入れ直した整理済みの行は、行き先を出す。** 外れている間は今までどおり
+ *   元を指す。入れ直したときだけ「どこへ作られるのか」に変える。整理済みの
+ *   本は元の場所も出来上がる形も同じなので、行き先を出さないと入れ直した
+ *   ことが行から読めない
+ * - **整理済みの行にだけ、次の作業への近道を置く。** 整理済みの本は既に
+ *   ディスク上に最終形で在るので、整理を待たずにそのまま開ける。行き先は
+ *   出来たファイルの一覧（`ProducedList`）と同じ 2 つで、同じ受け渡し
+ *   （`onOpenProduced` → `App.openArchiveIn`）を通る。各画面は今までどおり
+ *   単独で使えるのが主で、これは任意の近道でしかない
+ *
+ * ここで足りない画面の契約は次のとおり。
+ *
+ * - `data-dim`       … 薄める側に回る子に付ける印。行がオフのときだけ効く
+ * - `plan-row-name`  … 行に出す名前（薄める側）
+ * - `plan-row-path`  … 名前の隣。オフなら元、オンの整理済みなら行き先（薄める側）
+ * - `plan-to-thumbnail` / `plan-to-reorder`
+ *                    … 整理済みの行にだけ置く近道。薄めない
+ */
+test.describe("整理済みの行の仕上げ", () => {
+  /** 薄めた側の不透明度。Tailwind の `opacity-45` が出す値 */
+  const DIMMED = "0.45";
+
+  /** 薄めない側の不透明度 */
+  const FULL = "1";
+
+  /** 画面に実際に効いている不透明度を読む */
+  async function opacityOf(target: Locator): Promise<string> {
+    return target.evaluate((node) => getComputedStyle(node).opacity);
+  }
+
+  /**
+   * その要素自身か、上のどれかが薄める側に回っているか。
+   *
+   * 不透明度だけでは足りない。親に `opacity` を掛けても、子の
+   * `getComputedStyle` は 1 のままを返す（見た目は薄いのに 1 と読める）。
+   * 薄める印そのものを辿って、薄めない子が巻き込まれていないか見る。
+   */
+  async function inDimmed(target: Locator): Promise<boolean> {
+    return target.evaluate((node) => node.closest("[data-dim]") !== null);
+  }
+
+  /**
+   * 行からホバーと焦点を外す。
+   *
+   * どちらも薄めを解くので、読む前に必ず離す。離さずに読むと「薄まって
+   * いない」がホバーのせいなのか実装のせいなのか分からなくなる。
+   */
+  async function leaveRows(page: Page) {
+    await page.mouse.move(0, 0);
+    await page.evaluate(() => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement) focused.blur();
+    });
+  }
+
+  /** 行の名前。薄める側 */
+  function nameOf(row: Locator): Locator {
+    return row.getByTestId("plan-row-name");
+  }
+
+  /** 行の場所。薄める側で、入れ直した整理済みの行だけ行き先に変わる */
+  function pathOf(row: Locator): Locator {
+    return row.getByTestId("plan-row-path");
+  }
+
+  /** 入れ直した整理済みの行が指す行き先 */
+  function destination(output: string, series: string): string {
+    return `→ ${output}/${series}/`;
+  }
+
+  /** 本の行が外れているときに出る、元の場所の文言（4b までと同じ） */
+  const ORIGIN_WHOLE = "← アーカイブ全体";
+
+  test("外した行で薄まるのは中の子だけで、チェックと整理済みの印は薄まらない", async ({
+    page,
+  }) => {
+    // Arrange
+    await preparePlan(page, "行の薄め方");
+    await leaveRows(page);
+    const row = bookRow(page, library.organized);
+    await expect(
+      checkOf(row),
+      "整理済みの行が既定で外れていない（前提が崩れている）",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Assert - 行そのものは薄めない。ここが要。`li` に不透明度を掛けると
+    // 中の子は軒並み 1 と読めてしまうので、「チェックが 1 だ」のような
+    // 子 1 つの主張は行を丸ごと薄めている今の実装でも通る。行が 1 で
+    // あることだけが「薄めが子へ移った」ことを言える
+    expect(
+      await opacityOf(row),
+      "行そのものが薄まっている（薄めが li に掛かったままになっている）",
+    ).toBe(FULL);
+
+    // Assert - 薄まるのは名前と場所。何を外したのかは読めるが、目立たない
+    for (const [what, target] of [
+      ["名前", nameOf(row)],
+      ["場所", pathOf(row)],
+    ] as const) {
+      await expect(
+        target,
+        `行の${what}が読み取れない（plan-row-name / plan-row-path が無い）`,
+      ).toHaveCount(1);
+      expect(await opacityOf(target), `外した行の${what}が薄まっていない`).toBe(
+        DIMMED,
+      );
+    }
+
+    // Assert - チェックと整理済みの印は 100% のまま。印はこの行が外れて
+    // いる理由そのもので、一緒に薄めると「なぜ外れているのか」の答えが
+    // 一番読みにくい所に置かれることになる
+    for (const [what, target] of [
+      ["チェック", checkOf(row)],
+      ["整理済みの印", row.getByTestId("plan-row-state")],
+    ] as const) {
+      expect(await opacityOf(target), `外した行の${what}が薄まっている`).toBe(
+        FULL,
+      );
+      expect(
+        await inDimmed(target),
+        `外した行の${what}が薄める側に入っている`,
+      ).toBe(false);
+    }
+
+    // Act - 行に乗せる
+    await row.hover();
+
+    // Assert - 乗せている間は行ごと 100% に戻る。外した行でも、読みたい
+    // ときには読める。ここで名前だけを見ても意味が無い（薄めが li に
+    // 残っていても子は 1 と読める）ので、行と名前の両方を見る
+    expect(await opacityOf(row), "行に乗せても行が薄いまま").toBe(FULL);
+    expect(await opacityOf(nameOf(row)), "行に乗せても名前が薄いまま").toBe(
+      FULL,
+    );
+
+    // Act - 離す
+    await leaveRows(page);
+
+    // Assert - 離せば薄まりに戻る。乗せたきり戻らない実装だと、一度触った
+    // 行だけが濃く残り、どれを外したのか一覧から読めなくなる
+    expect(await opacityOf(nameOf(row)), "行から離れても薄まりに戻らない").toBe(
+      DIMMED,
+    );
+
+    // Assert - 対照 1。入っている行は薄めない。全部の行を薄める実装は
+    // ここで落ちる
+    expect(
+      await opacityOf(nameOf(bookRow(page, library.nameMismatch))),
+      "入っている行まで薄まっている",
+    ).toBe(FULL);
+
+    // Assert - 対照 2。入れ物も三態が false なら薄まる（4b までと同じ）。
+    // 薄めを本の行だけに付ける実装だと、外れた入れ物が濃いまま残る
+    const container = archiveRow(page, library.organized);
+    expect(
+      await opacityOf(container),
+      "入れ物そのものが薄まっている（薄めが li に掛かったままになっている）",
+    ).toBe(FULL);
+    expect(
+      await opacityOf(nameOf(container)),
+      "外れている入れ物の名前が薄まっていない",
+    ).toBe(DIMMED);
+
+    // Assert - 対照 3。混在の入れ物は薄めない。false のときだけ薄める
+    expect(
+      await opacityOf(nameOf(folderRow(page, library.folder))),
+      "混在の入れ物まで薄まっている",
+    ).toBe(FULL);
+
+    // Act - 利用者が自分で外した行。整理済みではないので理由の印が出ている
+    const dropped = bookRow(page, library.folderMismatch);
+    await checkOf(dropped).click();
+    await leaveRows(page);
+    await expect(
+      checkOf(dropped),
+      "外したはずの行にチェックが残っている",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Assert - 理由の印は薄める側。整理済みの印と違い、これは「まだ直せる」
+    // という手掛かりで、外した行では急ぎの用ではない
+    expect(
+      await opacityOf(dropped.getByTestId("plan-row-reason")),
+      "外した行の理由の印が薄まっていない",
+    ).toBe(DIMMED);
+    expect(
+      await opacityOf(checkOf(dropped)),
+      "自分で外した行のチェックまで薄まっている",
+    ).toBe(FULL);
+  });
+
+  test("入れ直した整理済みの行は、元の場所ではなく行き先を出す", async ({
+    page,
+  }) => {
+    // Arrange - 左の列には蔵書と違う対が入る。行き先を左の列から組み立てる
+    // 実装なら、ここで別の作品フォルダが出て落ちる
+    const output = await preparePlan(page, "行き先");
+    const row = bookRow(page, library.organized);
+    await expect(
+      checkOf(row),
+      "整理済みの行が既定で外れていない（前提が崩れている）",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Assert - 外れている間は今までどおり元を指す。行き先を常に出す実装でも
+    // 「入れ直したら行き先が出る」だけは通ってしまうので、両方を見る
+    await expect(row, "外れている整理済みの行が元を指していない").toContainText(
+      ORIGIN_WHOLE,
+    );
+    expect(
+      await row.textContent(),
+      "外れているのに行き先が出ている",
+    ).not.toContain(output);
+
+    // Act
+    await keepRow(row);
+
+    // Assert - 入れ直すと行き先に変わる。整理済みの本は元の場所も出来上がる
+    // 形も同じなので、行き先を出さないと入れ直したことが行から読めない
+    await expect(
+      row,
+      "入れ直した整理済みの行に行き先が出ていない",
+    ).toContainText(destination(output, library.shelfSeries));
+
+    // Assert - 行き先は場所の欄が持つ。名前の後ろに足すだけだと、行ごとに
+    // 名前の幅が変わって一覧が読みにくくなる
+    const where = pathOf(row);
+    await expect(
+      where,
+      "場所の欄が読み取れない（plan-row-path が無い）",
+    ).toHaveCount(1);
+    await expect(where, "場所の欄が行き先だけを出していない").toHaveText(
+      destination(output, library.shelfSeries),
+    );
+    // 元を指すときより 1 段濃くする。行き先はこれから起きることで、
+    // 済んだ場所より先に読ませたい
+    await expect(where, "行き先が text-ink-muted になっていない").toHaveClass(
+      /\btext-ink-muted\b/,
+    );
+
+    // Assert - 別の作品の行は別の作品フォルダを指す。1 つの対で全部の行き先を
+    // 作る実装や、先頭の本の名前を使い回す実装はここで落ちる
+    const other = bookRow(page, library.organizedOthers[1]);
+    await keepRow(other);
+    await expect(pathOf(other), "作品ごとに行き先が分かれていない").toHaveText(
+      destination(output, library.otherSeries),
+    );
+
+    // Act - もう一度外す
+    await checkOf(row).click();
+    await expect(
+      checkOf(row),
+      "外したはずの行にチェックが残っている",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Assert - 外し直せば元へ戻る。一度オンにしたら戻らない実装だと、作らない
+    // 本の行が作られる場所を指したままになる
+    await expect(where, "外し直したのに行き先のまま").toHaveText(ORIGIN_WHOLE);
+
+    // Assert - 対照。整理済みでない本は、入っていても元を指したまま。
+    // その本はまだディスク上に無く、行き先だけを出すと、既に在るかのように読める
+    await expect(
+      checkOf(bookRow(page, library.nameMismatch)),
+      "整理済みでない本が入っていない（前提が崩れている）",
+    ).toHaveAttribute("aria-checked", "true");
+    await expect(
+      pathOf(bookRow(page, library.nameMismatch)),
+      "整理済みでない本まで行き先を出している",
+    ).toHaveText(ORIGIN_WHOLE);
+  });
+
+  test("整理済みの行にだけ、次の作業への近道が出る", async ({ page }) => {
+    // Arrange
+    await preparePlan(page, "行の近道");
+    await leaveRows(page);
+    const row = bookRow(page, library.organized);
+    const name = (await row.getAttribute("data-output-name")) ?? "";
+    // 整理済みの本は既に最終形なので、出来上がる名前は今の名前と同じになる。
+    // 説明に出す名前がこの 1 つで決まることを、先に押さえておく
+    expect(name, "整理済みの行の名前が、そのファイルの名前と違う").toBe(
+      library.organized.split("/").pop(),
+    );
+
+    // Assert - 出来たファイルの一覧（ProducedList）と同じ 2 つ。同じことを
+    // する近道が画面ごとに違う顔をしていると、押す前に読み直すことになる
+    for (const [testId, label, icon, tip] of [
+      [
+        "plan-to-thumbnail",
+        "サムネイル",
+        "svg.lucide-image",
+        `${name} のサムネイルを作る`,
+      ],
+      [
+        "plan-to-reorder",
+        "ページ",
+        "svg.lucide-list-ordered",
+        `${name} のページを並べ替える`,
+      ],
+    ] as const) {
+      const button = row.getByTestId(testId);
+      await expect(button, `整理済みの行に ${label} の近道が無い`).toHaveCount(
+        1,
+      );
+      await expect(button, `${label} の近道の言葉が違う`).toContainText(label);
+      await expect(
+        button.locator(icon),
+        `${label} の近道の絵が ProducedList と違う`,
+      ).toHaveCount(1);
+      await expect(
+        button,
+        `${label} の近道に、どの本を開くのかの説明が無い`,
+      ).toHaveAttribute("title", tip);
+      // 近道は薄めない。外れている行でも押せるものだと読めなくなる
+      expect(
+        await inDimmed(button),
+        `${label} の近道が薄める側に入っている`,
+      ).toBe(false);
+    }
+
+    // Assert - 整理済みでない本には出さない。その本はまだディスク上に無く、
+    // 押しても開くものが無い
+    for (const [what, target] of [
+      ["整理済みでない本", bookRow(page, library.nameMismatch)],
+      ["アーカイブ", archiveRow(page, library.compound)],
+      ["フォルダ", folderRow(page, library.folder)],
+    ] as const) {
+      await expect(
+        target.getByTestId("plan-to-thumbnail"),
+        `${what}の行にまで近道が出ている`,
+      ).toHaveCount(0);
+      await expect(
+        target.getByTestId("plan-to-reorder"),
+        `${what}の行にまで近道が出ている`,
+      ).toHaveCount(0);
+    }
+
+    // Assert - 一覧全体でも整理済みの冊数ちょうど。全部の行に付ける実装は
+    // ここで落ちる
+    for (const testId of ["plan-to-thumbnail", "plan-to-reorder"] as const) {
+      await expect(
+        page.getByTestId(testId),
+        `${testId} が整理済み以外の行にも出ている`,
+      ).toHaveCount(ORGANIZED_COUNT);
+    }
+
+    // Assert - 席は乗せる前から空けてある。見えるのは乗せている間だけだが、
+    // そのとき初めて置くと行の中身が押し出され、狙って押せなくなる
+    const shortcut = row.getByTestId("plan-to-thumbnail");
+    const reserved = await shortcut.boundingBox();
+    expect(reserved?.width ?? 0, "乗せる前に近道の席が無い").toBeGreaterThan(0);
+    expect(await opacityOf(shortcut), "乗せていないのに近道が見えている").toBe(
+      "0",
+    );
+    const before = (await row.getByTestId("plan-row-state").boundingBox())!;
+
+    // Act
+    await row.hover();
+
+    // Assert - 乗せると見える。席は動かない
+    expect(await opacityOf(shortcut), "行に乗せても近道が見えない").toBe(FULL);
+    const after = (await row.getByTestId("plan-row-state").boundingBox())!;
+    expect(after.x, "行に乗せると中身が押し出される").toBeCloseTo(before.x, 1);
+  });
+
+  test("整理済みの行の近道から、その本を読み込んだ画面へ移る", async ({
+    page,
+  }) => {
+    // Arrange
+    await preparePlan(page, "近道で移る");
+
+    // Act - 先頭ではなく別の作品の 1 冊から移る。先頭を渡して済ませる実装や、
+    // 出力先の 1 つ目を開く実装を落とす。行は外れたままにしておく
+    const source = library.organizedOthers[1];
+    const row = bookRow(page, source);
+    await expect(
+      checkOf(row),
+      "整理済みの行が既定で外れていない（前提が崩れている）",
+    ).toHaveAttribute("aria-checked", "false");
+    const thumbnail = row.getByTestId("plan-to-thumbnail");
+    await expect(thumbnail, "サムネイルの近道が無い").toHaveCount(1);
+    await thumbnail.click();
+
+    // Assert - 押した行のファイルが読み込まれた状態でサムネイル作成へ移る。
+    // 画面だけ移ってファイルを選び直させると、近道の意味が無くなる
+    await expect(page.getByTestId("mode-thumbnail")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(
+      page.getByTestId("thumbnail-archive-name"),
+      "移った先が別のファイルを読んでいる",
+    ).toHaveText(source.split("/").pop()!);
+    // ファイル整理は隠れるだけで残る（#67）ので、その中のドロップ領域も
+    // DOM には居続ける。見えていないことで確かめる
+    await expect(
+      page.getByTestId("dropzone"),
+      "移った先でファイルを選び直させている",
+    ).toBeHidden();
+
+    // Act - ファイル整理へ戻る
+    await page.getByTestId("mode-organize").click();
+
+    // Assert - 近道を押しただけでは、作る・作らないは動かない。押すたびに
+    // 入れ直す実装だと、覗きに行っただけで出力先に本が増える
+    await expect(
+      checkOf(row),
+      "近道を押しただけで行のチェックが動いた",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Act - もう一方の近道も、別の行から試す
+    const another = library.organized;
+    const reorder = bookRow(page, another).getByTestId("plan-to-reorder");
+    await expect(reorder, "ページ並べ替えの近道が無い").toHaveCount(1);
+    await reorder.click();
+
+    // Assert
+    await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(
+      page.getByTestId("reorder-archive-name"),
+      "移った先が別のファイルを読んでいる",
+    ).toHaveText(another.split("/").pop()!);
+    // 名前だけなら見出しを書き換えるだけでも通る。中身まで読めていることを
+    // ページ数で確かめる（整理済みの本はどれも 3 ページ）
+    await expect(
+      page.getByTestId("page-card"),
+      "移った先が中身まで読み込めていない",
+    ).toHaveCount(3);
   });
 });
