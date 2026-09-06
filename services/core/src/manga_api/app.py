@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from PIL import Image
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from manga_api import thumbnails
 from manga_api.analysis_job import AnalyzeRequest, analysis_work
@@ -35,6 +35,13 @@ from manga_api.job_views import (
     to_view,
 )
 from manga_api.jobs import JobNotFound, JobStore
+from manga_api.library_views import (
+    AuthorCandidate,
+    LibraryEntries,
+    LibraryEntry,
+    Suggestion,
+    SuggestRequest,
+)
 from manga_api.organize_job import (
     OrganizeRequest,
     organize_work,
@@ -67,9 +74,6 @@ logger = logging.getLogger(__name__)
 TITLE = "Manga Organizer サイドカー"
 # 外部からは触らせない。Tauri シェルと同一ホスト内でのみ使う
 HOST = "127.0.0.1"
-
-# 作品名として妥当な長さ。これを超えるものは打ち間違いか攻撃とみなす
-MAX_TITLE_LENGTH = 200
 
 # Tauri の WebView と、開発・検証で使う Vite の dev server
 DEFAULT_ALLOWED_ORIGINS = (
@@ -132,58 +136,6 @@ class ResolveResult(BaseModel):
     unresolved: list[str]
     ambiguous: list[str]
     searched_roots: list[str] = []
-
-
-class LibraryEntry(BaseModel):
-    """タイトルと著者の対応"""
-
-    title: str
-    author: str
-
-
-class LibraryEntries(BaseModel):
-    """辞書の中身"""
-
-    entries: list[LibraryEntry]
-
-
-class SuggestRequest(BaseModel):
-    """外部サービスへの問い合わせ依頼"""
-
-    title: str = Field(
-        description="調べたい作品名。空白のみは受け付けない",
-        max_length=MAX_TITLE_LENGTH,
-    )
-
-    @field_validator("title")
-    @classmethod
-    def _reject_blank_title(cls, value: str) -> str:
-        """中身の無い作品名を境界で断る。
-
-        空文字はどの作品にも当たってしまい、外部サービスへの問い合わせも
-        無駄になる。前後の空白を落としたうえで空なら受け付けない。
-        """
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("作品名を入力してください")
-        return stripped
-
-
-class AuthorCandidate(BaseModel):
-    """検索で見つかった作品と、その著者"""
-
-    title: str
-    author: str
-    source: str
-    similarity: float
-
-
-class Suggestion(BaseModel):
-    """補完の結果。近い順に候補を並べ、先頭を既定として示す"""
-
-    title: str | None = None
-    author: str | None = None
-    candidates: list[AuthorCandidate] = Field(default_factory=list)
 
 
 class PageView(BaseModel):
