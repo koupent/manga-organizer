@@ -5,7 +5,7 @@ from pathlib import Path
 
 from manga_core.archive_handler import ArchiveHandler
 from manga_core.original_store import sidecar_members
-from manga_core.volume_detector import VolumeDetector
+from manga_core.volume_detector import VolumeDetector, format_series_dir
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class FileOrganizer:
     def _create_manga_directory(self) -> Path:
         """Create output directory for manga series"""
         self._log("  Creating output directory for manga series...")
-        manga_dir = self.output_directory / f"[{self.author}] {self.title}"
+        manga_dir = self.output_directory / format_series_dir(self.author, self.title)
         manga_dir.mkdir(parents=True, exist_ok=True)
         return manga_dir
 
