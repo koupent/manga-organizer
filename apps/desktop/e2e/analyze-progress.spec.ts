@@ -43,13 +43,26 @@ const AUTHOR = "テスト著者";
 /** 台本が配るジョブ番号。投入された順に使う */
 const JOB_IDS = ["analyze-job-1", "analyze-job-2", "analyze-job-3"];
 
-/** 解析ジョブが返す本 1 冊。サイドカーの PlannedBookView と同じ形 */
+/**
+ * 解析ジョブが返す本 1 冊。サイドカーの PlannedBookView と同じ形。
+ *
+ * 欄を省くと、型の上では埋まっているのに実行時は `undefined` になる。
+ * `data-organized="undefined"` はそうして出ていた。本ごとの名前（#73 段階 4a）
+ * では `title` / `author` が「自分の名前を持つか」の判定に使われるので、
+ * 省いた台本の本は「名前を持つ」側に落ちる。欄は 1 つも省かない。
+ */
 type Book = {
   source: string;
   entry: string;
   output_name: string;
   volume: number | null;
   issues: string[];
+  organized: boolean;
+  organized_reason: string | null;
+  /** 本の名前から読んだ著者名。整理済みでなければ null */
+  author: string | null;
+  /** 本の名前から読んだ作品名。整理済みでなければ null */
+  title: string | null;
 };
 
 /** 台本の 1 局面。`GET /api/jobs/{id}` が返す中身のうち、意味のある所だけ */
@@ -78,6 +91,12 @@ function book(
     output_name: volumeName(title, volume),
     volume,
     issues: [],
+    // 台本の本はどれも整理済みでない。ここで見るのは行の育ち方だけなので、
+    // 判定は一番ありふれた姿（まだ整理していない蔵書）に固定する
+    organized: false,
+    organized_reason: "name-mismatch",
+    author: null,
+    title: null,
   };
 }
 
