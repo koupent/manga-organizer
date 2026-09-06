@@ -29,6 +29,7 @@ from manga_api.job_runner import start_job
 from manga_api.jobs import Job, JobNotFound, JobStore
 from manga_api.output_roots import ChosenOutputRoots
 from manga_api.paths import PathGuard
+from manga_api.reorder_job import ReorderRequest, reorder_work
 from manga_api.split_job import (
     SplitConfirmRequest,
     SplitScanRequest,
@@ -46,7 +47,7 @@ from manga_core.original_store import (
     find_original,
     read_original,
 )
-from manga_core.page_reorder import PageReorderError, ZipPageEditor
+from manga_core.page_reorder import PageReorderError
 from manga_core.toc_analyzer import locate_books
 
 logger = logging.getLogger(__name__)
@@ -65,13 +66,6 @@ DEFAULT_ALLOWED_ORIGINS = (
     "tauri://localhost",
     "http://tauri.localhost",
 )
-
-
-class ReorderRequest(BaseModel):
-    """ページ並べ替えの依頼"""
-
-    archive: str = Field(description="対象アーカイブの絶対パス")
-    order: list[str] = Field(description="並べ替え後のページ名（先頭が 1 ページ目）")
 
 
 class BookRef(BaseModel):
@@ -812,27 +806,7 @@ def create_app(
         job_id = app.state.jobs.submit(
             "reorder", {"archive": str(path), "pages": len(request.order)}
         )
-
-        def work(report):
-            editor = ZipPageEditor(path)
-            try:
-                result = editor.apply_order(
-                    request.order,
-                    progress=lambda current, total: report(
-                        current=current, total=total, message="書き換え中"
-                    ),
-                )
-            finally:
-                editor.close()
-            app.state.thumbnails.discard(str(path))
-            return {
-                "changed": result.changed,
-                "pageCount": result.page_count,
-                "renamedCount": result.renamed_count,
-                "timesRestored": result.times_restored,
-            }
-
-        start_job(app, job_id, work)
+        start_job(app, job_id, reorder_work(path, request, app.state.thumbnails))
         return JobAccepted(id=job_id)
 
     @app.post(
