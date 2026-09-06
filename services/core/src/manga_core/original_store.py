@@ -45,8 +45,9 @@ from manga_core.viewer_contract import is_page_source
 logger = logging.getLogger(__name__)
 
 # 元画像の置き場と紐づけの記録。画面側もこの名前を直接見る
-ORIGINALS_PREFIX = ".manga-organizer/originals/"
-MANIFEST_ENTRY = ".manga-organizer/manifest.json"
+SIDECAR_DIR = ".manga-organizer"
+ORIGINALS_PREFIX = f"{SIDECAR_DIR}/originals/"
+MANIFEST_ENTRY = f"{SIDECAR_DIR}/manifest.json"
 
 # manifest の形式が変わったときに見分けるための版番号
 MANIFEST_VERSION = 1
@@ -139,6 +140,28 @@ def original_entry_name(digest: str, source_name: str) -> str:
     """
     suffix = PurePosixPath(source_name).suffix.lower() or _FALLBACK_SUFFIX
     return f"{ORIGINALS_PREFIX}{digest}{suffix}"
+
+
+def sidecar_members(source_dir: Path) -> list[tuple[str, Path]]:
+    """展開したフォルダの中の `.manga-organizer/` 配下を、エントリ名と場所の対で返す。
+
+    本を作り直す側（整理）が、同梱物をそのままの名前で持ち越すために使う。
+    エントリ名は渡したフォルダからの相対名、つまり元の本での名前そのまま。
+    名前は中身のハッシュで決まっていて manifest の originals がその名前を
+    指しているので、改名は取り落としと同じ結果になる。
+
+    中身をここで読まないのは、元画像が 1 枚数 MiB あり、巻ぶんまとめて抱えると
+    要らない大きさになるため。書き込む側がファイルから直接流し込む。
+    """
+    root = Path(source_dir)
+    sidecar = root / SIDECAR_DIR
+    if not sidecar.is_dir():
+        return []
+    return sorted(
+        (path.relative_to(root).as_posix(), path)
+        for path in sidecar.rglob("*")
+        if path.is_file()
+    )
 
 
 def plan_record(

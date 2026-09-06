@@ -1,8 +1,10 @@
 import logging
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from manga_core.archive_handler import ArchiveHandler
+from manga_core.original_store import sidecar_members
 from manga_core.volume_detector import VolumeDetector
 
 logger = logging.getLogger(__name__)
@@ -96,9 +98,9 @@ class FileOrganizer:
         output_path = self.volume_detector.get_unique_filename(manga_dir, output_name)
 
         # Create new archive for this volume
-        success = self.archive_handler.create_archive(image_dir, output_path)
+        error = self._build_volume_archive(image_dir, output_path, volume)
 
-        if success:
+        if error is None:
             self._log(f"Created: {output_path.name}")
             return ProcessResult(
                 original_path=archive_path,
@@ -111,8 +113,59 @@ class FileOrganizer:
                 original_path=archive_path,
                 output_path=None,
                 success=False,
-                error_message=f"Failed to create archive for volume {volume}",
+                error_message=error,
             )
+
+    def _build_volume_archive(
+        self, image_dir: Path, output_path: Path, volume: int | None
+    ) -> str | None:
+        """1 巻ぶんの本を書き出す。失敗したらその理由を返す。
+
+        本文を書いてから同梱物を足す 2 段構えにする。同梱物はページではないので
+        連番の振り直しへ巻き込まない、という順序をここで表す。
+        """
+        if not self.archive_handler.create_archive(image_dir, output_path):
+            return f"Failed to create archive for volume {volume}"
+        return self._carry_sidecar(image_dir, output_path)
+
+    def _carry_sidecar(self, image_dir: Path, output_path: Path) -> str | None:
+        """加工前の画像と紐づけの記録を、作り直した本へそのまま持ち越す（#96）。
+
+        サムネイル作成（#66）とページ分割（#58）は、加工前の画像と
+        「加工後 -> 元」の記録を `.manga-organizer/` 配下へ同梱する。整理は本を
+        作り直す操作だが、この配下はページではないので本文の収集は拾わない。
+        持ち越さないと黙って落ちる。落ちた本は二度と戻せない。加工後の画素は
+        既に捨てられていて、元を作り直す手立てが無いためで、切り抜きを広げる
+        ことも、割った対を見開きへ畳み直すこともできなくなる。出来上がった本は
+        正しく開けてページも揃うので、利用者は失ったことにその場では気づけない。
+
+        エントリ名は変えずに書く。名前は中身のハッシュで決まっていて manifest
+        の originals がその名前を指しているので、改名は取り落としと同じ。
+        本文を書き終えた後に足すことで、ページの連番へ巻き込まれないようにする。
+
+        持ち越すのは、その巻のフォルダの中にある物だけ。展開ルート直下に置かれた
+        同梱物は、1 つの入力から複数巻が出るときどの巻の物か決められず、全巻へ
+        配ると参照していない本まで他人の元画像を抱える。加工の経路はどちらも
+        巻のフォルダの中へ書くので、この範囲で取りこぼさない。
+        """
+        members = sidecar_members(image_dir)
+        if not members:
+            # 加工していない本の出力は、いままでと 1 バイトも変えない。
+            # 空の `.manga-organizer/` を作ると、加工と無縁の本まで中身が変わる
+            return None
+
+        try:
+            with zipfile.ZipFile(output_path, "a", zipfile.ZIP_DEFLATED) as archive:
+                for name, path in members:
+                    archive.write(path, name)
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            # 書けなかったことを黙って飲み込むと、元画像を失った本が成功として
+            # 並び、元のアーカイブまで消される。失敗として返して元を残す
+            self._log(f"Failed to keep pre-edit images: {e}", "error")
+            return f"加工前の画像を持ち越せませんでした: {e}"
+
+        self._log(f"    Kept {len(members)} pre-edit entries")
+        return None
 
     def _skipped(self, image_dir: Path, skip_locations: frozenset[str]) -> bool:
         """利用者が一覧で外した本かどうかを見る（#70 第 3 段階）。
