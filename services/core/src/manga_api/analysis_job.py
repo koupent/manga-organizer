@@ -42,6 +42,16 @@ SCAN_CHECKPOINT_PATHS = 200
 RESULT_WRITE_INTERVAL = 0.2
 
 
+class AnalyzeRequest(BaseModel):
+    """出来上がる本を実行前に調べる依頼"""
+
+    archives: list[str] = Field(
+        description="解析対象の絶対パス。フォルダを渡すと中を再帰的に辿る"
+    )
+    title: str = Field(default="", description="作品名")
+    author: str = Field(default="", description="著者名")
+
+
 class PlannedBookView(BaseModel):
     """実行すると 1 冊出来る、という予告"""
 

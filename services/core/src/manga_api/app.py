@@ -9,7 +9,7 @@ import io
 import logging
 import secrets
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,15 +18,23 @@ from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 
 from manga_api import thumbnails
-from manga_api.analysis_job import analysis_work
+from manga_api.analysis_job import AnalyzeRequest, analysis_work
 from manga_api.cover_job import CoverRequest, cover_work
+from manga_api.cover_views import CoverView, describe_original
 from manga_api.http_images import (
     THUMBNAIL_MEDIA_TYPE,
     image_response,
     media_type_of,
 )
 from manga_api.job_runner import start_job
-from manga_api.jobs import Job, JobNotFound, JobStore
+from manga_api.job_views import (
+    JobAccepted,
+    JobDetail,
+    JobList,
+    to_detail,
+    to_view,
+)
+from manga_api.jobs import JobNotFound, JobStore
 from manga_api.organize_job import (
     OrganizeRequest,
     organize_work,
@@ -70,16 +78,6 @@ DEFAULT_ALLOWED_ORIGINS = (
     "tauri://localhost",
     "http://tauri.localhost",
 )
-
-
-class AnalyzeRequest(BaseModel):
-    """出来上がる本を実行前に調べる依頼"""
-
-    archives: list[str] = Field(
-        description="解析対象の絶対パス。フォルダを渡すと中を再帰的に辿る"
-    )
-    title: str = Field(default="", description="作品名")
-    author: str = Field(default="", description="著者名")
 
 
 class OutputRootRequest(BaseModel):
@@ -188,85 +186,6 @@ class Suggestion(BaseModel):
     candidates: list[AuthorCandidate] = Field(default_factory=list)
 
 
-class OperationView(BaseModel):
-    """元画像に施した加工 1 つ分。params の形は kind ごとに決まる"""
-
-    kind: str
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
-class OriginalView(BaseModel):
-    """いま見ている 1 枚の、加工前の姿。
-
-    ZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた
-    manifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。
-    画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。
-    """
-
-    width: int
-    height: int
-    # 既定値を持たせない。持たせると生成される画面側の型で任意項目になり、
-    # 常に載せているという実装と食い違う
-    operations: list[OperationView]
-
-
-class CoverView(BaseModel):
-    """表紙の状態。
-
-    寸法と見開き判定は「いま保存されている 1 枚」を指す。original は、その
-    1 枚が加工の結果なら加工前の姿を添える。画面は加工前を対象にして枠を
-    置き直すので、両方を 1 回の問い合わせで受け取る必要がある。
-    """
-
-    name: str
-    width: int
-    height: int
-    is_spread: bool
-    target_aspect_ratio: float
-    # 既定値を持たせない。載せ忘れと「元画像が無い」を、画面側が null で
-    # 見分けられるようにする
-    original: OriginalView | None = Field(
-        description="加工前の画像。一度も加工していなければ null",
-    )
-
-
-class JobAccepted(BaseModel):
-    """ジョブの受付結果"""
-
-    id: str
-
-
-class JobView(BaseModel):
-    """ジョブの状態。一覧はログを読まないので log を持たない"""
-
-    id: str
-    kind: str
-    state: str
-    current: int
-    total: int
-    message: str
-    result: Any | None = None
-    error: str | None = None
-    created_at: str
-    updated_at: str
-
-
-class JobDetail(JobView):
-    """ジョブ 1 件の詳細。
-
-    ログを返すのはここだけにする。一覧でも log を持つと、常に空配列が
-    載ってしまい「ログが無い」と「一覧では取らない」を区別できない。
-    """
-
-    log: list[str]
-
-
-class JobList(BaseModel):
-    """ジョブ一覧"""
-
-    jobs: list[JobView]
-
-
 class PageView(BaseModel):
     """ページ 1 枚の情報"""
 
@@ -288,53 +207,6 @@ class HealthView(BaseModel):
 
     status: str
     version: str
-
-
-def _describe_original(archive_path: Path, image: bytes) -> OriginalView | None:
-    """加工後の 1 枚から、加工前の姿を引く。記録が無ければ None。
-
-    寸法は PIL が見出しだけ読んで返すので、画素まで展開しない。
-    """
-    ref = find_original(archive_path, image)
-    if ref is None:
-        return None
-    try:
-        with Image.open(io.BytesIO(read_original(archive_path, ref))) as opened:
-            width, height = opened.size
-    except (OriginalStoreError, OSError):
-        # 記録はあるが読めない。同梱が失われた古いアーカイブでも画面が
-        # 開けるよう、元画像が無いものとして扱う
-        logger.warning("元画像を読めませんでした: %s", archive_path)
-        return None
-    return OriginalView(
-        width=width,
-        height=height,
-        operations=[
-            OperationView(kind=operation.kind, params=dict(operation.params))
-            for operation in ref.operations
-        ],
-    )
-
-
-def _to_view(job: Job) -> JobView:
-    """ジョブを一覧用の形へ直す"""
-    return JobView(
-        id=job.id,
-        kind=job.kind,
-        state=job.state.value,
-        current=job.current,
-        total=job.total,
-        message=job.message,
-        result=job.result,
-        error=job.error,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
-
-
-def _to_detail(job: Job, log: list[str]) -> JobDetail:
-    """ジョブを詳細用の形へ直す"""
-    return JobDetail(**_to_view(job).model_dump(), log=log)
 
 
 def create_app(
@@ -723,7 +595,7 @@ def create_app(
             height=height,
             is_spread=is_spread(width, height),
             target_aspect_ratio=COVER_ASPECT_RATIO,
-            original=_describe_original(path, body),
+            original=describe_original(path, body),
         )
 
     @app.post(
@@ -744,13 +616,13 @@ def create_app(
     @app.get("/api/jobs", dependencies=guarded, response_model=JobList)
     def list_jobs() -> JobList:
         """新しい順にジョブを並べる"""
-        return JobList(jobs=[_to_view(job) for job in app.state.jobs.list_jobs()])
+        return JobList(jobs=[to_view(job) for job in app.state.jobs.list_jobs()])
 
     @app.get("/api/jobs/{job_id}", dependencies=guarded, response_model=JobDetail)
     def get_job(job_id: str) -> JobDetail:
         """ジョブ 1 件の状態を、経過のログとともに返す"""
         try:
-            return _to_detail(app.state.jobs.get(job_id), app.state.jobs.log_of(job_id))
+            return to_detail(app.state.jobs.get(job_id), app.state.jobs.log_of(job_id))
         except JobNotFound as error:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="ジョブが見つかりません"
