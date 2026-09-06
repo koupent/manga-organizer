@@ -18,7 +18,7 @@
 |---|---|---|
 | 0 | 入れ物から出る本が 1 冊で ``entry`` が空 | ``toc_analyzer.locate_books`` |
 | 1 | 拡張子が ``.zip`` | ``ArchiveHandler.create_archive`` は ZIP しか書かない |
-| 2 | 名前 == ``format_volume_name(a, t, v) + ".zip"`` | ``VolumeDetector`` |
+| 2 | 名前 == ``format_volume_name(a, t, v) + ".zip"`` | ``volume_detector`` |
 | 3 | ページ名が順に ``sequential_name(i, N, 拡張子)`` | ``viewer_contract`` |
 | 4 | 目次にそのページ以外が無い（同梱物だけ許す） | ``original_store`` |
 | 5 | 親フォルダ名 == ``[著者] 作品`` | ``FileOrganizer`` |
@@ -41,7 +41,7 @@ from pathlib import Path, PurePosixPath
 
 from manga_core.original_store import MANIFEST_ENTRY, ORIGINALS_PREFIX
 from manga_core.viewer_contract import is_page_source, sequential_name
-from manga_core.volume_detector import VolumeDetector, format_series_dir
+from manga_core.volume_detector import format_series_dir, format_volume_name
 
 # 整理済みでない理由。画面がそのまま読む文字列なので、値そのものが公開契約
 MULTIPLE_BOOKS = "multiple-books"
@@ -61,9 +61,6 @@ ARCHIVE_SUFFIX = ".zip"
 # ない（整理し直せば巻数が付くかもしれない）。ここで外すのが、最悪の偽陽性――巻数を
 # 読めなかった本をそのまま凍結すること――を止める唯一の場所
 _ORGANIZED_STEM = re.compile(r"^\[(?P<author>.+)\] (?P<title>.+) 第(?P<volume>\d+)巻$")
-
-# ``format_volume_name`` は状態を持たないので、判定のたびに作り直さない
-_DETECTOR = VolumeDetector()
 
 
 @dataclass(frozen=True)
@@ -154,7 +151,7 @@ def _parse_name(file_name: str) -> tuple[str, str] | None:
     author = matched["author"]
     title = matched["title"]
     volume = int(matched["volume"])
-    rebuilt = _DETECTOR.format_volume_name(author, title, volume) + ARCHIVE_SUFFIX
+    rebuilt = format_volume_name(author, title, volume) + ARCHIVE_SUFFIX
     if rebuilt != file_name:
         return None
     return author, title

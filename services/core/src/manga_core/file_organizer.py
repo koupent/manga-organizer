@@ -5,9 +5,15 @@ from pathlib import Path
 
 from manga_core.archive_handler import ArchiveHandler
 from manga_core.original_store import sidecar_members
-from manga_core.volume_detector import VolumeDetector, format_series_dir
+from manga_core.volume_detector import SeriesName, VolumeDetector
 
 logger = logging.getLogger(__name__)
+
+# 整理が書き出す唯一の拡張子。``ArchiveHandler.create_archive`` は ZIP しか
+# 書かない。行き先を先に組み立てる所（自分自身の上に来ていないかを見る）と、
+# 実際に書き出す名前を決める所で別々に書くと、片方だけを直したときに
+# 見張っている行き先と本当の行き先が食い違う
+OUTPUT_SUFFIX = ".zip"
 
 
 @dataclass
@@ -61,10 +67,10 @@ class FileOrganizer:
         self._log(f"Found {len(image_dirs)} volumes in {archive_path.name}")
         return image_dirs, None
 
-    def _create_manga_directory(self) -> Path:
+    def _create_manga_directory(self, series: SeriesName) -> Path:
         """Create output directory for manga series"""
         self._log("  Creating output directory for manga series...")
-        manga_dir = self.output_directory / format_series_dir(self.author, self.title)
+        manga_dir = self.output_directory / series.series_dir()
         manga_dir.mkdir(parents=True, exist_ok=True)
         return manga_dir
 
@@ -87,15 +93,28 @@ class FileOrganizer:
         archive_path: Path,
         manga_dir: Path,
         volume: int | None,
-    ) -> ProcessResult:
-        """Process a single volume and create output archive"""
+        series: SeriesName,
+    ) -> ProcessResult | None:
+        """1 巻ぶんを書き出す。行き先が元のアーカイブ自身なら ``None`` を返す"""
         # Generate output filename
-        output_name = self.volume_detector.format_volume_name(
-            self.author, self.title, volume
-        )
+        output_name = series.volume_name(volume)
+
+        # 行き先が元のアーカイブ自身なら、何もしない（#73 段階 4a）。
+        # 既定の出力先は「投入した 1 件目の親フォルダ」なので、``蔵書/[著者] 作品``
+        # を放り込むと出力先は ``蔵書`` になり、整理済みの本の行き先はその本自身に
+        # なる。``get_unique_filename`` は既にある名前を返さないので、書きに行くと
+        # ``…第003巻_1.zip`` が出来て元と写しが並び、``keep_originals=False`` なら
+        # ``_handle_original_deletion`` が元を消す。利用者から見れば、蔵書の本が
+        # 黙って別名になったまま戻せない。番号を振る前に見るのは、振ってしまうと
+        # 行き先が必ず自分と違う名前になり、この一致が永久に起きないため
+        destination = manga_dir / f"{output_name}{OUTPUT_SUFFIX}"
+        if destination.resolve() == archive_path.resolve():
+            return None
 
         # Get unique output path in the manga subdirectory
-        output_path = self.volume_detector.get_unique_filename(manga_dir, output_name)
+        output_path = self.volume_detector.get_unique_filename(
+            manga_dir, output_name, OUTPUT_SUFFIX
+        )
 
         # Create new archive for this volume
         error = self._build_volume_archive(image_dir, output_path, volume)
@@ -200,7 +219,9 @@ class FileOrganizer:
             except Exception as e:
                 self._log(f"Failed to delete original: {e}", "error")
 
-    def _process_image_directory(self, image_dir: Path) -> list[ProcessResult]:
+    def _process_image_directory(
+        self, image_dir: Path, series: SeriesName
+    ) -> list[ProcessResult]:
         """裸の画像フォルダを 1 冊として整える。
 
         ZIP に入っていない、画像が直接置かれたフォルダも 1 巻として扱う（#70）。
@@ -210,9 +231,13 @@ class FileOrganizer:
         """
         self._log(f"Processing: {image_dir}")
         try:
-            manga_dir = self._create_manga_directory()
+            manga_dir = self._create_manga_directory(series)
             volume = self.volume_detector.detect_volume(image_dir)
-            return [self._process_volume(image_dir, image_dir, manga_dir, volume)]
+            result = self._process_volume(
+                image_dir, image_dir, manga_dir, volume, series
+            )
+            # 書き出す先は ZIP なので、フォルダ自身と同じになることはない
+            return [result] if result is not None else []
         except Exception as e:
             self._log(f"Error processing {image_dir}: {e}", "error")
             return [
@@ -225,17 +250,26 @@ class FileOrganizer:
             ]
 
     def process_single_archive(
-        self, archive_path: Path, skip_locations: frozenset[str] = frozenset()
+        self,
+        archive_path: Path,
+        skip_locations: frozenset[str] = frozenset(),
+        series: SeriesName | None = None,
     ) -> list[ProcessResult]:
         """Process a single archive file.
 
         ``skip_locations`` は、利用者が実行前の一覧で外した本の位置（展開
         ルートからの相対パス）。省くと従来どおり中身を全部作る。
+
+        ``series`` はこの本を置く場所と名前を決める対（#73 段階 4a）。整理済みの
+        本は自分自身の名前を持っているので、1 回の実行の中に依頼の対とは別の対が
+        混ざる。省くと、いままでどおり ``set_manga_info`` で受けた依頼の対を使う。
         """
+        series = series or SeriesName(self.author, self.title)
+
         # フォルダが来たら、その中身が 1 冊分。展開する物が無いので別経路へ回す
         # フォルダは丸ごと 1 冊なので、外すかどうかは呼び出し側が決めている
         if archive_path.is_dir():
-            return self._process_image_directory(archive_path)
+            return self._process_image_directory(archive_path, series)
 
         self._log(f"Processing: {archive_path}")
         results = []
@@ -254,7 +288,7 @@ class FileOrganizer:
                 ]
 
             # Step 2: Create manga directory
-            manga_dir = self._create_manga_directory()
+            manga_dir = self._create_manga_directory(series)
 
             # Step 3: Process each volume
             if len(image_dirs) > 1:
@@ -279,8 +313,14 @@ class FileOrganizer:
 
                 # Process the volume
                 result = self._process_volume(
-                    image_dir, archive_path, manga_dir, volume
+                    image_dir, archive_path, manga_dir, volume, series
                 )
+                if result is None:
+                    # 行き先が元のアーカイブ自身。外した本と同じ扱いにする。
+                    # 元を消さず、「1 冊も処理しなかった」失敗にもしない
+                    skipped = True
+                    self._log(f"  Skipped (already at destination): volume {vol_idx}")
+                    continue
                 results.append(result)
 
             # Step 4: Handle original deletion

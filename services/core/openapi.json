@@ -1249,6 +1249,30 @@
             "title": "Entry",
             "description": "アーカイブ内での位置",
             "default": ""
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "この本自身の作品名。整理済みの本だけが持つ。省くと依頼の値を使う"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author",
+            "description": "この本自身の著者名。整理済みの本だけが持つ。省くと依頼の値を使う"
           }
         },
         "type": "object",

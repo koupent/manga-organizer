@@ -75,6 +75,41 @@ def format_series_dir(author: str, title: str) -> str:
     return f"[{author}] {title}"
 
 
+def format_volume_name(author: str, title: str, volume: int | None) -> str:
+    """整理が作る、本 1 冊のファイル名（拡張子は付けない）。
+
+    ``format_series_dir`` と同じ理由でモジュールの関数にしてある。名前を作る側
+    （``FileOrganizer``）、予告する側（``toc_analyzer``）、整理済みかどうかを判定
+    する側（``organized_detector``）が同じ 1 つの関数を呼ぶ形にしないと、名前の
+    作り方を変えたときに整理済みの本が「名前が違う」と判定され、既定で作り直される。
+    """
+    base_name = format_series_dir(author, title)
+    if volume is not None:
+        return f"{base_name} 第{volume:03d}巻"
+    return f"{base_name} Unknown"
+
+
+@dataclass(frozen=True)
+class SeriesName:
+    """本 1 冊を置く場所と名前を決める、著者と作品名の対（#73 段階 4a）。
+
+    整理済みの本は自分自身の名前を持っていて、1 回の実行の中に依頼の対とは
+    別の対が混ざる。対を 2 つの引数で持ち回ると、片方だけを差し替えた呼び出しが
+    書けてしまい、``[別人] 作品`` のような、どちらの本の物でもない名前が出来る。
+    """
+
+    author: str
+    title: str
+
+    def series_dir(self) -> str:
+        """この本を置く、作品ごとのフォルダ名"""
+        return format_series_dir(self.author, self.title)
+
+    def volume_name(self, volume: int | None) -> str:
+        """この本のファイル名（拡張子は付けない）"""
+        return format_volume_name(self.author, self.title, volume)
+
+
 def original_nested_name(dir_name: str) -> str:
     """展開先フォルダ名から、元の入れ子アーカイブ名を取り戻す（#74）。
 
@@ -204,12 +239,12 @@ class VolumeDetector:
         title: str,
         volume: int | None,
     ) -> str:
-        base_name = format_series_dir(author, title)
+        """モジュールの ``format_volume_name`` へ委ねる。
 
-        if volume is not None:
-            return f"{base_name} 第{volume:03d}巻"
-        else:
-            return f"{base_name} Unknown"
+        呼び出し側は検出器を持っている所と持っていない所があり、どちらからも
+        同じ名前が出る必要がある。作り方そのものは 1 か所にしか置かない。
+        """
+        return format_volume_name(author, title, volume)
 
     def get_unique_filename(
         self, base_path: Path, base_name: str, extension: str = ".zip"

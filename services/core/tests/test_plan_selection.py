@@ -219,14 +219,28 @@ class PlanApiTestBase(unittest.TestCase):
         return sorted(path.name for path in root.rglob("*") if path.is_file())
 
     def selection(self, books: list[dict], names: list[str]) -> list[dict]:
-        """解析結果から、出来上がる名前で本を選び出す"""
+        """解析結果から、出来上がる名前で本を選び出す。
+
+        本ごとの作品名・著者も、解析が返したまま載せる（#73 段階 4a）。画面
+        （``plan.ts`` の ``selectedBooks``）が組み立てる形と揃える。自分の名前を
+        持たない本では ``None`` になり、整理は依頼の対を使う。ここで欄ごと落とすと、
+        「欄が増えても選択の振る舞いは 1 つも変わらない」ことを誰も見張らなくなる。
+        """
         chosen = [book for book in books if book["output_name"] in names]
         self.assertEqual(
             len(names),
             len(chosen),
             f"選ぼうとした本が解析結果に無い: {names} / {books}",
         )
-        return [{"source": book["source"], "entry": book["entry"]} for book in chosen]
+        return [
+            {
+                "source": book["source"],
+                "entry": book["entry"],
+                "title": book["title"],
+                "author": book["author"],
+            }
+            for book in chosen
+        ]
 
 
 class PlanAnalysisTest(PlanApiTestBase):
@@ -424,6 +438,44 @@ class PlanSelectionTest(PlanApiTestBase):
             produced = produced_paths[name]
             with zipfile.ZipFile(produced) as archive:
                 self.assertTrue(archive.namelist(), f"中身が空: {produced}")
+
+    def test_the_two_books_in_one_archive_are_unaffected_by_the_name_fields(self):
+        # Arrange - 合本から出る 2 冊。この 2 冊はどうやっても自分の名前を
+        # 持たない（成果物はファイルであって、その中身ではない）ので、
+        # 本ごとの名前が増えても行き先は依頼の対のままでなければならない
+        folder, output, books = self.prepare()
+        first = f"[{AUTHOR}] {TITLE} 第001巻.zip"
+        second = f"[{AUTHOR}] {TITLE} 第002巻.zip"
+        chosen = self.selection(books, [first, second])
+        self.assertEqual(
+            [None, None],
+            [book["title"] for book in chosen],
+            f"合本の中の 1 冊に名前が付いている: {chosen}",
+        )
+
+        # Act
+        job = self.organize([folder], output, books=chosen)
+
+        # Assert - 名前も冊数も今までどおり
+        self.assertEqual(
+            [first, second],
+            sorted(Path(raw).name for raw in job["result"]["produced"]),
+            f"欄が増えたことで作られる本が変わった: {job['result']}",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+        self.assertEqual([first, second], self.files_under(output))
+
+        # Assert - 欄が本当に受け取られていること。pydantic は知らない鍵を黙って
+        # 捨てるので、「投入が通った」だけでは受け取ったことにならない。画面の型は
+        # この schema（openapi.json）から起こすので、ここに無い欄は画面から
+        # 送っても永久に届かない
+        book_ref = self.app.openapi()["components"]["schemas"]["BookRef"]["properties"]
+        for field in ("title", "author"):
+            self.assertIn(
+                field,
+                book_ref,
+                f"BookRef が本ごとの名前を受け取らない: {sorted(book_ref)}",
+            )
 
     def test_creates_nothing_when_no_book_is_selected(self):
         # Arrange - 全部のチェックを外した状態。空の一覧は「指定なし」ではない

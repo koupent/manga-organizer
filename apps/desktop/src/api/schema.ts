@@ -532,6 +532,16 @@ export interface components {
        * @default
        */
       entry: string;
+      /**
+       * Title
+       * @description この本自身の作品名。整理済みの本だけが持つ。省くと依頼の値を使う
+       */
+      title?: string | null;
+      /**
+       * Author
+       * @description この本自身の著者名。整理済みの本だけが持つ。省くと依頼の値を使う
+       */
+      author?: string | null;
     };
     /**
      * BrowseEntry
