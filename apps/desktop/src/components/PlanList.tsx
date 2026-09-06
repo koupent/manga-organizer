@@ -1,4 +1,12 @@
-import { BookMarked, Folder, Package, TriangleAlert, X } from "lucide-react";
+import {
+  BookMarked,
+  CircleCheck,
+  Folder,
+  Info,
+  Package,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import type { KeyboardEvent } from "react";
 import {
   checkStateOf,
@@ -28,6 +36,48 @@ const ISSUE_LABELS: Record<string, string> = {
 /** 印の説明。主操作の行のチップと一覧の行で同じ言葉を使う */
 export function issueLabel(issue: string): string {
   return ISSUE_LABELS[issue] ?? issue;
+}
+
+/** 整理済みの印の説明。何をもって整理済みなのかを行に乗せると出す */
+const ORGANIZED_TIP =
+  "整理済み: 名前・ページ・置き場所が、この道具が作る形と一致しています";
+
+/**
+ * 整理済みでない理由の説明。行に乗せると出る。
+ *
+ * 印を出さない理由（multiple-books / not-zip / name-mismatch）にも用意する。
+ * 一覧に印を増やさないだけで、「なぜまた作られるのか」を知る手立ては要る。
+ * 鍵はサイドカーの ``organized_reason`` の値そのもの。
+ */
+const REASON_TIPS: Record<string, string> = {
+  "multiple-books":
+    "整理済みではありません: 1 つのアーカイブから複数の本が出ます",
+  "not-zip": "整理済みではありません: ZIP 以外の形式です",
+  "name-mismatch":
+    "整理済みではありません: ファイル名が「[著者] 作品名 第001巻.zip」の形と違います",
+  "pages-mismatch":
+    "整理済みではありません: ページ名が 001, 002, … の連番と違います",
+  "extra-entries": "整理済みではありません: ページ以外のファイルが入っています",
+  "folder-mismatch":
+    "整理済みではありません: 置いてあるフォルダの名前が「[著者] 作品名」と違います",
+};
+
+/**
+ * 印に出す短い言い換え。名前は整理済みの形なのに落ちた 3 つだけに出す。
+ *
+ * 残りの 3 つはまだ整理していない蔵書の普通の姿で、そこにも印を足すと一覧が
+ * 印で埋まり、直せば整理済みになるこの 3 つが見分けられなくなる。
+ */
+const REASON_BADGES: Record<string, string> = {
+  "folder-mismatch": "フォルダ名が違います",
+  "pages-mismatch": "ページの連番が違います",
+  "extra-entries": "余計なファイルがあります",
+};
+
+/** 理由の説明。知らない理由が来ても黙らず、記号を添えて出す */
+function reasonTip(reason: string): string {
+  if (reason === "") return "";
+  return REASON_TIPS[reason] ?? `整理済みではありません: ${reason}`;
 }
 
 /** 1 段ぶんの字下げ。3 階層でも左端の情報量を潰さない幅 */
@@ -127,6 +177,11 @@ function PlanListRow({
       data-entry={row.entry}
       data-output-name={row.kind === "book" ? name : ""}
       data-issues={row.issues.join(" ")}
+      data-organized={String(row.organized)}
+      data-organized-reason={row.organizedReason}
+      // 印を出さない理由でも、行に乗せれば何が違うのかを読める。
+      // 整理済みの行には説明を付けない（印そのものが説明を持っている）
+      title={reasonTip(row.organizedReason) || undefined}
       tabIndex={0}
       style={{ paddingLeft: 8 + row.level * INDENT_PX }}
       className={cn(
@@ -158,12 +213,7 @@ function PlanListRow({
       >
         {row.kind === "book" ? origin(row) : parentDirectory(row.path)}
       </span>
-      {row.issues.map((issue) => (
-        <Badge key={issue} tone="warn" data-testid="plan-row-issue">
-          <TriangleAlert className="size-3" />
-          {issueLabel(issue)}
-        </Badge>
-      ))}
+      <RowBadges row={row} />
       {removable ? (
         <Button
           variant="ghost"
@@ -180,6 +230,44 @@ function PlanListRow({
         </Button>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * 行の右側に出す印。整理済み → 直せば整理済みになる理由 → 警告 の順。
+ *
+ * 状態（整理済み）を先に置くのは、その行にすることが無いと分かればそれ以上
+ * 読まなくて済むため。今までこの席は警告だけの席で「何かが壊れている」を
+ * 意味していたので、緑と CircleCheck で「終わっている」と読み分けさせる。
+ */
+function RowBadges({ row }: { row: PlanRow }) {
+  const reasonBadge = REASON_BADGES[row.organizedReason];
+  return (
+    <>
+      {row.organized ? (
+        <Badge tone="ok" data-testid="plan-row-state" title={ORGANIZED_TIP}>
+          <CircleCheck className="size-3" />
+          整理済み
+        </Badge>
+      ) : null}
+      {reasonBadge ? (
+        <Badge
+          tone="neutral"
+          data-testid="plan-row-reason"
+          data-reason={row.organizedReason}
+          title={reasonTip(row.organizedReason)}
+        >
+          <Info className="size-3" />
+          {reasonBadge}
+        </Badge>
+      ) : null}
+      {row.issues.map((issue) => (
+        <Badge key={issue} tone="warn" data-testid="plan-row-issue">
+          <TriangleAlert className="size-3" />
+          {issueLabel(issue)}
+        </Badge>
+      ))}
+    </>
   );
 }
 
