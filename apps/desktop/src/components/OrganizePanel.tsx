@@ -4,13 +4,18 @@ import { sidecarReason, type SidecarClient } from "../api/client";
 import {
   buildPlanRows,
   droppedBookCount,
-  effectiveExcluded,
+  effectiveOff,
   keptBooks,
   keptIssueCounts,
+  keptLeafRows,
+  namelessKeptRows,
+  needsSeriesName,
+  organizedSkippedCount,
   outputNames,
   selectedBooks,
   toggleLeaves,
   toggleTargets,
+  type Decisions,
   type PlanRow,
   type PlannedBook,
 } from "../lib/plan";
@@ -70,14 +75,57 @@ function organizeSummary(producedCount: number, failedCount: number): string {
 }
 
 /**
+ * 状態の行に乗せる説明（#73 段階 4b）。
+ *
+ * 状態の行は 1 行に収めるので、なぜ作られないのかまでは書き切れない。
+ * 溢れる分をここに置く。無いと、整理済みの本がどこへ行ったのかを画面から
+ * 知る手立てが無くなる。
+ */
+const ORGANIZED_STATUS_TIP =
+  "整理済みの本は元の場所に残り、出力先には作りません。" +
+  "出力先にも作るならチェックを入れてください";
+
+/**
  * 主操作の行に出す、押したら何が起きるかの 1 行。
  *
- * 外した冊数は 0 のときに出さない。何も外していないのに「0 冊を外した」と
- * 書くと、外す操作をした後の状態と見分けが付かない。
+ * 外した冊数と整理済みの冊数は 0 のときに出さない。何も起きていないのに
+ * 「0 冊を外した」と書くと、外す操作をした後の状態と見分けが付かない。
+ *
+ * 外した本と整理済みの本は別の言葉で数える。理由が違うので、まとめると
+ * 「外した覚えのない本を外したと言われる」ことになる。
  */
-function planSummary(keptCount: number, droppedCount: number): string {
-  const made = `${keptCount} 冊を作ります`;
-  return droppedCount > 0 ? `${made} · ${droppedCount} 冊を外した` : made;
+function planSummary(
+  keptCount: number,
+  droppedCount: number,
+  organizedCount: number,
+): string {
+  const dropped = droppedCount > 0 ? ` · ${droppedCount} 冊を外した` : "";
+  const organized =
+    organizedCount > 0
+      ? ` · ${organizedCount} 冊は整理済みなので作りません`
+      : "";
+  if (keptCount > 0) return `${keptCount} 冊を作ります${dropped}${organized}`;
+  // 1 冊も作らない場面で「0 冊を作ります」と言うと、押せば何かが起きるように
+  // 読める。何が起きないのかと、どうすれば起きるのかを出す
+  if (droppedCount === 0 && organizedCount > 0)
+    return (
+      `${organizedCount} 冊はすべて整理済みなので作りません` +
+      ` · 出力先にも作るならチェックを入れてください`
+    );
+  return `作る本がありません${dropped}${organized}`;
+}
+
+/**
+ * 作品情報の見出しに添える、左の列が何に使われるかの一言（#73 段階 4b）。
+ *
+ * 整理済みの本が混ざると、左の列は「残した本のうち自分の名前を持たないもの」
+ * にしか使われなくなる。使われないときに黙っていると、打っても何も変わらない
+ * 欄の前で利用者が詰まる。
+ */
+function nameHint(keptCount: number, namelessCount: number): string {
+  if (keptCount === 0) return "今は使いません · 作る本がありません";
+  if (namelessCount === 0) return "今は使いません · 残した本は整理済み";
+  return `整理済みでない ${namelessCount} 冊の名前に使います`;
 }
 
 /**
@@ -201,9 +249,10 @@ export function OrganizePanel({
   // 解析で分かったこと。走査が終わるまでは入れ物も空
   const [analysis, setAnalysis] = useState<Analysis>(IDLE_ANALYSIS);
 
-  // 利用者がチェックを外した葉。既定は全部オンなので、覚えるのは外した方だけ。
-  // オンの側を覚えると、解析で本の行が増えたときに既定がオフになってしまう
-  const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
+  // 利用者がチェックを触った行だけの台帳。既定（整理済みの本はオフ）は覚えず、
+  // 行から毎回導き直す。画面が推し量った値まで覚えると、解析で行が組み直される
+  // たびに書き潰され、利用者の選択が消える
+  const [decisions, setDecisions] = useState<Decisions>(new Map());
 
   // 整理して出来たファイルの絶対パス。実際に出来たものだけを持つので、
   // 中断・失敗のときは空のままになる
@@ -323,22 +372,6 @@ export function OrganizePanel({
   };
 
   /**
-   * 実行に足りていないもの。
-   *
-   * 揃うまで主操作は押せない。押せないだけでは何が足りないのか分からないので、
-   * 同じ内容を主操作の行に文字でも出す。
-   */
-  const problems = useMemo(() => {
-    const found: string[] = [];
-    if (!title.trim()) found.push("作品名を入れてください");
-    if (!author.trim()) found.push("著者を入れてください");
-    if (!outputDirectory.trim()) found.push("出力先を選んでください");
-    if (sources.length === 0)
-      found.push("処理対象のファイルを追加してください");
-    return found;
-  }, [title, author, outputDirectory, sources]);
-
-  /**
    * 投入したものを解析し直す。
    *
    * 切っ掛けは投入の中身だけにする。作品名と著者は名前の組み立てにしか
@@ -429,24 +462,64 @@ export function OrganizePanel({
     () => outputNames(rows, author, title),
     [rows, author, title],
   );
-  // 上を外したことを下へ伝えた形。解析中に外した入れ物へ後から本が生えても、
-  // その本は外れたまま出る。1 度だけ導いて、読む所すべてで同じものを使う
-  const effective = useMemo(
-    () => effectiveExcluded(rows, excluded),
-    [rows, excluded],
-  );
-  const keptCount = keptBooks(rows, effective).length;
-  const droppedCount = droppedBookCount(rows, effective);
-  const issues = keptIssueCounts(rows, effective);
+  // いま外れている葉。触った覚えと既定から毎回導き直すので、解析中に外した
+  // 入れ物へ後から本が生えても、その本は外れたまま出る。1 度だけ導いて、
+  // 読む所すべてで同じものを使う
+  const off = useMemo(() => effectiveOff(rows, decisions), [rows, decisions]);
+  const keptCount = keptBooks(rows, off).length;
+  const droppedCount = droppedBookCount(rows, off);
+  const organizedCount = organizedSkippedCount(rows, off);
+  const issues = keptIssueCounts(rows, off);
+  // 実際に何かが作られる単位。作る本が 1 つも無いことと、左の列が要るかを
+  // どちらもここから決める
+  const keptLeafCount = keptLeafRows(rows, off).length;
+  const namelessCount = namelessKeptRows(rows, off).length;
+  const needsName = needsSeriesName(rows, off);
+  // 整理済みの行が 1 つも無いなら、整理済みにまつわる但し書きは出さない。
+  // 一度も整理していない利用者に無用の説明を増やさない
+  const hasOrganized = rows.some((row) => row.organized);
+
+  /**
+   * 実行に足りていないもの。
+   *
+   * 揃うまで主操作は押せない。押せないだけでは何が足りないのか分からないので、
+   * 同じ内容を主操作の行に文字でも出す。
+   *
+   * 順番が要る。作る本が 1 冊も無いことは、左の列より先に立つ。逆にすると、
+   * 全部整理済みの蔵書で何もチェックしていない利用者に「作品名を入れて
+   * ください」と言うことになり、その作品名はどこにも使われない。
+   */
+  const problems = useMemo(() => {
+    if (sources.length === 0) return ["処理対象のファイルを追加してください"];
+    if (!outputDirectory.trim()) return ["出力先を選んでください"];
+    // 作る本が無いことは、状態の行に出す 1 行がそのまま理由になる
+    if (keptLeafCount === 0)
+      return [planSummary(keptCount, droppedCount, organizedCount)];
+    if (!needsName) return [];
+    const found: string[] = [];
+    if (!title.trim()) found.push("作品名を入れてください");
+    if (!author.trim()) found.push("著者を入れてください");
+    return found;
+  }, [
+    sources,
+    outputDirectory,
+    keptLeafCount,
+    needsName,
+    keptCount,
+    droppedCount,
+    organizedCount,
+    title,
+    author,
+  ]);
 
   /** チェックを付け外しする。親を触ったら下の葉をまとめて動かす */
   const toggleRow = (row: PlanRow, keep: boolean) => {
-    setExcluded((current) => toggleLeaves(current, toggleTargets(row), keep));
+    setDecisions((current) => toggleLeaves(current, toggleTargets(row), keep));
   };
 
   /** 一覧ごとまとめて付け外しする。主操作の行の全体チェックが使う */
   const toggleAll = (keep: boolean) => {
-    setExcluded((current) =>
+    setDecisions((current) =>
       toggleLeaves(current, rows.flatMap(toggleTargets), keep),
     );
   };
@@ -542,8 +615,12 @@ export function OrganizePanel({
     setProgress({ current: 0, total: 0 });
 
     try {
-      // 次回以降の候補に出せるよう、実行時の組み合わせを辞書へ残す
-      await client.saveEntry(title, author).catch(() => undefined);
+      // 次回以降の候補に出せるよう、実行時の組み合わせを辞書へ残す。
+      // 片方でも空なら送らない。サイドカーは空の作品名を 400 で断り、その
+      // 失敗はここで握りつぶされるので、誰にも見えない往復が 1 つ増えるだけ
+      if (title.trim() && author.trim()) {
+        await client.saveEntry(title, author).catch(() => undefined);
+      }
 
       // ここまでに中断が押されていれば、そもそもジョブを投入しない
       if (cancelRequested.current) {
@@ -560,7 +637,7 @@ export function OrganizePanel({
         keep_originals: keepOriginals,
         // 一覧で残した本だけを作る。空の配列は「1 冊も作らない」であって
         // 「指定なし」ではないので、省かずに必ず載せる
-        books: selectedBooks(rows, effective),
+        books: selectedBooks(rows, off),
       });
       jobId.current = accepted.id;
 
@@ -616,7 +693,10 @@ export function OrganizePanel({
    * 押せない理由のどちらかを出す。
    */
   const statusText =
-    status || (blockedBy ? blockedBy : planSummary(keptCount, droppedCount));
+    status ||
+    (blockedBy
+      ? blockedBy
+      : planSummary(keptCount, droppedCount, organizedCount));
 
   return (
     /*
@@ -653,6 +733,15 @@ export function OrganizePanel({
         <section className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <SectionTitle>作品情報</SectionTitle>
+            {/* 整理済みの行があるときだけ、左の列が何に使われるかを添える */}
+            {hasOrganized ? (
+              <span
+                className="min-w-0 truncate text-[11px] text-ink-faint"
+                data-testid="organize-name-hint"
+              >
+                {nameHint(keptLeafCount, namelessCount)}
+              </span>
+            ) : null}
             <div className="flex-1" />
             <Button
               data-testid="open-library"
@@ -771,8 +860,9 @@ export function OrganizePanel({
           actions={
             <PlanActions
               rows={rows}
-              excluded={effective}
+              excluded={off}
               status={statusText}
+              statusTitle={hasOrganized ? ORGANIZED_STATUS_TIP : undefined}
               issues={issues}
               progress={progress}
               running={running}
@@ -785,7 +875,7 @@ export function OrganizePanel({
           list={
             <PlanList
               rows={rows}
-              excluded={effective}
+              excluded={off}
               names={names}
               locked={running}
               onToggle={toggleRow}
