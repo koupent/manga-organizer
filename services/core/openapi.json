@@ -428,6 +428,59 @@
         }
       }
     },
+    "/api/library/import": {
+      "post": {
+        "summary": "Import Entries",
+        "description": "整理済みの蔵書から拾った対を、まとめて辞書へ取り込む（#73 段階 6）。\n\n1 件ずつの記録と違い、辞書に無い作品名だけを足す。既にある著者は\n著者が違っても上書きしない。この表は以降のすべての整理で著者欄を\n埋めるので、利用者が手で直した著者を潰すと直した覚えが黙って消える。\n断ったものは食い違いとして返し、画面から見えるようにする。",
+        "operationId": "import_entries_api_library_import_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryImportResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/library/suggest": {
       "post": {
         "summary": "Suggest",
@@ -1692,6 +1745,39 @@
         "title": "JobView",
         "description": "ジョブの状態。一覧はログを読まないので log を持たない"
       },
+      "LibraryConflict": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "kept_author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kept Author"
+          },
+          "incoming_authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Incoming Authors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "incoming_authors"
+        ],
+        "title": "LibraryConflict",
+        "description": "辞書へ入れられなかった作品名と、その食い違いの中身。\n\n``kept_author`` は辞書に残したままの著者。辞書にまだ無い作品名で、\n蔵書の側の著者が割れていた場合は null になる。``incoming_authors`` は\n蔵書から来た著者で、割れていれば複数入る。両方を返すのは、利用者が\n「辞書は A、蔵書は B」と読めるようにするため。黙って捨てると\n「押したのに変わらない」だけになり、どちらが正しいのか確かめられない。"
+      },
       "LibraryEntries": {
         "properties": {
           "entries": {
@@ -1727,6 +1813,56 @@
         ],
         "title": "LibraryEntry",
         "description": "タイトルと著者の対応"
+      },
+      "LibraryImportRequest": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "title": "LibraryImportRequest",
+        "description": "整理済みの蔵書から拾った対を、まとめて辞書へ入れる依頼"
+      },
+      "LibraryImportResult": {
+        "properties": {
+          "imported": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            },
+            "type": "array",
+            "title": "Imported"
+          },
+          "unchanged": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            },
+            "type": "array",
+            "title": "Unchanged"
+          },
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryConflict"
+            },
+            "type": "array",
+            "title": "Conflicts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "imported",
+          "unchanged",
+          "conflicts"
+        ],
+        "title": "LibraryImportResult",
+        "description": "取り込みの結果。入れた対・既に在った対・断った作品名"
       },
       "OperationView": {
         "properties": {

@@ -140,6 +140,31 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/library/import": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Import Entries
+     * @description 整理済みの蔵書から拾った対を、まとめて辞書へ取り込む（#73 段階 6）。
+     *
+     *     1 件ずつの記録と違い、辞書に無い作品名だけを足す。既にある著者は
+     *     著者が違っても上書きしない。この表は以降のすべての整理で著者欄を
+     *     埋めるので、利用者が手で直した著者を潰すと直した覚えが黙って消える。
+     *     断ったものは食い違いとして返し、画面から見えるようにする。
+     */
+    post: operations["import_entries_api_library_import_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/library/suggest": {
     parameters: {
       query?: never;
@@ -735,6 +760,24 @@ export interface components {
       updated_at: string;
     };
     /**
+     * LibraryConflict
+     * @description 辞書へ入れられなかった作品名と、その食い違いの中身。
+     *
+     *     ``kept_author`` は辞書に残したままの著者。辞書にまだ無い作品名で、
+     *     蔵書の側の著者が割れていた場合は null になる。``incoming_authors`` は
+     *     蔵書から来た著者で、割れていれば複数入る。両方を返すのは、利用者が
+     *     「辞書は A、蔵書は B」と読めるようにするため。黙って捨てると
+     *     「押したのに変わらない」だけになり、どちらが正しいのか確かめられない。
+     */
+    LibraryConflict: {
+      /** Title */
+      title: string;
+      /** Kept Author */
+      kept_author?: string | null;
+      /** Incoming Authors */
+      incoming_authors: string[];
+    };
+    /**
      * LibraryEntries
      * @description 辞書の中身
      */
@@ -751,6 +794,26 @@ export interface components {
       title: string;
       /** Author */
       author: string;
+    };
+    /**
+     * LibraryImportRequest
+     * @description 整理済みの蔵書から拾った対を、まとめて辞書へ入れる依頼
+     */
+    LibraryImportRequest: {
+      /** Entries */
+      entries: components["schemas"]["LibraryEntry"][];
+    };
+    /**
+     * LibraryImportResult
+     * @description 取り込みの結果。入れた対・既に在った対・断った作品名
+     */
+    LibraryImportResult: {
+      /** Imported */
+      imported: components["schemas"]["LibraryEntry"][];
+      /** Unchanged */
+      unchanged: components["schemas"]["LibraryEntry"][];
+      /** Conflicts */
+      conflicts: components["schemas"]["LibraryConflict"][];
     };
     /**
      * OperationView
@@ -1271,6 +1334,42 @@ export interface operations {
           "application/json": {
             [key: string]: boolean;
           };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  import_entries_api_library_import_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LibraryImportRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LibraryImportResult"];
         };
       };
       /** @description Validation Error */

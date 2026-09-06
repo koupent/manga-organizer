@@ -83,6 +83,34 @@ class MangaDatabase:
             logger.error(f"Error saving manga info: {e}")
             return False
 
+    def add_manga_info(self, title: str, author: str) -> bool:
+        """まだ無い作品名だけを足す。既にあれば何もせず False を返す。
+
+        ``save_manga_info`` と違い、既にある著者を**絶対に上書きしない**。
+        この表は以降のすべての整理で著者欄を埋める表なので、利用者が手で
+        直した著者を書き換えると、直した覚えが黙って消える。
+
+        「無いことを確かめてから書く」を 2 文で書くと、その隙に別の経路が
+        同じ作品名を入れられる。1 文にして SQLite 側で決めさせる。
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO manga_info (title, author)
+                VALUES (?, ?)
+                ON CONFLICT(title) DO NOTHING
+            """,
+                (title, author),
+            )
+
+            self.conn.commit()
+            return cursor.rowcount > 0
+
+        except sqlite3.Error as e:
+            logger.error(f"Error adding manga info: {e}")
+            return False
+
     def get_author_by_title(self, title: str) -> str | None:
         """Get author name by manga title"""
         try:

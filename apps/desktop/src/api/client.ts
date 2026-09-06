@@ -31,6 +31,11 @@ type OutputRoot =
   paths["/api/output-roots"]["post"]["responses"][200]["content"]["application/json"];
 type LibraryEntries =
   paths["/api/library/entries"]["get"]["responses"][200]["content"]["application/json"];
+/** 辞書の 1 件。作品名と著者の対 */
+export type LibraryEntry =
+  paths["/api/library/entries"]["post"]["requestBody"]["content"]["application/json"];
+export type LibraryImportResult =
+  paths["/api/library/import"]["post"]["responses"][200]["content"]["application/json"];
 type Suggestion =
   paths["/api/library/suggest"]["post"]["responses"][200]["content"]["application/json"];
 type BrowseResult =
@@ -178,6 +183,18 @@ export class SidecarClient {
 
   saveEntry(title: string, author: string): Promise<unknown> {
     return this.post<unknown>("/api/library/entries", { title, author });
+  }
+
+  /**
+   * 整理済みの蔵書から拾った対を、まとめて辞書へ入れる。
+   *
+   * 1 件ずつの `saveEntry` と違い、辞書に無い作品名だけが足される。既にある
+   * 著者は上書きされない。辞書は以降のすべての整理で著者欄を埋める表なので、
+   * 手で直した著者を潰さないよう、有無の確認と書き込みは辞書の全体が見える
+   * サイドカー側で 1 つの操作として行わせる。
+   */
+  importEntries(entries: LibraryEntry[]): Promise<LibraryImportResult> {
+    return this.post<LibraryImportResult>("/api/library/import", { entries });
   }
 
   deleteEntry(title: string): Promise<unknown> {
