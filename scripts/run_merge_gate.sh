@@ -177,7 +177,20 @@ run_frontend_checks() {
     && npx playwright test )
 }
 
+run_schema_check() {
+  echo "== services/core/openapi.json"
+  # 画面の型（apps/desktop/src/api/schema.ts）はこの成果物から作り、画面は
+  # operationId を文字列で直に書いている。経路を変えて作り直すのを忘れると、
+  # 画面は古い型のまま存在しない経路を叩き続ける。
+  #
+  # 黙って書き直さない。ここで直してしまうと、変えた本人が気づかないまま
+  # 食い違ったスキーマがコミットされ、ゲートは合格を出す。作り直しは人がやる
+  ( cd "$repo_root/services/core" \
+    && uv run python scripts/export_openapi.py --check )
+}
+
 run_python_checks services/core
+run_schema_check
 
 run_shell_checks() {
   echo "== Tauri シェル"
