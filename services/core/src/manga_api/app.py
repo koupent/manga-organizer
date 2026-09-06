@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from manga_api import thumbnails
 from manga_api.analysis_job import analysis_work
+from manga_api.cover_job import CoverRequest, cover_work
 from manga_api.http_images import (
     THUMBNAIL_MEDIA_TYPE,
     image_response,
@@ -36,13 +37,7 @@ from manga_api.split_job import (
     refuse_stale_token,
     scan_work,
 )
-from manga_core.cover_editor import (
-    COVER_ASPECT_RATIO,
-    CoverEditError,
-    CoverTransform,
-    apply_to_archive,
-    is_spread,
-)
+from manga_core.cover_editor import COVER_ASPECT_RATIO, is_spread
 from manga_core.input_expander import ARCHIVE_SUFFIXES
 from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
@@ -224,31 +219,6 @@ class Suggestion(BaseModel):
     title: str | None = None
     author: str | None = None
     candidates: list[AuthorCandidate] = Field(default_factory=list)
-
-
-class CoverRequest(BaseModel):
-    """表紙加工の依頼。分割 → 切り抜き → 回転の順に適用される"""
-
-    archive: str = Field(description="対象アーカイブの絶対パス")
-    name: str = Field(description="加工するページ名（通常は先頭）")
-    split: str | None = Field(
-        default=None, description="見開きの残す側（left / right）"
-    )
-    crop: tuple[int, int, int, int] | None = Field(
-        default=None, description="切り抜き範囲 (left, upper, right, lower)"
-    )
-    rotate: int = Field(default=0, description="回転角。90 度単位")
-    make_first: bool = Field(
-        default=False,
-        description="加工した 1 枚を先頭ページ（サムネイル）へ移すかどうか",
-    )
-    from_original: bool = Field(
-        default=False,
-        description=(
-            "加工前の画像を対象にするかどうか。"
-            "立てると crop は加工前の画像の画素で解釈される"
-        ),
-    )
 
 
 class OperationView(BaseModel):
@@ -801,31 +771,7 @@ def create_app(
         job_id = app.state.jobs.submit(
             "cover", {"archive": str(path), "name": request.name}
         )
-
-        def work(report):
-            report(current=0, total=1, message="加工中")
-            try:
-                result = apply_to_archive(
-                    path,
-                    request.name,
-                    CoverTransform(
-                        split=request.split, crop=request.crop, rotate=request.rotate
-                    ),
-                    make_first=request.make_first,
-                    from_original=request.from_original,
-                )
-            except CoverEditError as error:
-                raise RuntimeError(str(error)) from error
-            app.state.thumbnails.discard(str(path))
-            report(current=1, total=1, message="完了")
-            return {
-                "name": result.name,
-                "width": result.width,
-                "height": result.height,
-                "renamed": result.renamed,
-            }
-
-        start_job(app, job_id, work)
+        start_job(app, job_id, cover_work(path, request, app.state.thumbnails))
         return JobAccepted(id=job_id)
 
     @app.get("/api/jobs", dependencies=guarded, response_model=JobList)
