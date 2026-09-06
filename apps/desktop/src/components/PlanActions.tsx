@@ -11,6 +11,13 @@ type PlanActionsProps = {
   excluded: ReadonlySet<string>;
   /** 押したら何が起きるか、あるいは押せない理由 */
   status: string;
+  /**
+   * 状態の行に乗せると出る説明。
+   *
+   * 状態の行は 1 行に収めるので、書き切れない事情はここへ回す。無ければ
+   * 付けない。中身の無い説明を出しても、乗せた利用者を空振りさせるだけ。
+   */
+  statusTitle?: string;
   /** 残っている本に付いた印の件数。0 件の種類は入っていない */
   issues: { issue: string; count: number }[];
   /** サイドカーが報告した進み具合。総数が 0 の間は件数を出さない */
@@ -34,6 +41,7 @@ export function PlanActions({
   rows,
   excluded,
   status,
+  statusTitle,
   issues,
   progress,
   running,
@@ -60,6 +68,7 @@ export function PlanActions({
           className="truncate text-[12px] text-ink-muted"
           data-testid="organize-status"
           role="status"
+          title={statusTitle}
         >
           {status}
         </span>

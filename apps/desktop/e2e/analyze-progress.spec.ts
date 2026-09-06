@@ -22,6 +22,19 @@ import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
  *   引き継がれる（生えた本は最初から外れている）
  * - 投入を変えたら、走っていた解析ジョブを番号で名指しして止める
  *
+ * 「後から生えた行の既定」は #73 段階 4b で 3 通りに分かれる。覚えるのは
+ * 利用者が触った行だけになり、覚えた値が付け外しの 2 通りを持つようになる
+ * ためで、上を外して下だけ入れ直した状態が表せるようになる。
+ *
+ * | 触り方 | 生えた本 |
+ * |---|---|
+ * | フォルダを外し、その中のアーカイブを入れ直す | そのアーカイブの本は入る |
+ * | アーカイブを外しただけ | 外れたまま |
+ * | 何も触らない | 整理済みなら外れる。それ以外は入る |
+ *
+ * 一番内側で触った行が勝つ。外側だけを見る（「先祖のどれかが外れていたら
+ * 外す」）実装では 1 行目が表せない。
+ *
  * **本物のサイドカーでは、この瞬間を狙って捉えられない。** 走査と目次読みの
  * 間隔はミリ秒で、遅らせても「たまたま捉えられた回」しか通らないテストになる。
  * ここでは `**\/api/jobs/**` を差し替え、局面を台本どおりに進める。台本の中身
@@ -73,6 +86,10 @@ type Phase = {
   books: Book[];
 };
 
+/** 整理済みの本が持っている、自分の著者と作品名。左の列とはわざと違える */
+const SHELF_AUTHOR = "棚の著者";
+const SHELF_TITLE = "棚の作品";
+
 /** 出来上がるはずのファイル名。組み立て方は VolumeDetector と同じ */
 function volumeName(title: string, volume: number): string {
   return `[${AUTHOR}] ${title} 第${String(volume).padStart(3, "0")}巻.zip`;
@@ -97,6 +114,33 @@ function book(
     organized_reason: "name-mismatch",
     author: null,
     title: null,
+  };
+}
+
+/**
+ * 解析が返す、**整理済みの**本 1 冊（#73 段階 4b）。
+ *
+ * `organized` を立てるだけでは足りない。整理済みの本は自分の名前を持って
+ * 返るので、そこまで揃えないと「整理済みだが名前を持たない本」という、
+ * サイドカーが返しえない姿を試すことになる。
+ *
+ * 名前は左の列（AUTHOR / title）とわざと違える。揃えると、自分の名前を
+ * 使わず左の列で組み直す実装でも同じ名前が出てしまう。
+ */
+function organizedBook(source: string, volume: number): Book {
+  return {
+    source,
+    entry: "",
+    output_name:
+      `[${SHELF_AUTHOR}] ${SHELF_TITLE} ` +
+      `第${String(volume).padStart(3, "0")}巻.zip`,
+    volume,
+    issues: [],
+    organized: true,
+    // 整理済みに理由は無い。欄そのものは省かない
+    organized_reason: null,
+    author: SHELF_AUTHOR,
+    title: SHELF_TITLE,
   };
 }
 
@@ -243,6 +287,13 @@ async function addFolder(page: Page, folderName: string) {
 function archiveRow(page: Page, path: string): Locator {
   return page.locator(
     `[data-testid="plan-row"][data-kind="archive"][data-path="${path}"]`,
+  );
+}
+
+/** フォルダの行 */
+function folderRow(page: Page, path: string): Locator {
+  return page.locator(
+    `[data-testid="plan-row"][data-kind="folder"][data-path="${path}"]`,
   );
 }
 
@@ -407,6 +458,187 @@ test.describe("解析の途中経過", () => {
       "aria-checked",
       "mixed",
     );
+  });
+
+  test("フォルダを外してアーカイブを入れ直すと、そのアーカイブの本だけが入る", async ({
+    page,
+  }) => {
+    // Arrange - A: 走査だけ / B: 合本の 2 冊が届く / C: 全部そろって完了
+    const title = "入れ直しの作品";
+    const name = "入れ直し";
+    const output = join(sidecar.workDir, `out-${name}`);
+    mkdirSync(output, { recursive: true });
+    const { folder, compound, single } = makeFolder(name);
+    const compoundBooks = [
+      book(title, compound, "第01巻", 1),
+      book(title, compound, "第02巻", 2),
+    ];
+    const singleBooks = [book(title, single, "", 3)];
+    const containers = [compound, single];
+    const script = await scriptAnalysis(page, [
+      { state: "running", scanned: true, containers, books: [] },
+      { state: "running", scanned: true, containers, books: compoundBooks },
+      {
+        state: "succeeded",
+        scanned: true,
+        containers,
+        books: [...compoundBooks, ...singleBooks],
+      },
+    ]);
+
+    await openOrganize(page, output);
+    await fillMangaInfo(page, title);
+    await addFolder(page, name);
+    await waitForSubmission(script, 1);
+
+    // Arrange - まだ本の行が 1 つも無いことを確かめてから触る。既にある
+    // 本の行を触ったのでは、後から生えた行の既定を試したことにならない
+    await expect(rowsOfKind(page, "archive")).toHaveCount(2);
+    await expect(
+      bookRowsOf(page, compound),
+      "触る前から本の行が生えている",
+    ).toHaveCount(0);
+
+    // Act - フォルダごと外す
+    await checkOf(folderRow(page, folder)).click();
+    await expect(checkOf(folderRow(page, folder))).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await expect(checkOf(archiveRow(page, compound))).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+
+    // Act / Assert - その中の 1 つだけを入れ直す。上を外したことだけを見る
+    // 実装では、入れ直しても外側が外れたままなので何も起きない
+    await checkOf(archiveRow(page, compound)).click();
+    await expect(
+      checkOf(archiveRow(page, compound)),
+      "入れ直したアーカイブが入っていない",
+    ).toHaveAttribute("aria-checked", "true");
+    await expect(
+      checkOf(archiveRow(page, single)),
+      "入れ直していないアーカイブまで入っている",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Act - 目次が読めて、入れ直したアーカイブの本が生える
+    script.advance();
+
+    // Assert - 生えた本は入っている。上を外したことだけを見て下へ伝える
+    // 実装（先祖のどれかが外れていたら外す）では、入れ直したはずの
+    // アーカイブの本が外れて出てくる。利用者は入れ直した操作が何も
+    // 効いていないように見える
+    const grown = bookRowsOf(page, compound);
+    await expect(grown).toHaveCount(2);
+    for (const row of await grown.all()) {
+      await expect(
+        checkOf(row),
+        "入れ直したアーカイブの本が、生えたときに外れている",
+      ).toHaveAttribute("aria-checked", "true");
+    }
+
+    // Act - 残りの目次も読み終わる
+    script.advance();
+
+    // Assert - 対照。入れ直していないアーカイブの本は外れたまま。
+    // 「触られた先祖が 1 つでもあれば入れる」実装で通らないようにする
+    const sibling = bookRowsOf(page, single);
+    await expect(sibling).toHaveCount(1);
+    await expect(
+      checkOf(sibling.first()),
+      "入れ直していないアーカイブの本まで入っている",
+    ).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByTestId("plan-master-check")).toHaveAttribute(
+      "aria-checked",
+      "mixed",
+    );
+  });
+
+  test("何も触らなければ、後から生えた整理済みの本だけが外れる", async ({
+    page,
+  }) => {
+    // Arrange - A: 走査だけ / B: 3 冊そろって完了。単体の 1 冊だけが整理済み
+    const title = "既定の作品";
+    const name = "既定";
+    const output = join(sidecar.workDir, `out-${name}`);
+    mkdirSync(output, { recursive: true });
+    const { folder, compound, single } = makeFolder(name);
+    const containers = [compound, single];
+    const script = await scriptAnalysis(page, [
+      { state: "running", scanned: true, containers, books: [] },
+      {
+        state: "succeeded",
+        scanned: true,
+        containers,
+        books: [
+          book(title, compound, "第01巻", 1),
+          book(title, compound, "第02巻", 2),
+          organizedBook(single, 3),
+        ],
+      },
+    ]);
+
+    await openOrganize(page, output);
+    await fillMangaInfo(page, title);
+    await addFolder(page, name);
+    await waitForSubmission(script, 1);
+    await expect(rowsOfKind(page, "book")).toHaveCount(0);
+
+    // Act - 何も触らずに、目次が読み終わるのを待つだけ
+    script.advance();
+    await expect(rowsOfKind(page, "book")).toHaveCount(3);
+
+    // Assert - 前提。台本の本が本当に整理済みとして届いていること。
+    // `organized: false` の台本で試すと、以下の主張はすべて空振りする
+    const organized = bookRowsOf(page, single);
+    await expect(
+      organized,
+      "台本の本が整理済みとして届いていない",
+    ).toHaveAttribute("data-organized", "true");
+
+    // Assert - 整理済みの本は、生えた時点で外れている。既定は行を組み直す
+    // たびに導き直されるので、生えた行にも同じように効く
+    await expect(
+      checkOf(organized),
+      "後から生えた整理済みの本が既定で入っている",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Assert - 対照。整理済みでない本は今までどおり入っている。
+    // 「生えた本を全部外す」実装で通らないようにする
+    const messy = bookRowsOf(page, compound);
+    await expect(messy).toHaveCount(2);
+    for (const row of await messy.all()) {
+      await expect(
+        checkOf(row),
+        "整理済みでない本まで既定で外れている",
+      ).toHaveAttribute("aria-checked", "true");
+    }
+
+    // Assert - 入れ物の三態は葉から決まる。整理済みの本しか持たない
+    // アーカイブはオフ、両方を含むフォルダは混在
+    await expect(
+      checkOf(archiveRow(page, single)),
+      "整理済みの本しか持たないアーカイブが外れていない",
+    ).toHaveAttribute("aria-checked", "false");
+    await expect(
+      checkOf(archiveRow(page, compound)),
+      "整理済みを 1 冊も持たないアーカイブまで外れている",
+    ).toHaveAttribute("aria-checked", "true");
+    await expect(checkOf(folderRow(page, folder))).toHaveAttribute(
+      "aria-checked",
+      "mixed",
+    );
+    await expect(page.getByTestId("plan-master-check")).toHaveAttribute(
+      "aria-checked",
+      "mixed",
+    );
+
+    // Assert - 行は消えない。作らないことと、見つからなかったことは別
+    await expect(
+      page.getByTestId("plan-row"),
+      "整理済みの行が一覧から消えている",
+    ).toHaveCount(1 + 2 + 3);
   });
 
   test("投入を変えると、走っていた解析を番号で名指しして止める", async ({
