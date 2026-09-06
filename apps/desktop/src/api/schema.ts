@@ -421,6 +421,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/output-roots": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Choose Output Root
+     * @description 利用者が出力先として選んだ場所を、この起動のあいだ覚える。
+     *
+     *     呼ぶのは利用者が出力先を決めた操作からだけ（画面の DirectoryPicker）。
+     *     整理の投入や起動パラメータから呼ぶと、依頼が自分の許可を連れてくる形に
+     *     戻り、守りが素通しになる。
+     */
+    post: operations["choose_output_root_api_output_roots_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/jobs/organize": {
     parameters: {
       query?: never;
@@ -436,6 +460,9 @@ export interface paths {
      *
      *     フォルダを渡されたら、ここで中身を 1 冊ずつへ展開する。フォルダを
      *     1 件のまま走らせると、進捗の総数が 1 のまま複数冊が出来上がる。
+     *
+     *     書き出す先は、ジョブにする前に確かめる。ジョブにして後から失敗させると、
+     *     画面は投入できたと思ったまま、断る理由だけが後から届く（#58 と同じ）。
      */
     post: operations["submit_organize_api_jobs_organize_post"];
     delete?: never;
@@ -781,6 +808,31 @@ export interface components {
       height: number;
       /** Operations */
       operations: components["schemas"]["OperationView"][];
+    };
+    /**
+     * OutputRootRequest
+     * @description 出力先として選んだ場所を伝える依頼
+     */
+    OutputRootRequest: {
+      /**
+       * Directory
+       * @description 利用者が選んだ出力先の絶対パス
+       */
+      directory: string;
+    };
+    /**
+     * OutputRootView
+     * @description 覚えた出力先。
+     *
+     *     辿り直した形で返す。自由入力なので `.../整理後/../整理後` のような書き方も
+     *     届く。画面が「どこを覚えたか」を確かめられるようにするため。
+     */
+    OutputRootView: {
+      /**
+       * Directory
+       * @description 覚えた出力先（辿り直した絶対パス）
+       */
+      directory: string;
     };
     /**
      * PageList
@@ -1623,6 +1675,42 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  choose_output_root_api_output_roots_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OutputRootRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OutputRootView"];
         };
       };
       /** @description Validation Error */

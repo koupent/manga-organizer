@@ -67,8 +67,13 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<ConnectionView, String> {
         .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&state_dir).map_err(|error| error.to_string())?;
 
-    // 読み書きを許すのは利用者のホーム以下だけにする。トークンに加えた
-    // もう一段の制限で、想定外のパスを読ませない
+    // 読むのを許すのは利用者のホーム以下だけにする。トークンに加えた
+    // もう一段の制限で、想定外のパスを読ませない。
+    //
+    // 書き出す先はここでは決まらない。蔵書は 2 台目のドライブや NAS に
+    // 置かれることが多く、ホームへ縛ると整理そのものができなくなるため、
+    // 利用者が画面で選んだ出力先をサイドカーが起動のあいだ覚える
+    // （POST /api/output-roots）。書けるのはホーム以下と、その覚えだけ
     let home = app.path().home_dir().map_err(|error| error.to_string())?;
 
     let program = app
