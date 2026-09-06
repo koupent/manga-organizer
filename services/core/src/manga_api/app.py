@@ -27,6 +27,7 @@ from manga_api.http_images import (
 )
 from manga_api.jobs import Job, JobCancelled, JobNotFound, JobStore
 from manga_api.output_roots import ChosenOutputRoots
+from manga_api.paths import PathGuard
 from manga_api.split_job import (
     SplitConfirmRequest,
     SplitScanRequest,
@@ -42,7 +43,7 @@ from manga_core.cover_editor import (
     apply_to_archive,
     is_spread,
 )
-from manga_core.input_expander import ARCHIVE_SUFFIXES, expand_inputs
+from manga_core.input_expander import ARCHIVE_SUFFIXES
 from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
 from manga_core.original_store import (
@@ -421,6 +422,9 @@ def create_app(
     app.state.jobs = JobStore(resolved_state / "jobs.db")
     app.state.thumbnails = thumbnails.ThumbnailCache()
     app.state.allowed_roots = [Path(r).resolve() for r in (allowed_roots or [])]
+    # 読む側の守り。app.state と同じ一覧を指させる。写しを持たせると、
+    # 許可を書き換えたときに守りと状態が別々の一覧を見ることになる
+    path_guard = PathGuard(app.state.allowed_roots)
     # 書き出す先の覚え。allowed_roots とは別に持つ。ここへ混ぜると、出力先を
     # 選んだだけでその場所を読む入口まで開いてしまう
     app.state.chosen_output_roots = ChosenOutputRoots()
@@ -461,51 +465,6 @@ def create_app(
         """
         return MangaDatabase(app.state.database_path)
 
-    def within_allowed(path: Path) -> bool:
-        """許可された場所に留まるかを見る。
-
-        判定は必ず resolve() した後のパスで行う。許可の中に置かれたリンクが
-        外を指していると、名前のままでは中に見えて、開くと外を読んでしまう。
-        """
-        roots = app.state.allowed_roots
-        if not roots:
-            return True
-        return any(path.resolve().is_relative_to(root) for root in roots)
-
-    def refuse_outside(path: Path) -> None:
-        """許可の外なら、開く前に断る"""
-        if not within_allowed(path):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="対象外のディレクトリです",
-            )
-
-    def resolve_archive(raw: str) -> Path:
-        """受け取ったパスを検証して解決する"""
-        path = Path(raw).resolve()
-        refuse_outside(path)
-        if not path.is_file():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="ファイルが見つかりません",
-            )
-        return path
-
-    def resolve_organize_target(raw: str) -> Path:
-        """整理の対象を検証して解決する。
-
-        こちらはフォルダも受け付ける。利用者はアーカイブを 1 つずつ選ばず、
-        フォルダごと投げ込むため（#70）。中身の展開は投入時に行う。
-        """
-        path = Path(raw).resolve()
-        refuse_outside(path)
-        if not path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="ファイルが見つかりません",
-            )
-        return path
-
     def resolve_output_directory(raw: str) -> Path:
         """書き出す先を検証して解決する。
 
@@ -517,41 +476,14 @@ def create_app(
         まだ無いフォルダも通す。出力先は整理のときに作られる。
         """
         path = Path(raw).resolve()
-        if within_allowed(path) or app.state.chosen_output_roots.allows(path):
+        if path_guard.within_allowed(path) or app.state.chosen_output_roots.allows(
+            path
+        ):
             return path
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="選ばれていない出力先です。出力先を選び直してください",
         )
-
-    def expand_targets(raws: list[str]) -> list[Path]:
-        """投入されたパスを、1 冊ずつの入力へ展開する。
-
-        辿って見つけたものは利用者が名指ししていない。リンクで許可の外を
-        指していないか、1 件ずつ確かめてから処理対象に入れる。
-
-        解析と整理で同じ展開を通すのは、処理順が同名衝突の ``_1`` の付き方を
-        決めるため。片方だけ順番が変わると、予告した名前と実際に出来る名前が
-        食い違う。
-        """
-        targets = [resolve_organize_target(raw) for raw in raws]
-        expanded: list[Path] = []
-        for found in expand_inputs(targets):
-            if within_allowed(found):
-                expanded.append(found)
-            else:
-                logger.warning("許可された場所の外を指すため除きました: %s", found)
-        return expanded
-
-    def open_editor(raw: str) -> ZipPageEditor:
-        """アーカイブを開く。開けない理由はそのまま伝える"""
-        path = resolve_archive(raw)
-        try:
-            return ZipPageEditor(path)
-        except PageReorderError as error:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
-            ) from error
 
     @app.get("/api/health", dependencies=guarded, response_model=HealthView)
     def health() -> HealthView:
@@ -561,7 +493,7 @@ def create_app(
     @app.get("/api/pages", dependencies=guarded, response_model=PageList)
     def list_pages(archive: str) -> PageList:
         """アーカイブ内のページを viewer と同じ並びで返す"""
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         try:
             return PageList(
                 archive=str(editor.zip_path),
@@ -579,7 +511,7 @@ def create_app(
         request: Request, archive: str, name: str, width: int = 240
     ) -> Response:
         """ページのサムネイルを返す"""
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         resolved = thumbnails.nearest_width(width)
         try:
             body = app.state.thumbnails.get_or_create(
@@ -655,7 +587,7 @@ def create_app(
             target = roots[0] if roots else Path.home()
         else:
             target = Path(path).resolve()
-            refuse_outside(target)
+            path_guard.refuse_outside(target)
         if not target.is_dir():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -770,7 +702,7 @@ def create_app(
     @app.get("/api/image", dependencies=guarded, response_class=Response)
     def image(request: Request, archive: str, name: str) -> Response:
         """ページを原寸で返す。拡大表示に使う"""
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         try:
             body = editor.read_entry(name)
         except PageReorderError as error:
@@ -792,7 +724,7 @@ def create_app(
         バイト列を /api/cover と分けているのは、画像が JSON に載らないうえ、
         /api/cover は画面を描き直すたびに引かれる軽い経路であってほしいため。
         """
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         path = editor.zip_path
         try:
             body = editor.read_entry(name)
@@ -831,7 +763,7 @@ def create_app(
         「枠をどこに置くか」を 1 度に決める。別の入口に分けると、2 回
         問い合わせる間に片方だけ古い値を見た状態が作れてしまう。
         """
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         path = editor.zip_path
         try:
             if not editor.pages:
@@ -865,7 +797,7 @@ def create_app(
     )
     def submit_cover(request: CoverRequest) -> JobAccepted:
         """表紙の加工をジョブとして投入する"""
-        path = resolve_archive(request.archive)
+        path = path_guard.resolve_archive(request.archive)
         job_id = app.state.jobs.submit(
             "cover", {"archive": str(path), "name": request.name}
         )
@@ -930,7 +862,7 @@ def create_app(
     )
     def submit_reorder(request: ReorderRequest) -> JobAccepted:
         """ページ並べ替えをジョブとして投入する"""
-        path = resolve_archive(request.archive)
+        path = path_guard.resolve_archive(request.archive)
         job_id = app.state.jobs.submit(
             "reorder", {"archive": str(path), "pages": len(request.order)}
         )
@@ -971,7 +903,7 @@ def create_app(
         失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
         残らず、画面は投入できたと思ってしまう。
         """
-        editor = open_editor(request.archive)
+        editor = path_guard.open_editor(request.archive)
         path = editor.zip_path
         editor.close()
         job_id = app.state.jobs.submit("split-scan", {"archive": str(path)})
@@ -993,7 +925,7 @@ def create_app(
         （印）・行の名前を並べたものがいまのページ順と一致するか。どこで
         断ってもアーカイブは 1 バイトも変わらない。
         """
-        editor = open_editor(request.archive)
+        editor = path_guard.open_editor(request.archive)
         path = editor.zip_path
         try:
             pages = editor.pages
@@ -1025,7 +957,7 @@ def create_app(
         失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
         残らず、画面は投入できたと思ってしまう。
         """
-        targets = [resolve_organize_target(raw) for raw in request.archives]
+        targets = [path_guard.resolve_organize_target(raw) for raw in request.archives]
         # 前回までの解析は用済み。1 件ずつ入れ物と本の一覧を抱えるうえ、
         # 投入を編集するたびに増える。履歴を読む画面も無い
         app.state.jobs.prune_finished("analyze")
@@ -1040,7 +972,9 @@ def create_app(
         _start(
             app,
             job_id,
-            analysis_work(targets, request.author, request.title, within_allowed),
+            analysis_work(
+                targets, request.author, request.title, path_guard.within_allowed
+            ),
         )
         return JobAccepted(id=job_id)
 
@@ -1079,7 +1013,7 @@ def create_app(
         画面は投入できたと思ったまま、断る理由だけが後から届く（#58 と同じ）。
         """
         output_directory = resolve_output_directory(request.output_directory)
-        archives = expand_targets(request.archives)
+        archives = path_guard.expand_targets(request.archives)
         # 選んだ本が与えられていれば、その本を含まないアーカイブごと外す。
         # 進捗の総数もここで決まるので、外したぶんは最初から数に入らない
         wanted = _wanted_entries(request.books)
