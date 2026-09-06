@@ -1,25 +1,29 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, type Sidecar } from "./sidecar";
 
 /**
- * 整理済みと判定された本を、画面で読めるようにする（#73 第 3 段階）。
+ * 整理済みと判定された本を、画面で読めるようにし（#73 第 3 段階）、
+ * 既定で作らないようにする（#73 段階 4b）。
  *
  * 第 1・2 段階でサイドカーは「その本は既にこの道具が作る物そのものか」を
- * 判定し、`organized` / `organized_reason` として返すようになった。判定は
- * 画面に 1 文字も出ていない。利用者は一度整理した蔵書をもう一度投入したとき、
- * 何が作り直されるのかを実行するまで知る手立てがない。
+ * 判定し、`organized` / `organized_reason` として返すようになった。第 3 段階で
+ * その判定を画面に出した。段階 4a で、整理済みの本が自分の名前のまま画面から
+ * 投入まで通るようになった。
  *
- * ここで足すのは**見せるだけ**。既定のチェック・作る冊数・状態の行の文言・
- * 出来上がる名前は 1 つも動かさない。整理済みの本を既定で外すこと（第 4 段階）
- * は、外した本を入れ直したときに本ごとの作品名・著者を持ち回る必要があり、
- * `OrganizeRequest` から `FileOrganizer` まで手が入る。判定を実際の蔵書へ
- * 当ててから決めたいので、見せることだけを先に切り離す。
+ * ここまでで足りないのは**既定**だけになる。一度整理した蔵書をもう一度
+ * 投入すると、整理済みの本まで既定でオンのまま作り直される。段階 4b で
+ * その既定を裏返す。
  *
- * ここで求める画面の契約は次のとおり（すべて葉の行に付く）。
+ * **第 3 段階の「見せるだけ」はここで終わる。** 冒頭のこの節はそのときの
+ * 約束（既定のチェック・作る冊数・状態の行の文言を 1 つも動かさない）を
+ * 書いていた。4 つ目のテストがその約束そのものだったので、ここでは新しい
+ * 真実へ書き換える。行数の主張だけは変えない。整理済みの行は消さずに残す。
+ *
+ * ここで求める画面の契約は次のとおり（第 3 段階のぶんも残す）。
  *
  * - `data-organized`        … `"true"` / `"false"`。判定そのもの
  * - `data-organized-reason` … 整理済みでない理由 1 つ。整理済みなら空文字
@@ -27,6 +31,14 @@ import { startSidecar, type Sidecar } from "./sidecar";
  * - `plan-row-reason`       … 名前は合っているのに落ちた 3 つだけに出す
  *                             `Badge tone="neutral"` + `Info`（`data-reason` 付き）
  * - 行の `title`            … 整理済みでない本すべてに、理由を言葉で
+ *
+ * 段階 4b で足すのは次の 4 つ。
+ *
+ * - 整理済みの**本**の行は既定でオフ。それ以外の行は既定でオン。行は残る
+ * - 状態の行は「外した」と「整理済みなので作りません」を別の言葉で数える
+ * - 入れ直した整理済みの本は、解析をやり直しても入ったまま。触っていない
+ *   整理済みの本は外れたまま（覚えるのは利用者が触った行だけ）
+ * - 残した本が全部自分の名前を持つなら、左の列は空でも実行できる
  *
  * 理由 6 つのうち `multiple-books` / `not-zip` / `name-mismatch` に印は出さない。
  * この 3 つは「まだ整理していない蔵書」の普通の姿で、そこに印を足すと一覧が
@@ -44,12 +56,30 @@ const CORE_DIR = fileURLToPath(
 const FORM_AUTHOR = "テスト著者";
 const FORM_TITLE = "画面の作品";
 
-/** 蔵書に入っている本の著者と作品名。整理済みの形はこの 2 つから決まる */
+/** 蔵書に入っている 1 作目の著者と作品名。整理済みの形はこの 2 つから決まる */
 const SHELF_AUTHOR = "棚の著者";
 const SHELF_TITLE = "棚の作品";
 
+/**
+ * 2 作目の著者と作品名。
+ *
+ * 段階 4b では「作品フォルダが 2 つ出来る」ことを見る。1 作しか無い蔵書だと、
+ * 本ごとの名前を使わずに 1 つの対で全部作る実装でも同じ結果になってしまう。
+ */
+const OTHER_AUTHOR = "別の著者";
+const OTHER_TITLE = "別の作品";
+
+/** 整理済みの本の巻数。作品ごとに 2 冊ずつ */
+const ORGANIZED_VOLUMES = [3, 4];
+
 /** 放り込むフォルダの名前 */
 const LIBRARY_NAME = "蔵書";
+
+/** 整理済みの本だけが入ったフォルダの名前 */
+const ORGANIZED_NAME = "整理済み";
+
+/** 蔵書の外に置く、まだ整理していないアーカイブ 1 つ */
+const LOOSE_NAME = "未整理_09.zip";
 
 /** 整理済みでない理由。値そのものがサイドカーとの契約 */
 const MULTIPLE_BOOKS = "multiple-books";
@@ -71,14 +101,24 @@ const REASON_BADGE: Record<string, string> = {
   [EXTRA_ENTRIES]: "余計なファイルがあります",
 };
 
-/** 蔵書に入れたアーカイブの数。1 冊出るもの 5 つ + 合本 1 つ */
-const ARCHIVE_COUNT = 6;
+/** 蔵書に入っている整理済みの本の数。2 作 × 2 巻 */
+const ORGANIZED_COUNT = 4;
+
+/**
+ * 蔵書に入れたアーカイブの数。
+ *
+ * 整理済み 4 つ + 整理済みでない 1 冊もの 4 つ + 合本 1 つ。
+ */
+const ARCHIVE_COUNT = 9;
 
 /** 出来上がる本の数。合本からだけ 2 冊出る */
-const BOOK_COUNT = 7;
+const BOOK_COUNT = 10;
 
 /** 一覧の行数。放り込んだフォルダ 1 + アーカイブ + 本 */
 const ROW_COUNT = 1 + ARCHIVE_COUNT + BOOK_COUNT;
+
+/** 既定で作る冊数。整理済みは外れるので、その分だけ減る */
+const DEFAULT_KEPT = BOOK_COUNT - ORGANIZED_COUNT;
 
 /**
  * 素材を作るスクリプト。
@@ -87,6 +127,12 @@ const ROW_COUNT = 1 + ARCHIVE_COUNT + BOOK_COUNT;
  * 判定の定義を書き写すことになり、名前の作り方や連番の付け方が変わったときに
  * 「整理済みのはずの素材」が黙って未整理へ変わる。そうなるとこの spec の
  * 主張はすべて空振りするのに、落ちるのは 1 行だけになる。
+ *
+ * 整理済みの本は先に `整理済み/` へ作り、その丸ごとの複製を `蔵書/` に置く。
+ * 複製でも名前・置き場所・ページの並び・同梱物はそのままなので、判定は
+ * 整理済みのまま変わらない。2 つに分けるのは、「整理済みの本しか入っていない
+ * 蔵書」を作るため。段階 4b の要は「全部整理済みで、何も作らない」場面の
+ * 振る舞いなので、そこに未整理の本が混ざっていると確かめられない。
  *
  * 派生させる 4 つは、整理済みの本を 1 つずつ崩して作る。崩す条件を 1 つに
  * 絞ることで、出てくる理由がその条件のものだと言い切れる。
@@ -103,10 +149,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 from manga_core.file_organizer import FileOrganizer
 
-library = Path(sys.argv[1])
-author = sys.argv[2]
-title = sys.argv[3]
-series = f"[{author}] {title}"
+root = Path(sys.argv[1])
+library = root / sys.argv[2]
+organized_root = root / sys.argv[3]
+shelf_author, shelf_title = sys.argv[4], sys.argv[5]
+other_author, other_title = sys.argv[6], sys.argv[7]
+loose_name = sys.argv[8]
+volumes = [int(value) for value in sys.argv[9:]]
 PAGE_COUNT = 3
 FONT = ImageFont.load_default(size=120)
 
@@ -139,49 +188,73 @@ def copy_into(book: Path, folder: Path, name: str) -> Path:
     return target
 
 
-# 整理に作らせる。素材は蔵書の外に置く（走査に拾わせない）
-raw = zip_with(library.parent / "素材" / "素材_03.zip", sheets())
-organizer = FileOrganizer(output_directory=library, keep_originals=True)
-organizer.set_manga_info(author=author, title=title)
-results = organizer.process_single_archive(raw)
-failed = [result.error_message for result in results if not result.success]
-if failed:
-    raise SystemExit(f"整理が失敗した: {failed}")
-built = results[0].output_path
+def build(slug: str, author: str, title: str) -> list[Path]:
+    """整理に作らせる。素材は蔵書の外に置く（走査に拾わせない）"""
+    organizer = FileOrganizer(output_directory=organized_root, keep_originals=True)
+    organizer.set_manga_info(author=author, title=title)
+    series = f"[{author}] {title}"
+    made = []
+    for volume in volumes:
+        raw = zip_with(root / "素材" / slug / f"素材_{volume:02d}.zip", sheets())
+        results = organizer.process_single_archive(raw)
+        failed = [result.error_message for result in results if not result.success]
+        if failed:
+            raise SystemExit(f"整理が失敗した: {failed}")
+        built = results[0].output_path
+        # 素材が本当に「整理が作る物」であることをここで固定する。名前の作り方が
+        # 変われば組み立てが落ち、以降のテストが黙って別物を試すことがなくなる
+        expected = f"{series} 第{volume:03d}巻.zip"
+        if built.name != expected or built.parent.name != series:
+            raise SystemExit(f"整理の出力が想定と違う: {built}")
+        made.append(built)
+    return made
 
-# 素材が本当に「整理が作る物」であることをここで固定する。名前の作り方が
-# 変われば組み立てが落ち、以降のテストが黙って別物を試すことがなくなる
-expected = f"{series} 第003巻.zip"
-if built.name != expected or built.parent.name != series:
-    raise SystemExit(f"整理の出力が想定と違う: {built}")
+
+shelf_books = build("A", shelf_author, shelf_title)
+other_books = build("B", other_author, other_title)
+
+# 整理済みの本を丸ごと蔵書へ複製する。複製でも判定は整理済みのまま
+shutil.copytree(organized_root, library, dirs_exist_ok=True)
+shelf_series = f"[{shelf_author}] {shelf_title}"
+other_series = f"[{other_author}] {other_title}"
+in_library = [library / book.parent.name / book.name for book in shelf_books + other_books]
+missing = [str(book) for book in in_library if not book.exists()]
+if missing:
+    raise SystemExit(f"蔵書への複製が出来ていない: {missing}")
 
 # 同梱物だけが違う。名前・置き場所・ページの並びは整理済みのまま
-extra = copy_into(built, library / series, f"{series} 第006巻.zip")
+extra = copy_into(in_library[0], library / shelf_series, f"{shelf_series} 第006巻.zip")
 with zipfile.ZipFile(extra, "a", zipfile.ZIP_DEFLATED) as archive:
     archive.writestr("readme.txt", b"hello")
 
 print(
     json.dumps(
         {
+            "organized": str(in_library[0]),
+            "organizedOthers": [str(book) for book in in_library[1:]],
+            "organizedOnly": [str(book) for book in shelf_books + other_books],
+            "shelfSeries": shelf_series,
+            "otherSeries": other_series,
             # 名前だけが整理の作る形と違う。まだ整理していない本の普通の姿
-            "nameMismatch": str(zip_with(library / series / "raw_09.zip", sheets())),
+            "nameMismatch": str(zip_with(library / shelf_series / "raw_09.zip", sheets())),
             # 003 が抜けて 004 が居る。枚数は合うので数えるだけでは気づけない
             "pagesMismatch": str(
                 zip_with(
-                    library / series / f"{series} 第005巻.zip",
+                    library / shelf_series / f"{shelf_series} 第005巻.zip",
                     sheets(names=["001.jpg", "002.jpg", "004.jpg"]),
                 )
             ),
             "extraEntries": str(extra),
             # 中身も名前も整理済みのまま、置いてあるフォルダだけが違う
             "folderMismatch": str(
-                copy_into(built, library / "その他", f"{series} 第007巻.zip")
+                copy_into(in_library[0], library / "その他", f"{shelf_series} 第007巻.zip")
             ),
             # 1 つの ZIP から 2 冊。この道具の成果物はファイルなので整理済みにならない
             "compound": str(
                 zip_with(library / "合本.zip", {**sheets("第01巻/"), **sheets("第02巻/")})
             ),
-            "organized": str(built),
+            # 蔵書の外に 1 つだけ置く、まだ整理していないアーカイブ
+            "loose": str(zip_with(root / loose_name, sheets())),
         },
         ensure_ascii=False,
     )
@@ -189,15 +262,26 @@ print(
 `;
 
 type Library = {
-  /** 放り込むフォルダ */
+  /** 放り込むフォルダ。整理済みと未整理が混ざっている */
   folder: string;
-  /** 整理そのものが作った、整理済みの本 */
+  /** 整理済みの本しか入っていないフォルダ */
+  organizedFolder: string;
+  /** 蔵書の中の、整理済みの本 1 冊目 */
   organized: string;
+  /** 蔵書の中の、残りの整理済みの本 */
+  organizedOthers: string[];
+  /** `整理済み/` の中の 4 冊 */
+  organizedOnly: string[];
+  /** 作品フォルダの名前 */
+  shelfSeries: string;
+  otherSeries: string;
   nameMismatch: string;
   pagesMismatch: string;
   extraEntries: string;
   folderMismatch: string;
   compound: string;
+  /** 蔵書の外に置いた、まだ整理していないアーカイブ */
+  loose: string;
 };
 
 let sidecar: Sidecar;
@@ -206,15 +290,33 @@ let library: Library;
 /** 一度整理した蔵書に、整理済みでない本が混ざった状態を作る */
 function buildLibrary(): Library {
   const folder = join(sidecar.workDir, LIBRARY_NAME);
+  const organizedFolder = join(sidecar.workDir, ORGANIZED_NAME);
   mkdirSync(folder, { recursive: true });
   const scriptPath = join(sidecar.workDir, "make_organized_library.py");
   writeFileSync(scriptPath, FIXTURE_SCRIPT);
   const output = execFileSync(
     "uv",
-    ["run", "python", scriptPath, folder, SHELF_AUTHOR, SHELF_TITLE],
+    [
+      "run",
+      "python",
+      scriptPath,
+      sidecar.workDir,
+      LIBRARY_NAME,
+      ORGANIZED_NAME,
+      SHELF_AUTHOR,
+      SHELF_TITLE,
+      OTHER_AUTHOR,
+      OTHER_TITLE,
+      LOOSE_NAME,
+      ...ORGANIZED_VOLUMES.map(String),
+    ],
     { cwd: CORE_DIR, encoding: "utf8" },
   );
-  return { folder, ...JSON.parse(output.trim().split("\n").pop()!) };
+  return {
+    folder,
+    organizedFolder,
+    ...JSON.parse(output.trim().split("\n").pop()!),
+  };
 }
 
 test.beforeAll(async () => {
@@ -223,6 +325,11 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(() => sidecar?.stop());
+
+/** 蔵書の中の整理済み 4 冊 */
+function allOrganized(): string[] {
+  return [library.organized, ...library.organizedOthers];
+}
 
 async function openOrganize(page: Page, output: string) {
   await page.goto(
@@ -246,16 +353,51 @@ async function stubNoSuggestions(page: Page) {
   );
 }
 
-/** ファイル参照から、蔵書を丸ごと 1 回で投入する */
-async function addLibraryFolder(page: Page) {
+/** ファイル参照から、フォルダを丸ごと 1 回で投入する */
+async function addFolder(page: Page, folderName: string) {
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
   await page
-    .locator(`[data-testid="browse-entry"][data-name="${LIBRARY_NAME}"]`)
+    .locator(`[data-testid="browse-entry"][data-name="${folderName}"]`)
     .getByRole("button", { name: "フォルダごと追加" })
     .click();
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeHidden();
+}
+
+/** ファイル参照から、単体のアーカイブを 1 つ投入する */
+async function addArchive(page: Page, archiveName: string) {
+  await page.getByTestId("open-browser").click();
+  await expect(page.getByTestId("file-browser")).toBeVisible();
+  await page
+    .locator(
+      `[data-testid="browse-entry"][data-name="${archiveName}"] .browser-name`,
+    )
+    .click();
+  await page.getByTestId("open-browser").click();
+  await expect(page.getByTestId("file-browser")).toBeHidden();
+}
+
+/** ファイル参照から、蔵書を丸ごと 1 回で投入する */
+async function addLibraryFolder(page: Page) {
+  await addFolder(page, LIBRARY_NAME);
+}
+
+/** 本の行が出そろうまで待つ。解析は往復を挟むので、待たずに読むと空になる */
+async function waitForBooks(page: Page, count: number) {
+  await expect(
+    page.locator('[data-testid="plan-row"][data-kind="book"]'),
+    "解析した本が一覧に出ていない",
+  ).toHaveCount(count, { timeout: 60_000 });
+}
+
+/** 出力先を決めて整理の画面を開く。左の列はまだ空のまま */
+async function openPlan(page: Page, name: string): Promise<string> {
+  const output = join(sidecar.workDir, `out-${name}`);
+  mkdirSync(output, { recursive: true });
+  await openOrganize(page, output);
+  await stubNoSuggestions(page);
+  return output;
 }
 
 /**
@@ -264,31 +406,88 @@ async function addLibraryFolder(page: Page) {
  * 左の列には蔵書の中身と違う作品名・著者を入れる。判定が依頼の値を見て
  * いるなら、整理済みの本はここで整理済みでなくなる。
  */
-async function preparePlan(page: Page, name: string) {
-  const output = join(sidecar.workDir, `out-${name}`);
-  mkdirSync(output, { recursive: true });
-  await openOrganize(page, output);
-  await stubNoSuggestions(page);
+async function preparePlan(page: Page, name: string): Promise<string> {
+  const output = await openPlan(page, name);
   await page.getByTestId("organize-title").fill(FORM_TITLE);
   await page.getByTestId("organize-author").fill(FORM_AUTHOR);
   await expect(page.getByTestId("organize-author")).toHaveValue(FORM_AUTHOR);
   await addLibraryFolder(page);
-  await expect(
-    page.locator('[data-testid="plan-row"][data-kind="book"]'),
-    "解析した本が一覧に出ていない",
-  ).toHaveCount(BOOK_COUNT, { timeout: 60_000 });
+  await waitForBooks(page, BOOK_COUNT);
+  return output;
+}
+
+/**
+ * 整理済みの本だけが入ったフォルダを、左の列を空のまま投入する。
+ *
+ * 左の列を埋めないのは、段階 4b の要が「残した本が全部自分の名前を持つなら
+ * 左の列は要らない」ことだから。埋めてしまうと、名前を本ごとに持ち回らず
+ * 左の列で作り直す実装でも同じ結果になる。
+ */
+async function prepareOrganizedOnly(page: Page, name: string): Promise<string> {
+  const output = await openPlan(page, name);
+  await addFolder(page, ORGANIZED_NAME);
+  await waitForBooks(page, ORGANIZED_COUNT);
+  return output;
 }
 
 /**
  * 本の行。元になったアーカイブで引く。
  *
  * 出来上がる名前で引かないのは、名前が左の列の作品名・著者から組み立て直され、
- * 第 4 段階（本ごとの名前）で変わりうるため。素材との対応は元パスで固定する。
+ * 段階 4a で本ごとの名前に変わったため。素材との対応は元パスで固定する。
  */
 function bookRow(page: Page, source: string, entry = ""): Locator {
   return page.locator(
     `[data-testid="plan-row"][data-kind="book"]` +
       `[data-source="${source}"][data-entry="${entry}"]`,
+  );
+}
+
+/** アーカイブの行 */
+function archiveRow(page: Page, path: string): Locator {
+  return page.locator(
+    `[data-testid="plan-row"][data-kind="archive"][data-path="${path}"]`,
+  );
+}
+
+/** フォルダの行 */
+function folderRow(page: Page, path: string): Locator {
+  return page.locator(
+    `[data-testid="plan-row"][data-kind="folder"][data-path="${path}"]`,
+  );
+}
+
+/** 行のチェック */
+function checkOf(row: Locator): Locator {
+  return row.getByTestId("plan-check");
+}
+
+/**
+ * その行を入れた状態にする。
+ *
+ * 既定がどちらでも同じ状態に落ち着かせる。既定そのものは別のテストが
+ * 受け持つので、ここで「外れていること」まで前提にすると、既定を裏返す
+ * 前の実装では下ごしらえで落ちてしまい、そのテストが何を主張しているのか
+ * 分からなくなる。
+ */
+async function keepRow(row: Locator) {
+  const check = checkOf(row);
+  if ((await check.getAttribute("aria-checked")) !== "true")
+    await check.click();
+  await expect(check, "行を入れた状態にできない").toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+}
+
+/** 一覧の全部を入れた状態にする。`keepRow` と同じ理由で、既定は前提にしない */
+async function keepEverything(page: Page) {
+  const master = page.getByTestId("plan-master-check");
+  if ((await master.getAttribute("aria-checked")) !== "true")
+    await master.click();
+  await expect(master, "全体のチェックで全部が入らない").toHaveAttribute(
+    "aria-checked",
+    "true",
   );
 }
 
@@ -317,6 +516,36 @@ async function readBookRows(page: Page): Promise<BookRow[]> {
       tip: await row.getAttribute("title"),
     })),
   );
+}
+
+/** 出来上がるはずのファイル名。組み立て方は VolumeDetector と同じ */
+function volumeName(author: string, title: string, volume: number): string {
+  return `[${author}] ${title} 第${String(volume).padStart(3, "0")}巻.zip`;
+}
+
+/**
+ * 出力先に実際に出来た本を、フォルダ → ファイル名の対応として読み取る。
+ *
+ * 名前だけを並べると、2 作ぶんの名前が出ていれば置き場所が入れ替わっていても
+ * 通ってしまう。どのフォルダに何が入ったかまで見る。
+ */
+function producedTree(root: string): Record<string, string[]> {
+  const found: Record<string, string[]> = {};
+  let entries: string[];
+  try {
+    entries = readdirSync(root, { recursive: true, encoding: "utf8" });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    const parts = entry.split("\\").join("/").split("/");
+    const name = parts.pop()!;
+    if (!name.endsWith(".zip")) continue;
+    const folder = parts.join("/");
+    (found[folder] ??= []).push(name);
+  }
+  for (const names of Object.values(found)) names.sort();
+  return found;
 }
 
 test.describe("整理済みの本の見せ方", () => {
@@ -371,14 +600,14 @@ test.describe("整理済みの本の見せ方", () => {
       "整理済みでない本に整理済みバッジが付いている",
     ).toHaveCount(0);
 
-    // Assert - 印が付いた本の行はこの 1 冊だけ。全部の行に付ける実装では
-    // 印そのものが意味を失う
+    // Assert - 印が付いた本の行は整理済みの冊数ちょうど。全部の行に付ける
+    // 実装では印そのものが意味を失う
     await expect(
       page.locator(
         '[data-testid="plan-row"][data-kind="book"] [data-testid="plan-row-state"]',
       ),
-      "整理済みバッジが 1 冊より多くの行に付いている",
-    ).toHaveCount(1);
+      "整理済みバッジが整理済みでない行にも付いている",
+    ).toHaveCount(ORGANIZED_COUNT);
   });
 
   test("名前は合っているのに落ちた 3 つだけに、理由の印が出る", async ({
@@ -466,7 +695,7 @@ test.describe("整理済みの本の見せ方", () => {
     expect(
       unorganized.length,
       `整理済みでない本が数えられない: ${JSON.stringify(rows)}`,
-    ).toBe(BOOK_COUNT - 1);
+    ).toBe(BOOK_COUNT - ORGANIZED_COUNT);
 
     const tips = new Map<string, Set<string>>();
     for (const row of unorganized) {
@@ -521,14 +750,13 @@ test.describe("整理済みの本の見せ方", () => {
     );
   });
 
-  test("見せるだけで、既定のチェックも件数も行数も動かない", async ({
-    page,
-  }) => {
+  test("整理済みの本だけが既定で外れ、行はそのまま残る", async ({ page }) => {
     // Arrange / Act
-    await preparePlan(page, "動かない");
+    await preparePlan(page, "既定で外れる");
 
-    // Assert - 行の数は増えも減りもしない。整理済みの入れ物を 1 行に
-    // まとめる案は判定を実際の蔵書へ当ててから決める
+    // Assert - 行の数は増えも減りもしない。整理済みの本を一覧から消すと、
+    // 「作らない」ことと「見つからなかった」ことが区別できなくなる。
+    // ここは第 3 段階から変えない
     const rows = page.getByTestId("plan-row");
     await expect(rows, "一覧の行数が変わっている").toHaveCount(ROW_COUNT);
     for (const [kind, count] of [
@@ -541,37 +769,337 @@ test.describe("整理済みの本の見せ方", () => {
         `${kind} の行数が変わっている`,
       ).toHaveCount(count);
     }
-
-    // Assert - 既定は今までどおり全部オン。整理済みの本も、外れているのは
-    // 見た目だけ…ではなく、そもそも外れない。既定を変えるのは第 4 段階
-    const checks = page.getByTestId("plan-check");
-    await expect(checks, "チェックが無い行がある").toHaveCount(ROW_COUNT);
-    const states = await Promise.all(
-      (await checks.all()).map((check) => check.getAttribute("aria-checked")),
-    );
-    expect(
-      states.filter((state) => state !== "true").length,
-      `既定でオンになっていない行がある: ${JSON.stringify(states)}`,
-    ).toBe(0);
-    await expect(page.getByTestId("plan-master-check")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-
-    // Assert - 状態の行の文言も、作る冊数も動かない。「K 冊は整理済みなので
-    // 作りません」を足すのは、実際に作らなくなる第 4 段階と同時でなければ嘘になる
     await expect(
-      page.getByTestId("organize-status"),
-      "状態の行の文言が変わっている",
-    ).toHaveText(`${BOOK_COUNT} 冊を作ります`);
+      page.getByTestId("plan-check"),
+      "チェックが無い行がある",
+    ).toHaveCount(ROW_COUNT);
 
-    // Assert - 判定が画面まで届いていること。整理済みが 1 冊も無い蔵書なら
-    // 「何も動いていない」は当たり前で、第 3 段階を試したことにならない。
-    // 上の 3 つを先に見てから確かめるのは、この 1 行が落ちる前に
-    // 「今までどおり」が本当に成り立っているかを毎回通すため
+    // Assert - 前提。判定が画面まで届いていること。整理済みが 1 冊も無い
+    // 蔵書なら「整理済みが外れている」は何も確かめたことにならない
     await expect(
       page.locator('[data-testid="plan-row"][data-organized="true"]'),
-      "整理済みと判定された行が 1 つも無い",
-    ).toHaveCount(1);
+      "整理済みと判定された行が揃っていない",
+    ).toHaveCount(ORGANIZED_COUNT);
+
+    // Assert - 整理済みの本は 4 冊とも既定でオフ
+    for (const source of allOrganized()) {
+      await expect(
+        checkOf(bookRow(page, source)),
+        `整理済みの本が既定で外れていない: ${source}`,
+      ).toHaveAttribute("aria-checked", "false");
+    }
+
+    // Assert - 対照。整理済みでない本は 6 冊とも既定でオンのまま。
+    // 「全部オフ」にする実装も「整理済みを見て何かした」ことにはなるが、
+    // 一度も整理していない蔵書が丸ごと作られなくなる
+    for (const source of [
+      library.nameMismatch,
+      library.pagesMismatch,
+      library.extraEntries,
+      library.folderMismatch,
+    ]) {
+      await expect(
+        checkOf(bookRow(page, source)),
+        `整理済みでない本まで既定で外れている: ${source}`,
+      ).toHaveAttribute("aria-checked", "true");
+    }
+    for (const entry of ["第01巻", "第02巻"]) {
+      await expect(
+        checkOf(bookRow(page, library.compound, entry)),
+        `合本の ${entry} まで既定で外れている`,
+      ).toHaveAttribute("aria-checked", "true");
+    }
+
+    // Assert - 入れ物の三態は葉から決まる。整理済みの本しか持たない
+    // アーカイブはオフ、そうでないアーカイブはオン、両方を含む蔵書は混在。
+    // 入れ物にも状態を持たせて別々に決める実装はここで食い違う
+    for (const source of allOrganized()) {
+      await expect(
+        checkOf(archiveRow(page, source)),
+        `整理済みの本しか持たないアーカイブが外れていない: ${source}`,
+      ).toHaveAttribute("aria-checked", "false");
+    }
+    await expect(
+      checkOf(archiveRow(page, library.compound)),
+      "整理済みを 1 冊も持たないアーカイブまで外れている",
+    ).toHaveAttribute("aria-checked", "true");
+    await expect(
+      checkOf(folderRow(page, library.folder)),
+      "整理済みと未整理が混ざったフォルダが混在になっていない",
+    ).toHaveAttribute("aria-checked", "mixed");
+    await expect(
+      page.getByTestId("plan-master-check"),
+      "全体のチェックが混在になっていない",
+    ).toHaveAttribute("aria-checked", "mixed");
+
+    // Assert - 作る冊数も整理済みのぶんだけ減る
+    await expect(
+      page.getByTestId("organize-status"),
+      "作る冊数に整理済みのぶんが残っている",
+    ).toContainText(`${DEFAULT_KEPT} 冊を作ります`);
+  });
+
+  test("状態の行は「外した」と「整理済み」を別々に数える", async ({ page }) => {
+    // Arrange / Act
+    await preparePlan(page, "件数の言い分け");
+    const status = page.getByTestId("organize-status");
+
+    // Assert - 何も触っていない状態。整理済みを「外した」に混ぜて数える
+    // 実装でも、片方だけを見れば「もっともらしい 1 文」が出てしまう。
+    // 出ている言葉と、出ていない言葉の両方を見る
+    await expect(
+      status,
+      "整理済みのぶんが別の言葉で数えられていない",
+    ).toHaveText(
+      `${DEFAULT_KEPT} 冊を作ります · ${ORGANIZED_COUNT} 冊は整理済みなので作りません`,
+    );
+    await expect(
+      status,
+      "何も外していないのに、整理済みが「外した」に数えられている",
+    ).not.toContainText("外した");
+
+    // Assert - 状態の行は 1 行に収める。溢れる分は行に乗せると読める。
+    // 説明が無いと、なぜ作られないのかを画面から知る手立てが無くなる
+    const tip = await status.getAttribute("title");
+    expect(tip ?? "", "状態の行に説明が無い").not.toBe("");
+    expect(
+      tip ?? "",
+      `説明が「出力先には作らない」ことを言っていない: ${tip}`,
+    ).toContain("出力先");
+
+    // Act - 整理済みでない本を 1 冊外す
+    await checkOf(bookRow(page, library.nameMismatch)).click();
+    await expect(
+      checkOf(bookRow(page, library.nameMismatch)),
+      "外したはずの本にチェックが残っている",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Assert - 3 つの数が同時に出る。利用者が外した 1 冊と、整理済みだから
+    // 作らない 4 冊は別の理由なので、同じ言葉で数えてはいけない
+    const kept = DEFAULT_KEPT - 1;
+    await expect(status, "3 つの内訳が同時に出ていない").toHaveText(
+      `${kept} 冊を作ります · 1 冊を外した` +
+        ` · ${ORGANIZED_COUNT} 冊は整理済みなので作りません`,
+    );
+
+    // Assert - 3 つで本の行を過不足なく分け合っている。数え方を画面が
+    // 出した文字から読み直すのは、期待値どうしを足しても何も確かめられない
+    // ため。どれかに二重に数えられた本があると、ここで合計が合わなくなる
+    const shown = (await status.textContent()) ?? "";
+    const counted = [...shown.matchAll(/(\d+)\s*冊/g)].map((found) =>
+      Number(found[1]),
+    );
+    expect(counted, `内訳が 3 つ読めない: ${shown}`).toHaveLength(3);
+    expect(
+      counted.reduce((total, count) => total + count, 0),
+      `作る・外した・整理済みの合計が本の冊数と合わない: ${shown}`,
+    ).toBe(BOOK_COUNT);
+  });
+
+  test("入れ直した整理済みの本は、解析をやり直しても入ったまま", async ({
+    page,
+  }) => {
+    // Arrange - 整理済みだけの蔵書
+    await prepareOrganizedOnly(page, "解析のやり直し");
+    const [rechecked, untouched] = library.organizedOnly;
+    // 前提。2 冊とも整理済みとして届いていること。整理済みでない本で
+    // 試すと、以下の主張は「既定のオンがそのまま残った」だけになる
+    for (const source of [rechecked, untouched]) {
+      await expect(
+        bookRow(page, source),
+        `整理済みとして届いていない: ${source}`,
+      ).toHaveAttribute("data-organized", "true");
+    }
+
+    // Act - 1 冊だけ入れ直す。もう 1 冊には指一本触れない
+    await keepRow(bookRow(page, rechecked));
+
+    // Act - 投入を足す。投入が変われば解析はやり直しになり、行は組み直される
+    await addArchive(page, LOOSE_NAME);
+    await waitForBooks(page, ORGANIZED_COUNT + 1);
+
+    // Assert - 入れ直した 1 冊は入ったまま。行を組み直すたびに既定へ
+    // 戻す実装（覚えている側を書き換える実装）はここで落ちる
+    await expect(
+      checkOf(bookRow(page, rechecked)),
+      "入れ直した整理済みの本が、解析のやり直しで外れた",
+    ).toHaveAttribute("aria-checked", "true");
+
+    // Assert - 触っていない整理済みの本は外れたまま。行が生えるたびに
+    // 整理済みを「外した」として覚え込む実装だと、上の 1 行は通るのに
+    // ここが通らない。逆に既定へ戻す実装は上で落ちる。両方を見る
+    await expect(
+      checkOf(bookRow(page, untouched)),
+      "触っていない整理済みの本が入ってしまった",
+    ).toHaveAttribute("aria-checked", "false");
+
+    // Assert - 後から足した整理済みでない本は、いままでどおり既定でオン
+    await expect(
+      checkOf(bookRow(page, library.loose)),
+      "後から足した整理済みでない本が既定で外れている",
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("入れ直した整理済みの本は、左の列が空でも自分の名前で作られる", async ({
+    page,
+  }) => {
+    // Arrange - 整理済みだけの蔵書。左の列は空のまま
+    const output = await prepareOrganizedOnly(page, "自分の名前で作る");
+
+    // 辞書への記録が投入されないことも見る。作品名が空のまま送ると
+    // サイドカーは 400 で断り、その失敗は握りつぶされて誰にも見えない
+    const posted: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() !== "POST") return;
+      posted.push(new URL(request.url()).pathname);
+    });
+
+    // Act - 全部を入れ直す
+    await keepEverything(page);
+
+    // Assert - 左の列が空のままでも実行できる。残した本はどれも自分の名前を
+    // 持っているので、左の列の対はどこにも使われない
+    await expect(page.getByTestId("organize-title")).toHaveValue("");
+    await expect(page.getByTestId("organize-author")).toHaveValue("");
+    await expect(
+      page.getByTestId("confirm"),
+      "残した本が全部自分の名前を持つのに、左の列を求められる",
+    ).toBeEnabled();
+
+    // Act
+    await page.getByTestId("confirm").click();
+    await expect(page.getByTestId("organize-status")).toContainText(
+      "整理しました",
+      { timeout: 60_000 },
+    );
+
+    // Assert - 2 つの作品フォルダに 2 冊ずつ。名前だけを数えると、置き場所が
+    // 入れ替わっていても通ってしまうので、フォルダとの対応で見る。左の列の
+    // 対で作り直す実装では、フォルダが 1 つ（あるいは `[] ` で始まるもの）に
+    // なってここで落ちる
+    expect(
+      producedTree(output),
+      "整理済みの本が自分の名前・自分の作品フォルダへ作られていない",
+    ).toEqual({
+      [library.shelfSeries]: ORGANIZED_VOLUMES.map((volume) =>
+        volumeName(SHELF_AUTHOR, SHELF_TITLE, volume),
+      ).sort(),
+      [library.otherSeries]: ORGANIZED_VOLUMES.map((volume) =>
+        volumeName(OTHER_AUTHOR, OTHER_TITLE, volume),
+      ).sort(),
+    });
+
+    // Assert - 空の作品名を辞書へ記録しに行かない。送れば断られるだけで、
+    // その失敗は握りつぶされる（利用者には何も起きていないように見える）
+    expect(posted, "作品名が空のまま辞書へ記録しに行っている").not.toContain(
+      "/api/library/entries",
+    );
+  });
+
+  test("作品名と著者は、自分の名前を持たない本が残っているときだけ要る", async ({
+    page,
+  }) => {
+    // Arrange - 整理済みだけの蔵書。左の列は空のまま
+    await prepareOrganizedOnly(page, "名前が要るとき");
+    const status = page.getByTestId("organize-status");
+    const confirm = page.getByTestId("confirm");
+
+    // Assert - 分岐 C。既定は全部オフなので作る本が無い。ここで
+    // 「作品名を入れてください」と言うと、使われもしない作品名を打たせる
+    // ことになる。作る本が無いことのほうが先に立つ
+    await expect(status, "作る本が無いことが読めない").toHaveText(
+      `${ORGANIZED_COUNT} 冊はすべて整理済みなので作りません` +
+        ` · 出力先にも作るならチェックを入れてください`,
+    );
+    await expect(
+      confirm,
+      "作る本が 1 冊も無いのに実行できてしまう",
+    ).toBeDisabled();
+
+    // Act - 分岐 A。全部を入れ直す
+    await keepEverything(page);
+
+    // Assert - 残した本が全部自分の名前を持つなら、左の列は空でも実行できる。
+    // 「常に作品名が要る」実装はここで落ちる
+    await expect(status, "作る冊数が出ていない").toHaveText(
+      `${ORGANIZED_COUNT} 冊を作ります`,
+    );
+    await expect(
+      confirm,
+      "自分の名前を持つ本しか残っていないのに、左の列を求められる",
+    ).toBeEnabled();
+
+    // Act - 分岐 B。自分の名前を持たない本を 1 冊足す
+    await addArchive(page, LOOSE_NAME);
+    await waitForBooks(page, ORGANIZED_COUNT + 1);
+    await expect(
+      checkOf(bookRow(page, library.loose)),
+      "後から足した本が既定でオンになっていない",
+    ).toHaveAttribute("aria-checked", "true");
+
+    // Assert - 名前を持たない本が 1 冊でも残っていれば、左の列が要る。
+    // 「名前は要らない」に倒した実装だと、その本は `[] .zip` になって出る。
+    // 文言を先に見るのは、解析中もボタンは押せないため。「押せない」だけを
+    // 見ると、解析が終わる前に通ってしまい何も確かめたことにならない
+    await expect(status, "何を入れればよいのかが読めない").toContainText(
+      "作品名",
+    );
+    await expect(
+      confirm,
+      "自分の名前を持たない本が残っているのに、左の列なしで実行できる",
+    ).toBeDisabled();
+  });
+
+  test("作品情報の見出しに、左の列が何に使われるかが出る", async ({ page }) => {
+    // Arrange - まず整理済みが 1 冊も無い投入。ここは第 3 段階までの画面と
+    // 同じで、余計な言葉を足さない
+    await openPlan(page, "見出しの説明");
+    await addArchive(page, LOOSE_NAME);
+    await waitForBooks(page, 1);
+
+    // Assert - 整理済みの行が 1 つも無いなら、説明そのものを出さない。
+    // 常に出す実装では、一度も整理していない利用者に無用の但し書きが増える
+    await expect(
+      page.locator('[data-testid="plan-row"][data-organized="true"]'),
+      "整理済みの行が混ざっている",
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId("organize-name-hint"),
+      "整理済みが 1 冊も無いのに説明が出ている",
+    ).toHaveCount(0);
+
+    // Act - 整理済みと未整理が混ざった蔵書を足す
+    await addLibraryFolder(page);
+    await waitForBooks(page, BOOK_COUNT + 1);
+
+    // Assert - 左の列は「残した本のうち、自分の名前を持たないもの」に使われる。
+    // 整理済みのぶんを数に入れる実装はここで落ちる
+    await expect(
+      page.getByTestId("organize-name-hint"),
+      "左の列が何冊に使われるのかが読めない",
+    ).toHaveText(`整理済みでない ${DEFAULT_KEPT + 1} 冊の名前に使います`);
+  });
+
+  test("作る本が全部整理済みなら、作品情報は今は使わないと出る", async ({
+    page,
+  }) => {
+    // Arrange - 整理済みだけの蔵書。既定は全部オフ
+    await prepareOrganizedOnly(page, "見出しの今は使いません");
+    const hint = page.getByTestId("organize-name-hint");
+
+    // Assert - 作る本が無い。左の列を打っても何も起きないことを先に伝える
+    await expect(hint, "作る本が無いことが見出しから読めない").toHaveText(
+      "今は使いません · 作る本がありません",
+    );
+
+    // Act - 全部を入れ直す
+    await keepEverything(page);
+
+    // Assert - 残した本は全部自分の名前を持つ。同じ「今は使いません」でも
+    // 理由が違うので、後ろに続く言葉を変える。1 種類しか出さない実装は
+    // どちらか片方で落ちる
+    await expect(hint, "使わない理由が読み分けられない").toHaveText(
+      "今は使いません · 残した本は整理済み",
+    );
   });
 });
