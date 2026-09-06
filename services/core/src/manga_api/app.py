@@ -36,10 +36,13 @@ from manga_api.job_views import (
     to_view,
 )
 from manga_api.jobs import JobNotFound, JobStore
+from manga_api.library_import import import_into_library
 from manga_api.library_views import (
     AuthorCandidate,
     LibraryEntries,
     LibraryEntry,
+    LibraryImportRequest,
+    LibraryImportResult,
     Suggestion,
     SuggestRequest,
 )
@@ -430,6 +433,25 @@ def create_app(
         finally:
             database.close()
         return entry
+
+    @app.post(
+        "/api/library/import",
+        dependencies=guarded,
+        response_model=LibraryImportResult,
+    )
+    def import_entries(request: LibraryImportRequest) -> LibraryImportResult:
+        """整理済みの蔵書から拾った対を、まとめて辞書へ取り込む（#73 段階 6）。
+
+        1 件ずつの記録と違い、辞書に無い作品名だけを足す。既にある著者は
+        著者が違っても上書きしない。この表は以降のすべての整理で著者欄を
+        埋めるので、利用者が手で直した著者を潰すと直した覚えが黙って消える。
+        断ったものは食い違いとして返し、画面から見えるようにする。
+        """
+        database = open_database()
+        try:
+            return import_into_library(database, request.entries)
+        finally:
+            database.close()
 
     @app.delete("/api/library/entries", dependencies=guarded)
     def delete_entry(title: str) -> dict[str, bool]:

@@ -1,6 +1,10 @@
 import { BookMarked, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { sidecarReason, type SidecarClient } from "../api/client";
+import {
+  sidecarReason,
+  type LibraryImportResult,
+  type SidecarClient,
+} from "../api/client";
 import {
   buildPlanRows,
   droppedBookCount,
@@ -41,6 +45,11 @@ import { Input } from "./ui/input";
 import { SectionTitle } from "./ui/section-title";
 
 type Entry = { title: string; author: string };
+
+/** 対を突き合わせるための鍵。作品名と著者の両方が同じものを 1 つと見る */
+function pairKey(entry: Entry): string {
+  return JSON.stringify([entry.title, entry.author]);
+}
 
 /** 検索で見つかった作品と著者。近い順に並ぶ */
 type Candidate = {
@@ -233,6 +242,10 @@ export function OrganizePanel({
 }: OrganizePanelProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // 辞書から返事をもらった作品名。もう一度は勧めない。断られた対は辞書に
+  // 入らないままなので、これが無いと「押しても何も起きない操作」が画面に
+  // 残り続ける
+  const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set());
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [authorSource, setAuthorSource] = useState<AuthorSource>("");
@@ -478,6 +491,63 @@ export function OrganizePanel({
   // 整理済みの行が 1 つも無いなら、整理済みにまつわる但し書きは出さない。
   // 一度も整理していない利用者に無用の説明を増やさない
   const hasOrganized = rows.some((row) => row.organized);
+
+  /**
+   * 整理済みの本が名前に持っている、作品名と著者の対（#73 段階 6）。
+   *
+   * チェックの状態は見ない。整理済みの行は既定でオフなので、選んだ行から
+   * 数えると常に 0 件になり、取り込みの操作が出ることが無くなる。
+   *
+   * 同じ対で 1 つにまとめる。整理済みの本は 1 冊 1 ファイルなので、5 巻ある
+   * 作品は同じ対を 5 回出してくる。冊数で数えると、押す前の件数が利用者の
+   * 目に見える作品の数と合わない。
+   */
+  const shelfPairs = useMemo(() => {
+    const found = new Map<string, Entry>();
+    for (const row of rows) {
+      if (row.kind !== "book" || !row.organized) continue;
+      if (!row.title || !row.author) continue;
+      const pair = { title: row.title, author: row.author };
+      found.set(pairKey(pair), pair);
+    }
+    return [...found.values()];
+  }, [rows]);
+
+  /**
+   * まだ辞書に入れられる対。
+   *
+   * 辞書が既にその対で覚えているものと、この画面で一度返事をもらった作品名を
+   * 除く。返事をもらった分まで残すと、辞書が受け付けなかった対（著者が
+   * 食い違うもの）を押し続けられる操作として画面に残してしまう。
+   *
+   * ここで辞書を引き直して整理済みかどうかを決め直すことはしない。流れるのは
+   * 判定 → 辞書の一方向だけ。逆に辞書を判定へ流すと、PC ごとに違う可変の状態で
+   * 同じ蔵書の判定が変わる。
+   */
+  const importable = useMemo(() => {
+    const known = new Set(entries.map(pairKey));
+    return shelfPairs.filter(
+      (pair) => !known.has(pairKey(pair)) && !answered.has(pair.title),
+    );
+  }, [shelfPairs, entries, answered]);
+
+  /**
+   * 取り込みの返事を受け取る。
+   *
+   * 返事のあった作品名を控えてから辞書を読み直す。控えないと、著者が食い違って
+   * 入らなかった対が「まだ辞書に無い対」として数え直され、何度でも勧めることに
+   * なる。
+   */
+  const rememberImported = (result: LibraryImportResult) => {
+    setAnswered((current) => {
+      const next = new Set(current);
+      for (const item of result.imported) next.add(item.title);
+      for (const item of result.unchanged) next.add(item.title);
+      for (const item of result.conflicts) next.add(item.title);
+      return next;
+    });
+    loadEntries();
+  };
 
   /**
    * 実行に足りていないもの。
@@ -920,7 +990,11 @@ export function OrganizePanel({
               </Button>
             </DialogClose>
           </div>
-          <LibraryEditor client={client} />
+          <LibraryEditor
+            client={client}
+            importable={importable}
+            onImported={rememberImported}
+          />
         </DialogContent>
       </Dialog>
     </div>
