@@ -3,7 +3,7 @@ import {
   spawn,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,12 +30,32 @@ export type Sidecar = {
   baseUrl: string;
   token: string;
   workDir: string;
+  /** 読み書きを許可した場所。既定では workDir と同じ */
+  allowedRoot: string;
   stop: () => void;
 };
 
+export type SidecarOptions = {
+  /**
+   * 許可する場所を、作業ディレクトリの下のこのフォルダだけに狭める。
+   *
+   * 実機のシェルはホームだけを許可して起動する（src-tauri/src/lib.rs）ので、
+   * 2 台目のドライブや NAS は必ず許可の外に来る。その状況を作りたいテストは、
+   * 作業ディレクトリの一部だけを許可させ、残りを「外」として使う。
+   * 省くと今までどおり作業ディレクトリ全体を許可する。
+   */
+  allowedSubdirectory?: string;
+};
+
 /** 実際のサイドカーを子プロセスとして起動し、接続情報を返す */
-export async function startSidecar(): Promise<Sidecar> {
+export async function startSidecar(
+  options: SidecarOptions = {},
+): Promise<Sidecar> {
   const workDir = mkdtempSync(join(tmpdir(), "manga-e2e-"));
+  const allowedRoot = options.allowedSubdirectory
+    ? join(workDir, options.allowedSubdirectory)
+    : workDir;
+  if (allowedRoot !== workDir) mkdirSync(allowedRoot, { recursive: true });
   const child: ChildProcessWithoutNullStreams = spawn(
     "uv",
     [
@@ -46,7 +66,7 @@ export async function startSidecar(): Promise<Sidecar> {
       "--state-dir",
       join(workDir, "state"),
       "--allow-root",
-      workDir,
+      allowedRoot,
       ...ALLOWED_ORIGINS.flatMap((origin) => ["--allow-origin", origin]),
       "--log-level",
       "warning",
@@ -87,6 +107,7 @@ export async function startSidecar(): Promise<Sidecar> {
     baseUrl: `http://${info.host}:${info.port}`,
     token: info.token,
     workDir,
+    allowedRoot,
     stop: () => child.kill(),
   };
 }

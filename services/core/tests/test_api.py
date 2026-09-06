@@ -56,13 +56,6 @@ PATH_NAME_HINTS = (
 # 中から探すための手がかりなので、これ自体が外を指すことはない
 NOT_A_FILESYSTEM_PATH = frozenset({("POST", "/api/resolve", "files")})
 
-# 出力先は refuse_outside を通っていない。トークンを持つ呼び出しは許可の
-# 外へ書き出せる。ここでは事実として書き留めるだけにする。直すのはこの
-# 変更の役目ではなく、直したらこの集合から guarded_cases() へ移す
-UNGUARDED_PATH_PARAMETERS = frozenset(
-    {("POST", "/api/jobs/organize", "output_directory")}
-)
-
 
 class GuardedCase(NamedTuple):
     """許可の外を断る経路 1 つと、その確かめ方。
@@ -366,6 +359,17 @@ class AllowedRootsTest(ApiTestBase):
                 "archive_list",
                 202,
             ),
+            # 書き出す側。読む側と同じく、許可の中を指したときだけ通る。
+            # 許可の外へ書き出したい利用者は、その場所を選んだと伝えてから
+            # 投入する（test_output_directory_guard.py）。ここは選ぶ前の姿
+            GuardedCase(
+                "POST",
+                "/api/jobs/organize",
+                "output_directory",
+                body(archives=[str(self.archive)]),
+                "output_directory",
+                202,
+            ),
         ]
 
     def targets(self, shape: str, inside: bool) -> dict:
@@ -376,17 +380,17 @@ class AllowedRootsTest(ApiTestBase):
             return {"path": str(directory)}
         if shape == "archive_list":
             return {"archives": [str(archive)]}
+        if shape == "output_directory":
+            return {"output_directory": str(directory / "出力")}
         return {"archive": str(archive)}
 
     def test_covers_every_route_that_takes_a_path(self):
         """公開しているスキーマ側から数え直し、表の見落としを表に出す"""
         # Act
         discovered = discover_path_parameters(self.app.openapi())
-        classified = (
-            {(case.method, case.path, case.parameter) for case in self.guarded_cases()}
-            | NOT_A_FILESYSTEM_PATH
-            | UNGUARDED_PATH_PARAMETERS
-        )
+        classified = {
+            (case.method, case.path, case.parameter) for case in self.guarded_cases()
+        } | NOT_A_FILESYSTEM_PATH
 
         # Assert
         self.assertEqual(
