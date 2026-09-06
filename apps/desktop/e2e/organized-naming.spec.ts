@@ -338,6 +338,19 @@ test.describe("整理済みの本の名前", () => {
     // Arrange
     const output = await preparePlan(page, "自分のフォルダ");
 
+    // Arrange - 整理済みの本は既定で外れている（#73 段階 4b）。ここで見たいのは
+    // 「作るとしたら、どの名前でどこへ置くか」なので、既定を前提にせず入れ直す。
+    // 入れ直しても左の列ではなく自分の名前のまま作られる、が主張
+    const organized = bookRow(page, library.organized).getByTestId(
+      "plan-check",
+    );
+    if ((await organized.getAttribute("aria-checked")) !== "true")
+      await organized.click();
+    await expect(
+      organized,
+      "整理済みの本を入れた状態にできない",
+    ).toHaveAttribute("aria-checked", "true");
+
     // Act
     await page.getByTestId("confirm").click();
     await expect(page.getByTestId("organize-status")).toContainText(
