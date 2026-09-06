@@ -1,5 +1,10 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { derivedRecordsOf, pageEntriesOf, pageSizesOf, runPython } from "./archive";
+import {
+  derivedRecordsOf,
+  pageEntriesOf,
+  pageSizesOf,
+  runPython,
+} from "./archive";
 import { startSidecar, type Sidecar } from "./sidecar";
 
 /**
@@ -330,7 +335,10 @@ test.describe("ページ分割: 見捨てた走査", () => {
     await page.route("**/api/jobs/**", async (route: Route) => {
       const request = route.request();
       const path = new URL(request.url()).pathname;
-      if (request.method() === "POST" && path.endsWith("/api/jobs/split-scan")) {
+      if (
+        request.method() === "POST" &&
+        path.endsWith("/api/jobs/split-scan")
+      ) {
         // 番号は画面より先に控える。控える前に状態取得が始まると、
         // 握るつもりの往復を取り逃がす
         const response = await route.fetch();
@@ -394,10 +402,9 @@ test.describe("ページ分割: 見捨てた走査", () => {
     // Assert - 止めたのは見捨てた方で、いま見ている本の走査は走ったまま。
     // 上の検証が 3 本目の後片付けで満たされていないことを確かめる
     expect(scans[2]).not.toBe(scans[1]);
-    expect(
-      posted,
-      "いま見ている本の走査まで止めている",
-    ).not.toContain(`/api/jobs/${scans[2]}/cancel`);
+    expect(posted, "いま見ている本の走査まで止めている").not.toContain(
+      `/api/jobs/${scans[2]}/cancel`,
+    );
 
     gate.release();
     await page.unrouteAll({ behavior: "ignoreErrors" });

@@ -93,7 +93,8 @@ async function paintedColoursOf(page: Page): Promise<string[]> {
  * 一度読んで決め付けると、正しい実装を「まだ届いていない」瞬間で落とす。
  */
 async function expectPainted(page: Page, expected: string[], message: string) {
-  await expect.poll(() => paintedColoursOf(page), { message, timeout: 20_000 })
+  await expect
+    .poll(() => paintedColoursOf(page), { message, timeout: 20_000 })
     .toEqual(expected);
 }
 
@@ -227,7 +228,9 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
     await expect(page.getByTestId("status")).toContainText(SAVED_MESSAGE, {
       timeout: 30_000,
     });
-    await expect(page.getByTestId("dirty-state")).toHaveText("変更はありません");
+    await expect(page.getByTestId("dirty-state")).toHaveText(
+      "変更はありません",
+    );
 
     // 制御 - 本の側では、同じ名前が別の絵を指すようになっている。
     // 名前ごと変わる並べ替えや、中身が動かない並べ替えを選んでしまうと、
@@ -281,7 +284,9 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
       await route.fulfill({
         status: 503,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "ページ一覧を読めませんでした（検証）" }),
+        body: JSON.stringify({
+          detail: "ページ一覧を読めませんでした（検証）",
+        }),
       });
     });
     page.on("request", (request) => {
@@ -356,9 +361,8 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
       posted.filter((path) => path.endsWith("/api/jobs/reorder")),
       "書き込む前の並びで 2 度目の保存が投入されている",
     ).toHaveLength(1);
-    expect(
-      coloursOf(archive),
-      "2 度目の書き込みが本へ届いている",
-    ).toEqual(written);
+    expect(coloursOf(archive), "2 度目の書き込みが本へ届いている").toEqual(
+      written,
+    );
   });
 });

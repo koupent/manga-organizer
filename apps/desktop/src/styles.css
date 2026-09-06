@@ -4,9 +4,9 @@
    中身（漫画のページ）が主役なので UI は後ろへ下がる。 */
 @theme {
   --color-canvas: oklch(0.16 0.012 265);
-  --color-surface: oklch(0.20 0.013 265);
+  --color-surface: oklch(0.2 0.013 265);
   --color-surface-2: oklch(0.24 0.014 265);
-  --color-line: oklch(0.30 0.014 265);
+  --color-line: oklch(0.3 0.014 265);
   --color-line-strong: oklch(0.38 0.016 265);
 
   --color-ink: oklch(0.94 0.006 265);
@@ -37,7 +37,8 @@
   body {
     background: var(--color-canvas);
     color: var(--color-ink);
-    font-family: "Segoe UI", "Yu Gothic UI", "Hiragino Sans", system-ui, sans-serif;
+    font-family:
+      "Segoe UI", "Yu Gothic UI", "Hiragino Sans", system-ui, sans-serif;
     font-size: 13px;
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;

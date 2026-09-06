@@ -155,7 +155,8 @@ test.describe("出力先の守り", () => {
     // Assert - 投入したその場で断る。ジョブにして後から失敗させると、
     // 画面は投入できたと思ったまま書き込みだけが済んでしまう
     expect(response.status()).toBe(400);
-    const detail = ((await response.json()) as { detail?: string }).detail ?? "";
+    const detail =
+      ((await response.json()) as { detail?: string }).detail ?? "";
     expect(detail).not.toEqual("");
 
     // Assert - 1 バイトも書かれていない

@@ -3,9 +3,5 @@
   "identifier": "default",
   "description": "アプリ本体が必要とする権限",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "core:event:default",
-    "dialog:default"
-  ]
+  "permissions": ["core:default", "core:event:default", "dialog:default"]
 }

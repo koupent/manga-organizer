@@ -292,13 +292,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     await openSplit(page, archive, 5);
 
     // Assert - 2 枚目が 2 ページ分になり、3 枚目以降が繰り下がっている
-    expect(await chipsOf(page)).toEqual([
-      "1",
-      `2${RANGE}3`,
-      "4",
-      "5",
-      "6",
-    ]);
+    expect(await chipsOf(page)).toEqual(["1", `2${RANGE}3`, "4", "5", "6"]);
 
     // Act - 誤判定を直すつもりで、2 枚目のチェックを外す
     await toggle(page, 1);
@@ -314,13 +308,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     await toggle(page, 3);
 
     // Assert - 判定に漏れた行でも、入れれば同じように番号が動く
-    expect(await chipsOf(page)).toEqual([
-      "1",
-      "2",
-      "3",
-      `4${RANGE}5`,
-      "6",
-    ]);
+    expect(await chipsOf(page)).toEqual(["1", "2", "3", `4${RANGE}5`, "6"]);
     await expect(page.getByTestId("split-status")).toHaveText(
       "1 枚を 2 ページに分けます（全 6 ページになります）",
     );
