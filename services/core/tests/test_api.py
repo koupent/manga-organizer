@@ -37,7 +37,7 @@ def make_page(color: str = "navy") -> bytes:
 # いま公開している /api/ の経路数。経路を app.routes から数え直すテストが
 # 「1 つも見つからないまま合格」する空振りに落ちないための下限。経路を
 # 増やしたらここも上げる
-PUBLISHED_API_ROUTE_COUNT = 21
+PUBLISHED_API_ROUTE_COUNT = 22
 
 # パスらしい引数を名前で見分ける手がかり。名前で拾う以上、これに当たらない
 # 名前を付けられれば見落とすので、拾いすぎる側に倒してある
@@ -55,6 +55,13 @@ PATH_NAME_HINTS = (
 # ドロップされたファイルの「名前」であってパスではない。許可された場所の
 # 中から探すための手がかりなので、これ自体が外を指すことはない
 NOT_A_FILESYSTEM_PATH = frozenset({("POST", "/api/resolve", "files")})
+
+# 許可の外を「断る」のではなく、利用者が選んだ場所として「受け取る」経路。
+# 書き出す先の許可はここでしか増えないので、外を指したときに 400 を期待する
+# guarded_cases() の表には入れられない（入れると、この経路の存在意義である
+# 「許可の外を選べる」ことを禁じるテストになる）。断る側の確かめは
+# test_output_directory_guard.py が受け持つ
+CHOOSES_A_PATH = frozenset({("POST", "/api/output-roots", "directory")})
 
 
 class GuardedCase(NamedTuple):
@@ -388,9 +395,11 @@ class AllowedRootsTest(ApiTestBase):
         """公開しているスキーマ側から数え直し、表の見落としを表に出す"""
         # Act
         discovered = discover_path_parameters(self.app.openapi())
-        classified = {
-            (case.method, case.path, case.parameter) for case in self.guarded_cases()
-        } | NOT_A_FILESYSTEM_PATH
+        classified = (
+            {(case.method, case.path, case.parameter) for case in self.guarded_cases()}
+            | NOT_A_FILESYSTEM_PATH
+            | CHOOSES_A_PATH
+        )
 
         # Assert
         self.assertEqual(

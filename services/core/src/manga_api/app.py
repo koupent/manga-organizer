@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 from manga_api import thumbnails
 from manga_api.analysis_job import analysis_work
 from manga_api.jobs import Job, JobCancelled, JobNotFound, JobStore
+from manga_api.output_roots import ChosenOutputRoots
 from manga_api.split_job import (
     SplitConfirmRequest,
     SplitScanRequest,
@@ -128,6 +129,22 @@ class OrganizeRequest(BaseModel):
             "与えると、その本だけを作る（空の配列は 1 冊も作らない）"
         ),
     )
+
+
+class OutputRootRequest(BaseModel):
+    """出力先として選んだ場所を伝える依頼"""
+
+    directory: str = Field(description="利用者が選んだ出力先の絶対パス")
+
+
+class OutputRootView(BaseModel):
+    """覚えた出力先。
+
+    辿り直した形で返す。自由入力なので `.../整理後/../整理後` のような書き方も
+    届く。画面が「どこを覚えたか」を確かめられるようにするため。
+    """
+
+    directory: str = Field(description="覚えた出力先（辿り直した絶対パス）")
 
 
 class BrowseEntry(BaseModel):
@@ -452,8 +469,9 @@ def create_app(
 ) -> FastAPI:
     """サイドカーのアプリを組み立てる。
 
-    `allowed_roots` を与えると、その配下のアーカイブしか読み書きしない。
-    省略時は制限しないが、それでもトークンは必須。
+    `allowed_roots` を与えると、その配下のアーカイブしか読まない。書き出す先は
+    そこに加えて、この起動で利用者が選んだ場所（`POST /api/output-roots`）も
+    使える。省略時は制限しないが、それでもトークンは必須。
 
     `run_jobs_inline` はジョブをワーカースレッドではなく同期実行する。
     結果を確定させたいテスト用で、通常の起動では使わない。
@@ -464,6 +482,9 @@ def create_app(
     app.state.jobs = JobStore(resolved_state / "jobs.db")
     app.state.thumbnails = thumbnails.ThumbnailCache()
     app.state.allowed_roots = [Path(r).resolve() for r in (allowed_roots or [])]
+    # 書き出す先の覚え。allowed_roots とは別に持つ。ここへ混ぜると、出力先を
+    # 選んだだけでその場所を読む入口まで開いてしまう
+    app.state.chosen_output_roots = ChosenOutputRoots()
     app.state.run_jobs_inline = run_jobs_inline
     app.state.database_path = resolved_state / "manga.db"
 
@@ -545,6 +566,24 @@ def create_app(
                 detail="ファイルが見つかりません",
             )
         return path
+
+    def resolve_output_directory(raw: str) -> Path:
+        """書き出す先を検証して解決する。
+
+        読む側と違い、許可された場所の外も通す。ただし利用者がこの起動で
+        「ここを出力先にする」と選んだ場所（とその配下）に限る。蔵書を別の
+        ドライブや NAS へ整理する道を残しつつ、トークンを握った呼び出しが
+        1 回の依頼だけで好きな場所へ書き出せる状態を無くすため。
+
+        まだ無いフォルダも通す。出力先は整理のときに作られる。
+        """
+        path = Path(raw).resolve()
+        if within_allowed(path) or app.state.chosen_output_roots.allows(path):
+            return path
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="選ばれていない出力先です。出力先を選び直してください",
+        )
 
     def expand_targets(raws: list[str]) -> list[Path]:
         """投入されたパスを、1 冊ずつの入力へ展開する。
@@ -1066,6 +1105,25 @@ def create_app(
         )
         return JobAccepted(id=job_id)
 
+    @app.post("/api/output-roots", dependencies=guarded, response_model=OutputRootView)
+    def choose_output_root(request: OutputRootRequest) -> OutputRootView:
+        """利用者が出力先として選んだ場所を、この起動のあいだ覚える。
+
+        呼ぶのは利用者が出力先を決めた操作からだけ（画面の DirectoryPicker）。
+        整理の投入や起動パラメータから呼ぶと、依頼が自分の許可を連れてくる形に
+        戻り、守りが素通しになる。
+        """
+        directory = Path(request.directory)
+        if not directory.is_absolute():
+            # 相対パスはサイドカーの作業ディレクトリを指してしまう。利用者が
+            # 思っている場所ではないので、覚える前に断る
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="出力先は絶対パスで指定してください",
+            )
+        remembered = app.state.chosen_output_roots.remember(directory)
+        return OutputRootView(directory=str(remembered))
+
     @app.post(
         "/api/jobs/organize",
         dependencies=guarded,
@@ -1077,7 +1135,11 @@ def create_app(
 
         フォルダを渡されたら、ここで中身を 1 冊ずつへ展開する。フォルダを
         1 件のまま走らせると、進捗の総数が 1 のまま複数冊が出来上がる。
+
+        書き出す先は、ジョブにする前に確かめる。ジョブにして後から失敗させると、
+        画面は投入できたと思ったまま、断る理由だけが後から届く（#58 と同じ）。
         """
+        output_directory = resolve_output_directory(request.output_directory)
         archives = expand_targets(request.archives)
         # 選んだ本が与えられていれば、その本を含まないアーカイブごと外す。
         # 進捗の総数もここで決まるので、外したぶんは最初から数に入らない
@@ -1088,7 +1150,7 @@ def create_app(
             "organize",
             {
                 "archives": [str(a) for a in archives],
-                "output_directory": request.output_directory,
+                "output_directory": str(output_directory),
                 "title": request.title,
                 "author": request.author,
             },
@@ -1099,7 +1161,9 @@ def create_app(
             from manga_core.file_organizer import FileOrganizer
 
             organizer = FileOrganizer(
-                output_directory=Path(request.output_directory),
+                # 確かめたパスをそのまま渡す。文字列から組み直すと、確かめた
+                # 場所と書き出す場所が別々に決まることになる
+                output_directory=output_directory,
                 keep_originals=request.keep_originals,
                 log_callback=lambda message: report(message=message),
             )

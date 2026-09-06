@@ -1,5 +1,5 @@
 import { ChevronUp, Folder, FolderOpen } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import { Button } from "./ui/button";
 import { CardHeader } from "./ui/card";
@@ -12,6 +12,14 @@ import {
 import { Input } from "./ui/input";
 
 type Entry = { name: string; path: string; is_directory: boolean };
+
+/**
+ * 打ち終わったとみなすまでの待ち時間。
+ *
+ * 打つそばから覚えさせると、`D:\manga` を打つ途中の `D:\` まで出力先として
+ * 覚え、ドライブ丸ごとが書き出してよい場所になってしまう。
+ */
+const TYPING_SETTLED_MS = 500;
 
 /** 出力先の指定。直接入力しても、辿って選んでもよい */
 export function DirectoryPicker({
@@ -32,6 +40,34 @@ export function DirectoryPicker({
     parent: null,
   });
   const [entries, setEntries] = useState<Entry[]>([]);
+
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * 選んだ場所をサイドカーへ伝える。
+   *
+   * サイドカーは覚えのある場所へしか書き出さない。伝えるのはこの「利用者が
+   * 出力先を決めた」操作の中だけで、実行のときにまとめて伝えることはしない。
+   * 実行時に伝えると、整理の依頼が自分の許可を連れてくる形になり、覚えが
+   * 何も守らなくなる。
+   */
+  const remember = useCallback(
+    (path: string) => {
+      if (!path.trim()) return;
+      // 覚えられなかったことはここでは知らせない。実行したときにサイドカーが
+      // 理由付きで断り、その文言が実行の状態欄に出る
+      client.chooseOutputRoot(path).catch(() => undefined);
+    },
+    [client],
+  );
+
+  // 打っている途中で画面を離れたときに、遅れて覚えさせない
+  useEffect(
+    () => () => {
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+    },
+    [],
+  );
 
   // 描画のたびに作り直すと、これを切っ掛けにする効果が毎回走る。
   // client は接続できたときに一度作るきりなので、ここで留めておく
@@ -65,7 +101,15 @@ export function DirectoryPicker({
             data-testid="output-directory"
             placeholder="/path/to/整理後"
             value={value}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => {
+              const path = event.target.value;
+              onChange(path);
+              if (typingTimer.current) clearTimeout(typingTimer.current);
+              typingTimer.current = setTimeout(
+                () => remember(path),
+                TYPING_SETTLED_MS,
+              );
+            }}
           />
         </label>
         <Button
@@ -109,6 +153,8 @@ export function DirectoryPicker({
               disabled={!location.path}
               onClick={() => {
                 onChange(location.path);
+                // 押した時点で決まりきっているので、待たずに伝える
+                remember(location.path);
                 setOpen(false);
               }}
             >

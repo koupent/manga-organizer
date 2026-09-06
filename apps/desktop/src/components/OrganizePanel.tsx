@@ -1,6 +1,6 @@
 import { BookMarked, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SidecarClient } from "../api/client";
+import { sidecarReason, type SidecarClient } from "../api/client";
 import {
   buildPlanRows,
   droppedBookCount,
@@ -573,7 +573,9 @@ export function OrganizePanel({
     } catch (error) {
       // 画面が消えたことによる打ち切りは、利用者に見せる失敗ではない
       if (isGone()) return;
-      setStatus(error instanceof Error ? error.message : String(error));
+      // 断られた理由だけを出す。投入が断られることは実際にある（出力先を
+      // 選び直す前など）ので、そのまま出すと利用者は理由を JSON の殻ごと読む
+      setStatus(sidecarReason(error));
       jobId.current = null;
       setRunning(false);
     }

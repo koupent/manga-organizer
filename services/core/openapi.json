@@ -1069,10 +1069,63 @@
         }
       }
     },
+    "/api/output-roots": {
+      "post": {
+        "summary": "Choose Output Root",
+        "description": "利用者が出力先として選んだ場所を、この起動のあいだ覚える。\n\n呼ぶのは利用者が出力先を決めた操作からだけ（画面の DirectoryPicker）。\n整理の投入や起動パラメータから呼ぶと、依頼が自分の許可を連れてくる形に\n戻り、守りが素通しになる。",
+        "operationId": "choose_output_root_api_output_roots_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutputRootRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutputRootView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/organize": {
       "post": {
         "summary": "Submit Organize",
-        "description": "アーカイブの整理をジョブとして投入する。\n\nフォルダを渡されたら、ここで中身を 1 冊ずつへ展開する。フォルダを\n1 件のまま走らせると、進捗の総数が 1 のまま複数冊が出来上がる。",
+        "description": "アーカイブの整理をジョブとして投入する。\n\nフォルダを渡されたら、ここで中身を 1 冊ずつへ展開する。フォルダを\n1 件のまま走らせると、進捗の総数が 1 のまま複数冊が出来上がる。\n\n書き出す先は、ジョブにする前に確かめる。ジョブにして後から失敗させると、\n画面は投入できたと思ったまま、断る理由だけが後から届く（#58 と同じ）。",
         "operationId": "submit_organize_api_jobs_organize_post",
         "parameters": [
           {
@@ -1753,6 +1806,36 @@
         ],
         "title": "OriginalView",
         "description": "いま見ている 1 枚の、加工前の姿。\n\nZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた\nmanifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。\n画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。"
+      },
+      "OutputRootRequest": {
+        "properties": {
+          "directory": {
+            "type": "string",
+            "title": "Directory",
+            "description": "利用者が選んだ出力先の絶対パス"
+          }
+        },
+        "type": "object",
+        "required": [
+          "directory"
+        ],
+        "title": "OutputRootRequest",
+        "description": "出力先として選んだ場所を伝える依頼"
+      },
+      "OutputRootView": {
+        "properties": {
+          "directory": {
+            "type": "string",
+            "title": "Directory",
+            "description": "覚えた出力先（辿り直した絶対パス）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "directory"
+        ],
+        "title": "OutputRootView",
+        "description": "覚えた出力先。\n\n辿り直した形で返す。自由入力なので `.../整理後/../整理後` のような書き方も\n届く。画面が「どこを覚えたか」を確かめられるようにするため。"
       },
       "PageList": {
         "properties": {

@@ -27,6 +27,8 @@ type OrganizeRequest =
   paths["/api/jobs/organize"]["post"]["requestBody"]["content"]["application/json"];
 type CoverRequest =
   paths["/api/jobs/cover"]["post"]["requestBody"]["content"]["application/json"];
+type OutputRoot =
+  paths["/api/output-roots"]["post"]["responses"][200]["content"]["application/json"];
 type LibraryEntries =
   paths["/api/library/entries"]["get"]["responses"][200]["content"]["application/json"];
 type Suggestion =
@@ -196,6 +198,17 @@ export class SidecarClient {
 
   editCover(request: CoverRequest): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/cover", request);
+  }
+
+  /**
+   * 出力先として選んだ場所を、サイドカーに覚えさせる。
+   *
+   * サイドカーは覚えのある場所へしか書き出さない。覚えはサイドカーが動いて
+   * いる間だけで、起動し直したら選び直しになる。呼ぶのは利用者が出力先を
+   * 決めた操作の中だけ（DirectoryPicker）。
+   */
+  chooseOutputRoot(directory: string): Promise<OutputRoot> {
+    return this.post<OutputRoot>("/api/output-roots", { directory });
   }
 
   organize(request: OrganizeRequest): Promise<JobAccepted> {
