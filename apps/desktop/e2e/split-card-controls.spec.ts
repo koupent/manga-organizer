@@ -223,10 +223,9 @@ test.describe("ページ分割: 拡大表示のまま前後へ移る", () => {
 
     // Assert - 移る先は本の前にある見開き。何も起きない実装だと、
     // 利用者は拡大表示を閉じて自分で探し直すことになる
-    await expect(
-      dialogTitle(page),
-      "← で前の見開きへ移れていない",
-    ).toHaveText(`2${RANGE}3 ページ`);
+    await expect(dialogTitle(page), "← で前の見開きへ移れていない").toHaveText(
+      `2${RANGE}3 ページ`,
+    );
     await expect(page.getByTestId("split-dialog-handle")).toHaveAttribute(
       "aria-valuenow",
       String(WIDE_CENTER),

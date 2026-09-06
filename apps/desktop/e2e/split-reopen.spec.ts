@@ -1,4 +1,10 @@
-import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Browser,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import {
   derivedRecordsOf,
   pageEntriesOf,
@@ -169,7 +175,10 @@ async function readableStringsOf(card: Locator): Promise<string[]> {
     const found: string[] = [];
     for (const node of [root, ...root.querySelectorAll("*")]) {
       for (const attribute of Array.from(node.attributes)) {
-        if (!named.includes(attribute.name) && !attribute.name.startsWith("data-")) {
+        if (
+          !named.includes(attribute.name) &&
+          !attribute.name.startsWith("data-")
+        ) {
           continue;
         }
         found.push(`${attribute.name}=${attribute.value}`);
@@ -305,10 +314,14 @@ test.describe("ページ分割: 割った本を開き直す", () => {
       for (const value of readable) {
         for (const name of entries) {
           const stem = name.replace(/\.[^.]+$/, "");
-          expect(value, `${index} 番目のカードの ${value} に ${name} が入っている`)
-            .not.toContain(name);
-          expect(value, `${index} 番目のカードの ${value} に ${stem} が入っている`)
-            .not.toContain(stem);
+          expect(
+            value,
+            `${index} 番目のカードの ${value} に ${name} が入っている`,
+          ).not.toContain(name);
+          expect(
+            value,
+            `${index} 番目のカードの ${value} に ${stem} が入っている`,
+          ).not.toContain(stem);
         }
       }
     }

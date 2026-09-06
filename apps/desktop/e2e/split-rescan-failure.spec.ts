@@ -194,7 +194,9 @@ test.describe("ページ分割: 書き込んだ後の走査が失敗したとき
         await route.fulfill({
           status: 503,
           contentType: "application/json",
-          body: JSON.stringify({ detail: "見開きを調べられませんでした（検証）" }),
+          body: JSON.stringify({
+            detail: "見開きを調べられませんでした（検証）",
+          }),
         });
         return;
       }

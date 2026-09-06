@@ -177,7 +177,8 @@ test.describe("ページ分割: 分割線の読み上げ名", () => {
         `${label} ページのつまみを、読み上げの一覧で選び出せない`,
       ).toHaveCount(1);
       names.push(
-        (await handle.evaluate((node) => node.getAttribute("aria-label"))) ?? "",
+        (await handle.evaluate((node) => node.getAttribute("aria-label"))) ??
+          "",
       );
     }
 

@@ -227,7 +227,11 @@ export class SidecarClient {
    * ようにするため。画面に出す名前は巻数から組み立て直すので、入力欄を
    * 変えるたびにここを呼び直すことはしない。
    */
-  analyze(archives: string[], title: string, author: string): Promise<JobAccepted> {
+  analyze(
+    archives: string[],
+    title: string,
+    author: string,
+  ): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/analyze", {
       archives,
       title,
