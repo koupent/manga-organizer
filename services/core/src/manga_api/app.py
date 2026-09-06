@@ -46,7 +46,7 @@ from manga_api.library_views import (
 from manga_api.organize_job import (
     OrganizeRequest,
     organize_work,
-    wanted_entries,
+    wanted_books,
 )
 from manga_api.output_roots import ChosenOutputRoots
 from manga_api.paths import PathGuard
@@ -746,7 +746,7 @@ def create_app(
         archives = path_guard.expand_targets(request.archives)
         # 選んだ本が与えられていれば、その本を含まないアーカイブごと外す。
         # 進捗の総数もここで決まるので、外したぶんは最初から数に入らない
-        wanted = wanted_entries(request.books)
+        wanted = wanted_books(request.books)
         if wanted is not None:
             archives = [archive for archive in archives if archive.resolve() in wanted]
         job_id = app.state.jobs.submit(
