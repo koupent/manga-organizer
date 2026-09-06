@@ -8,7 +8,6 @@ Tauri シェル（#22）が子プロセスとして起動し、127.0.0.1 での�
 import io
 import logging
 import secrets
-import threading
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -25,7 +24,8 @@ from manga_api.http_images import (
     image_response,
     media_type_of,
 )
-from manga_api.jobs import Job, JobCancelled, JobNotFound, JobStore
+from manga_api.job_runner import start_job
+from manga_api.jobs import Job, JobNotFound, JobStore
 from manga_api.output_roots import ChosenOutputRoots
 from manga_api.paths import PathGuard
 from manga_api.split_job import (
@@ -825,7 +825,7 @@ def create_app(
                 "renamed": result.renamed,
             }
 
-        _start(app, job_id, work)
+        start_job(app, job_id, work)
         return JobAccepted(id=job_id)
 
     @app.get("/api/jobs", dependencies=guarded, response_model=JobList)
@@ -886,7 +886,7 @@ def create_app(
                 "timesRestored": result.times_restored,
             }
 
-        _start(app, job_id, work)
+        start_job(app, job_id, work)
         return JobAccepted(id=job_id)
 
     @app.post(
@@ -907,7 +907,7 @@ def create_app(
         path = editor.zip_path
         editor.close()
         job_id = app.state.jobs.submit("split-scan", {"archive": str(path)})
-        _start(app, job_id, scan_work(path))
+        start_job(app, job_id, scan_work(path))
         return JobAccepted(id=job_id)
 
     @app.post(
@@ -936,7 +936,7 @@ def create_app(
         job_id = app.state.jobs.submit(
             "split", {"archive": str(path), "rows": len(rows)}
         )
-        _start(app, job_id, confirm_work(path, rows, app.state.thumbnails))
+        start_job(app, job_id, confirm_work(path, rows, app.state.thumbnails))
         return JobAccepted(id=job_id)
 
     @app.post(
@@ -969,7 +969,7 @@ def create_app(
                 "author": request.author,
             },
         )
-        _start(
+        start_job(
             app,
             job_id,
             analysis_work(
@@ -1065,7 +1065,7 @@ def create_app(
             # 「失敗を数えていない」のかを区別できない
             return {"produced": produced, "failed": failed}
 
-        _start(app, job_id, work)
+        start_job(app, job_id, work)
         return JobAccepted(id=job_id)
 
     return app
@@ -1109,27 +1109,3 @@ def _skipped_locations(
     return frozenset(
         location.extracted_path for location in located if location.entry not in chosen
     )
-
-
-def _start(app: FastAPI, job_id: str, work) -> None:
-    """ジョブを動かす。通常はワーカースレッド、テストでは同期実行する"""
-    if app.state.run_jobs_inline:
-        _run_quietly(app, job_id, work)
-        return
-    thread = threading.Thread(
-        target=_run_quietly, args=(app, job_id, work), name=f"job-{job_id}", daemon=True
-    )
-    thread.start()
-
-
-def _run_quietly(app: FastAPI, job_id: str, work) -> None:
-    """ワーカースレッドの例外でプロセスを落とさない"""
-    try:
-        app.state.jobs.run(job_id, work)
-    except JobCancelled:
-        # 打ち切りは失敗ではない。解析は投入を編集するたびに走り直して前のものを
-        # 止めるので、これを失敗として書き残すと、利用者は編集しただけで
-        # 「ジョブが失敗しました」の山を見ることになる
-        logger.debug("ジョブが打ち切られました: %s", job_id)
-    except Exception:  # noqa: BLE001 - 状態は JobStore が記録済み
-        logger.exception("ジョブが失敗しました: %s", job_id)
