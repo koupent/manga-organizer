@@ -21,6 +21,7 @@ from manga_api import thumbnails
 from manga_api.analysis_job import AnalyzeRequest, analysis_work
 from manga_api.cover_job import CoverRequest, cover_work
 from manga_api.cover_views import CoverView, describe_original
+from manga_api.drop_scan import walk_shallow_first
 from manga_api.http_images import (
     THUMBNAIL_MEDIA_TYPE,
     image_response,
@@ -223,6 +224,13 @@ def create_app(
         MangaDatabase は接続を保持するが check_same_thread を既定のままに
         しているため、スレッドをまたいで使えない。単一スレッドの Tkinter
         では問題にならなかったが、ここでは要求ごとに開いて閉じる。
+
+        開いた経路が ``finally`` で必ず閉じること。終了処理（``__del__``）は
+        当てにしない。参照が例外の履歴などに掴まれれば走らず、別スレッドで
+        走れば sqlite3 が「SQLite objects created in a thread can only be used
+        in that same thread」を投げる。``__del__`` の中の例外は握り潰される
+        ので、閉じ損ねたことは誰にも見えないまま接続がプロセスの終わりまで
+        残り、Windows では辞書ファイルが掴まれたままになる（#90）。
         """
         return MangaDatabase(app.state.database_path)
 
@@ -303,14 +311,16 @@ def create_app(
         roots = app.state.allowed_roots or [Path.home()]
         wanted = {file.name for file in request.files}
 
-        # 走査は 1 回で済ませる。巻数が多いと候補も増える
+        # 走査は浅いところから、要求ごとの上限まで（``drop_scan``）。上限に
+        # 阻まれて届かなかったものは、見つからなかったものと同じ扱いになる
+        # （docstring に書くと openapi.json の description が動くのでここに）。
+        # 走査は 1 回で済ませる。巻数が多いと候補も増える。見つけても打ち切ら
+        # ない。同名が他にもあることを知らないまま 1 件目を選ぶと、絞りきれ
+        # ない（ambiguous）はずのものを勝手に決めてしまう
         candidates: dict[str, list[Path]] = {name: [] for name in wanted}
-        for root in roots:
-            if not root.is_dir():
-                continue
-            for found in root.rglob("*"):
-                if found.name in candidates and found.is_file():
-                    candidates[found.name].append(found)
+        for found in walk_shallow_first(roots):
+            if found.name in candidates and found.is_file():
+                candidates[found.name].append(found)
 
         resolved: list[str] = []
         unresolved: list[str] = []
@@ -393,11 +403,14 @@ def create_app(
     def list_entries(query: str = "") -> LibraryEntries:
         """タイトルと著者の辞書。query を与えると絞り込む"""
         database = open_database()
-        pairs = (
-            database.search_titles(query, limit=50)
-            if query
-            else database.get_recent_manga(limit=200)
-        )
+        try:
+            pairs = (
+                database.search_titles(query, limit=50)
+                if query
+                else database.get_recent_manga(limit=200)
+            )
+        finally:
+            database.close()
         return LibraryEntries(
             entries=[
                 LibraryEntry(title=title, author=author) for title, author in pairs
