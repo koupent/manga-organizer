@@ -2,7 +2,9 @@ import {
   BookMarked,
   CircleCheck,
   Folder,
+  Image as ImageIcon,
   Info,
+  ListOrdered,
   Package,
   TriangleAlert,
   X,
@@ -16,6 +18,7 @@ import {
 } from "../lib/plan";
 import { cn } from "../lib/utils";
 import { parentDirectory } from "../path";
+import { SHORTCUT_SIZE, type HandoffMode } from "./ProducedList";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -83,26 +86,55 @@ function reasonTip(reason: string): string {
 /** 1 段ぶんの字下げ。3 階層でも左端の情報量を潰さない幅 */
 const INDENT_PX = 14;
 
+/**
+ * 外した行で薄める側に回る子の装飾（#73 段階 4c）。
+ *
+ * 薄めるのは行（`li`）ではなく中の子。行ごと薄めると、その行が外れている
+ * 理由そのものである整理済みの印まで一緒に薄まり、「なぜチェックが外れて
+ * いるのか」の答えが一番読みにくい所へ置かれてしまう。チェック・整理済みの
+ * 印・近道はこの装飾を持たず、いつでも 100% で読める。
+ *
+ * 行に乗せている間（ホバー・焦点）は全部 100% に戻す。外した行でも、読みたい
+ * ときには読めるようにするため。
+ */
+const DIMMED =
+  "opacity-45 group-hover:opacity-100 group-focus-within:opacity-100";
+
+/**
+ * 行に乗せている間だけ見せる操作（削除ボタンと近道）の見え方。
+ *
+ * 席は常に空けておき、見え方だけを切り替える。乗せてから初めて置くと行の
+ * 中身が押し出され、狙って押せなくなる。Tab で辿り着いたときにも見えないと
+ * 押しどころが分からないので、焦点でも出す。
+ */
+const REVEAL_ON_ROW =
+  "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100";
+
 type PlanListProps = {
   rows: PlanRow[];
   /** 外した葉の鍵。行そのものは消さず、薄く残す */
   excluded: ReadonlySet<string>;
   /** 行に出す名前。作品名と著者から組み立て直したもの */
   names: Map<string, string>;
+  /** 出力先。入れ直した整理済みの行が指す行き先の頭になる */
+  outputDirectory: string;
   /** 実行中は選び直せない。再実行で `_1` が二重に付くのを防ぐ */
   locked: boolean;
   onToggle: (row: PlanRow, keep: boolean) => void;
   /** 放り込んだもの（level 0）を一覧から落とす */
   onRemove: (path: string) => void;
+  /** 整理済みの本を、そのまま次の画面へ読み込ませる */
+  onOpenArchive: (path: string, mode: HandoffMode) => void;
 };
 
 /** 行の見出しに置く絵。何を指している行なのかを字を読まずに掴めるようにする */
-function RowIcon({ kind }: { kind: PlanRow["kind"] }) {
+function RowIcon({ kind, dim }: { kind: PlanRow["kind"]; dim?: string }) {
+  const shared = cn("size-3.5 shrink-0", dim);
   if (kind === "folder")
-    return <Folder className="size-3.5 shrink-0 text-brand/80" />;
+    return <Folder data-dim className={cn(shared, "text-brand/80")} />;
   if (kind === "archive")
-    return <Package className="size-3.5 shrink-0 text-ink-faint" />;
-  return <BookMarked className="size-3.5 shrink-0 text-ink-faint" />;
+    return <Package data-dim className={cn(shared, "text-ink-faint")} />;
+  return <BookMarked data-dim className={cn(shared, "text-ink-faint")} />;
 }
 
 /**
@@ -115,9 +147,11 @@ export function PlanList({
   rows,
   excluded,
   names,
+  outputDirectory,
   locked,
   onToggle,
   onRemove,
+  onOpenArchive,
 }: PlanListProps) {
   return (
     <ul
@@ -130,9 +164,11 @@ export function PlanList({
           row={row}
           state={checkStateOf(row, excluded)}
           name={names.get(row.id) ?? ""}
+          outputDirectory={outputDirectory}
           locked={locked}
           onToggle={onToggle}
           onRemove={onRemove}
+          onOpenArchive={onOpenArchive}
         />
       ))}
     </ul>
@@ -143,21 +179,30 @@ type PlanListRowProps = {
   row: PlanRow;
   state: CheckState;
   name: string;
+  outputDirectory: string;
   locked: boolean;
   onToggle: (row: PlanRow, keep: boolean) => void;
   onRemove: (path: string) => void;
+  onOpenArchive: (path: string, mode: HandoffMode) => void;
 };
 
 function PlanListRow({
   row,
   state,
   name,
+  outputDirectory,
   locked,
   onToggle,
   onRemove,
+  onOpenArchive,
 }: PlanListRowProps) {
   const removable = row.level === 0;
   const off = state === false;
+  const dim = off ? DIMMED : undefined;
+  // 整理済みの本は、既にディスク上に最終形で在る。整理を待たずにそのまま
+  // 開けるので、行から次の作業へ渡せる（作る・作らないとは関わりが無い）
+  const finished = row.kind === "book" && row.organized;
+  const showsDestination = finished && state === true;
 
   /** Delete で、放り込んだものを一覧から落とす */
   const handleKey = (event: KeyboardEvent) => {
@@ -190,8 +235,6 @@ function PlanListRow({
         "group flex items-center gap-2 rounded-control pr-2 py-0.5 outline-none",
         "hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2",
         "focus-visible:ring-brand/40",
-        // 外した行は消さずに薄く残す
-        off && "opacity-45",
       )}
       onKeyDown={handleKey}
     >
@@ -202,18 +245,43 @@ function PlanListRow({
         aria-label={row.kind === "book" ? name : row.path}
         onCheckedChange={() => onToggle(row, state !== true)}
       />
-      <RowIcon kind={row.kind} />
+      <RowIcon kind={row.kind} dim={dim} />
       {/* 名前と場所は一組の情報。名前の幅は中身で決め、余った幅は場所へ渡す */}
-      <span className="min-w-0 truncate text-[12.5px] font-medium">
+      <span
+        data-testid="plan-row-name"
+        data-dim
+        className={cn("min-w-0 truncate text-[12.5px] font-medium", dim)}
+      >
         {row.kind === "book" ? name : basename(row.path)}
       </span>
       <span
-        className="min-w-0 flex-1 truncate text-[11px] text-ink-faint"
+        data-testid="plan-row-path"
+        data-dim
+        className={cn(
+          "min-w-0 flex-1 truncate text-[11px]",
+          // 行き先は元の場所より 1 段濃くする。これから起きることなので、
+          // 済んだ場所より先に読ませたい
+          showsDestination ? "text-ink-muted" : "text-ink-faint",
+          dim,
+        )}
         title={row.kind === "book" ? row.entry : row.path}
       >
-        {row.kind === "book" ? origin(row) : parentDirectory(row.path)}
+        {where(row, showsDestination, outputDirectory)}
       </span>
-      <RowBadges row={row} />
+      <RowBadges row={row} dim={dim} />
+      {/*
+        近道は印の右に置く。左へ割り込ませると整理済みの印が行の中ほどまで
+        押し戻され、その行にすることが無いと一目で読めなくなる。
+      */}
+      {finished ? (
+        <RowShortcuts
+          name={name}
+          // 渡すのは今ディスク上に在るファイル。これから作られる行き先では
+          // まだ開けない
+          source={row.source}
+          onOpen={onOpenArchive}
+        />
+      ) : null}
       {removable ? (
         <Button
           variant="ghost"
@@ -222,8 +290,7 @@ function PlanListRow({
           aria-label="一覧から外す"
           data-testid="plan-remove"
           disabled={locked}
-          // Tab で辿り着いたときに見えないと押しどころが分からない
-          className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+          className={REVEAL_ON_ROW}
           onClick={() => onRemove(row.path)}
         >
           <X />
@@ -240,10 +307,15 @@ function PlanListRow({
  * 読まなくて済むため。今までこの席は警告だけの席で「何かが壊れている」を
  * 意味していたので、緑と CircleCheck で「終わっている」と読み分けさせる。
  */
-function RowBadges({ row }: { row: PlanRow }) {
+function RowBadges({ row, dim }: { row: PlanRow; dim?: string }) {
   const reasonBadge = REASON_BADGES[row.organizedReason];
   return (
     <>
+      {/*
+        整理済みの印だけは薄めない。この印はその行のチェックが外れている理由
+        そのもので、一緒に薄めると「なぜ作られないのか」の答えが一番読みにくい
+        所に置かれることになる。
+      */}
       {row.organized ? (
         <Badge tone="ok" data-testid="plan-row-state" title={ORGANIZED_TIP}>
           <CircleCheck className="size-3" />
@@ -255,6 +327,8 @@ function RowBadges({ row }: { row: PlanRow }) {
           tone="neutral"
           data-testid="plan-row-reason"
           data-reason={row.organizedReason}
+          data-dim
+          className={dim}
           title={reasonTip(row.organizedReason)}
         >
           <Info className="size-3" />
@@ -262,11 +336,59 @@ function RowBadges({ row }: { row: PlanRow }) {
         </Badge>
       ) : null}
       {row.issues.map((issue) => (
-        <Badge key={issue} tone="warn" data-testid="plan-row-issue">
+        <Badge
+          key={issue}
+          tone="warn"
+          data-testid="plan-row-issue"
+          data-dim
+          className={dim}
+        >
           <TriangleAlert className="size-3" />
           {issueLabel(issue)}
         </Badge>
       ))}
+    </>
+  );
+}
+
+/**
+ * 整理済みの行に置く、次の作業への近道。
+ *
+ * 出来たファイルの一覧（`ProducedList`）と同じ顔・同じ受け渡しにする。同じ
+ * ことをする近道が画面ごとに違う顔をしていると、押す前に読み直すことになる。
+ * 各画面は今までどおり単独で使えるのが主で、これは任意の近道でしかない。
+ */
+function RowShortcuts({
+  name,
+  source,
+  onOpen,
+}: {
+  name: string;
+  source: string;
+  onOpen: (path: string, mode: HandoffMode) => void;
+}) {
+  return (
+    <>
+      <Button
+        variant="ghost"
+        className={cn(SHORTCUT_SIZE, REVEAL_ON_ROW)}
+        data-testid="plan-to-thumbnail"
+        title={`${name} のサムネイルを作る`}
+        onClick={() => onOpen(source, "thumbnail")}
+      >
+        <ImageIcon />
+        サムネイル
+      </Button>
+      <Button
+        variant="ghost"
+        className={cn(SHORTCUT_SIZE, REVEAL_ON_ROW)}
+        data-testid="plan-to-reorder"
+        title={`${name} のページを並べ替える`}
+        onClick={() => onOpen(source, "reorder")}
+      >
+        <ListOrdered />
+        ページ
+      </Button>
     </>
   );
 }
@@ -279,4 +401,24 @@ function basename(path: string): string {
 /** 本がどこから出来るか。アーカイブ全体が 1 冊なら位置は無い */
 function origin(row: PlanRow): string {
   return row.entry ? `← ${row.entry}` : "← アーカイブ全体";
+}
+
+/**
+ * 名前の隣に出す場所。行き先を指すときだけ、元ではなく出力先を出す。
+ *
+ * 行き先に変えるのは、整理済みの本を入れ直したときだけ（#73 段階 4c）。
+ * 整理済みの本は元の場所も出来上がる形も同じなので、元を指したままだと
+ * 入れ直したことが行から読めない。逆にまだディスク上に無い本で行き先を
+ * 出すと、既に在るかのように読めてしまう。
+ */
+function where(
+  row: PlanRow,
+  showsDestination: boolean,
+  outputDirectory: string,
+): string {
+  if (row.kind !== "book") return parentDirectory(row.path);
+  if (!showsDestination) return origin(row);
+  // 作品フォルダは本自身の名前で決まる（#73 段階 4a）。左の列の対で組み立てると
+  // 整理済みの本が実際に作られる場所と違うフォルダを指してしまう
+  return `→ ${outputDirectory}/[${row.author}] ${row.title}/`;
 }

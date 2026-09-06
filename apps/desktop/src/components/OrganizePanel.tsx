@@ -877,9 +877,13 @@ export function OrganizePanel({
               rows={rows}
               excluded={off}
               names={names}
+              outputDirectory={outputDirectory}
               locked={running}
               onToggle={toggleRow}
               onRemove={removeSource}
+              // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
+              // 通る。行が渡すのは、いまディスク上に在る元のファイル
+              onOpenArchive={onOpenProduced}
             />
           }
         />

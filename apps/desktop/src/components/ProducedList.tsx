@@ -22,8 +22,12 @@ const LIST_MAX_HEIGHT = "max-h-[120px]";
  * 既定の 28px ではなく、アイコンだけのボタンと同じ 24px に揃える。
  * 行の高さを 30px 以下に保つためと、主操作（32px）や画面の操作（28px）と
  * 高さで張り合わないようにするため。近道は主役ではない。
+ *
+ * 処理対象の一覧（`PlanList`）の整理済みの行も同じ近道を置くので、寸法は
+ * ここを正本として分け合う。片方だけ変わると、同じことをする近道が画面ごとに
+ * 違う大きさで並ぶ。
  */
-const SHORTCUT_SIZE = "h-6 gap-1 px-1.5 text-[11.5px]";
+export const SHORTCUT_SIZE = "h-6 gap-1 px-1.5 text-[11.5px]";
 
 type ProducedListProps = {
   paths: string[];
