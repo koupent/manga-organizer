@@ -54,6 +54,7 @@ import py7zr
 import rarfile
 from py7zr.io import BytesIOFactory
 
+from manga_core.cancellation import OperationCancelled
 from manga_core.input_expander import expand_inputs, is_archive_name
 from manga_core.naming import natural_sort_key
 from manga_core.organized_detector import OrganizedVerdict, judge_organized
@@ -82,6 +83,14 @@ VOLUME_UNCERTAIN = "volume-uncertain"
 ZIP_SUFFIXES = frozenset({".zip", ".cbz", ".epub"})
 RAR_SUFFIXES = frozenset({".rar", ".cbr"})
 SEVENZIP_SUFFIXES = frozenset({".7z", ".cb7"})
+
+# 入れ子の目次を読む合間に打ち切りを見に行く間隔（入れ子の数）。走査の側
+# （``manga_api.analysis_job.SCAN_CHECKPOINT_PATHS``）と同じ考え方で、1 つごとに
+# 見に行くと ``JobStore._report`` のロックと確定が読み出しそのものより重くなる。
+# あちらより桁で細かいのは、入れ子 1 つの読み出しがフォルダ 1 つを覗くのより
+# ずっと重いため。ここが粗すぎると、打ち切ったのに入れ子を読み続けるワーカーが
+# 溜まり、利用者は投入を編集するたびに蔵書を歩くワーカーを増やすことになる
+NESTED_READS_PER_CHECKPOINT = 10
 
 
 @dataclass(frozen=True)
@@ -135,7 +144,10 @@ class AnalysisStep:
 
 
 def analyze_stream(
-    paths: Iterable[Path], author: str, title: str
+    paths: Iterable[Path],
+    author: str,
+    title: str,
+    checkpoint: Callable[[], None] = lambda: None,
 ) -> Iterator[AnalysisScan | AnalysisStep]:
     """投入されたパスを「走査 → 1 つずつ目次を読む」の流れで返す。
 
@@ -145,6 +157,12 @@ def analyze_stream(
 
     投入の展開は実処理と同じ ``expand_inputs`` を通す。処理順が変わると同名衝突の
     ``_1`` の付き方が変わり、予告と実際の出来上がりが食い違うため。
+
+    ``checkpoint`` は ``input_expander.iter_inputs`` と同じ約束で、打ち切られて
+    いれば例外を上げる関数（既定は何もしない）。入れ物の切れ目だけでなく、
+    目次を読んでいる最中にも呼ぶ。入れ子だらけの 1 冊は読み切るまでに数分
+    かかるので、切れ目でしか見に行かないと、その数分は打ち切りが何も止め
+    られない。
     """
     containers = tuple(expand_inputs(paths))
     yield AnalysisScan(containers=containers)
@@ -153,23 +171,33 @@ def analyze_stream(
     # ``_1`` の付き方が実処理とずれる
     planner = _Planner(author, title)
     for container in containers:
-        yield _read_container(planner, container)
+        yield _read_container(planner, container, checkpoint)
 
 
-def _read_container(planner: "_Planner", container: Path) -> AnalysisStep:
+def _read_container(
+    planner: "_Planner", container: Path, checkpoint: Callable[[], None]
+) -> AnalysisStep:
     """入れ物 1 つを読む。読めなくても理由を添えて返し、流れは止めない。
 
     受け止めるのは壊れたアーカイブ（``BadZipFile``）・開けないアーカイブ
     （``OSError``）のほか、``MemoryError``・``LargeZipFile``・名前の復号に
     失敗した場合など、目次を読めなかったすべて。理由を捨てずにここまで
     上げてくるので、画面は「目次を読めません」の印を実行前に出せる。
+
+    **打ち切りだけは受け止めない。** 順番を違えて下の ``except Exception`` に
+    食わせると、利用者は自分で止めただけのアーカイブに「目次を読めません」の
+    印を見ることになり、しかも解析は次の入れ物へ進んで走り続ける。
     """
     try:
         books = (
-            (planner.plan_folder(container),)
+            (planner.plan_folder(container, checkpoint),)
             if container.is_dir()
-            else tuple(planner.plan_archive(container))
+            else tuple(planner.plan_archive(container, checkpoint))
         )
+    except OperationCancelled:
+        # 打ち切りは「読めなかった」ではない。この行は下の ``except Exception``
+        # より必ず先に置く
+        raise
     except Exception as error:  # noqa: BLE001 - 1 つの失敗で残りを諦めない
         logger.warning("目次を読めませんでした: %s (%s)", container, error)
         return AnalysisStep(
@@ -180,7 +208,12 @@ def _read_container(planner: "_Planner", container: Path) -> AnalysisStep:
     return AnalysisStep(container=container, books=books, error=None)
 
 
-def analyze_inputs(paths: Iterable[Path], author: str, title: str) -> list[PlannedBook]:
+def analyze_inputs(
+    paths: Iterable[Path],
+    author: str,
+    title: str,
+    checkpoint: Callable[[], None] = lambda: None,
+) -> list[PlannedBook]:
     """投入されたパスから、出来上がる本を実行前に並べる。
 
     途中経過を要らない呼び出しのための入口。``analyze_stream`` を最後まで
@@ -188,7 +221,7 @@ def analyze_inputs(paths: Iterable[Path], author: str, title: str) -> list[Plann
     """
     return [
         book
-        for event in analyze_stream(paths, author, title)
+        for event in analyze_stream(paths, author, title, checkpoint)
         if isinstance(event, AnalysisStep)
         for book in event.books
     ]
@@ -278,9 +311,11 @@ class _Planner:
         self.title = title
         self._taken: set[str] = set()
 
-    def plan_archive(self, archive_path: Path) -> list[PlannedBook]:
+    def plan_archive(
+        self, archive_path: Path, checkpoint: Callable[[], None]
+    ) -> list[PlannedBook]:
         """アーカイブ 1 つから出来る本を並べる"""
-        candidates = locate_books(archive_path)
+        candidates = locate_books(archive_path, checkpoint)
         total = len(candidates)
         return [
             self._plan(
@@ -296,7 +331,7 @@ class _Planner:
             for position, candidate in enumerate(candidates, 1)
         ]
 
-    def plan_folder(self, folder: Path) -> PlannedBook:
+    def plan_folder(self, folder: Path, checkpoint: Callable[[], None]) -> PlannedBook:
         """画像が直接置かれたフォルダから出来る本。
 
         実処理（``FileOrganizer._process_image_directory``）も展開を伴わず、
@@ -304,7 +339,11 @@ class _Planner:
 
         目次は無いので空を渡す。フォルダはこの道具の成果物（ZIP）ではないため、
         判定は必ず「整理済みでない」に落ちる。
+
+        読むものが無くても検査点は通す。アーカイブのときだけ止まれると、
+        画像フォルダばかりの投入で打ち切りの効き方が変わる。
         """
+        checkpoint()
         return self._plan(
             folder,
             "",
@@ -464,7 +503,12 @@ _READERS: tuple[tuple[frozenset[str], _Opener], ...] = (
 
 # 入れ子 1 つを読めなかったときに受け止める例外。壊れている・暗号化されている・
 # 未対応の圧縮方式など。**外側の入れ物まで読めない扱いにはしない。** 入れ子が
-# 読めないだけなら、外側の目次から出た本は実行すればそのまま出来る
+# 読めないだけなら、外側の目次から出た本は実行すればそのまま出来る。
+#
+# ``RuntimeError`` は外せない。深く入れ子になった目次で実際に上がる
+# ``RecursionError`` がその一種で、外へ抜けると入れ子 1 つの失敗が外側の本まで
+# 一覧から消す。打ち切り（``OperationCancelled``）も ``RuntimeError`` の一種
+# だが、そちらは網を狭めるのではなく ``_scan_nested`` で先に通して分ける
 _NESTED_READ_ERRORS = (
     zipfile.BadZipFile,
     OSError,
@@ -484,7 +528,32 @@ def _reader_for(name: str) -> _Opener | None:
     )
 
 
-def locate_books(archive_path: Path) -> list[BookLocation]:
+class _NestedReadCheckpoint:
+    """入れ子を読む合間に、折々で打ち切りを見に行く区切り。
+
+    1 つごとに見に行かないのは、``JobStore._report`` がロックを取って確定まで
+    するため。間引かないと、打ち切りの見張りが目次読みそのものより重くなる。
+    """
+
+    def __init__(self, checkpoint: Callable[[], None]):
+        self._checkpoint = checkpoint
+        self._reads = 0
+
+    def before_read(self) -> None:
+        """入れ子 1 つをメモリへ読む直前に呼ぶ。
+
+        1 件目の前に必ず 1 度呼ぶ。読んでから数え始めると、入れ子が
+        ``NESTED_READS_PER_CHECKPOINT`` 件に満たない 1 冊では 1 度も見に
+        行かないまま、数百 GB を読み切ってしまう。
+        """
+        if self._reads % NESTED_READS_PER_CHECKPOINT == 0:
+            self._checkpoint()
+        self._reads += 1
+
+
+def locate_books(
+    archive_path: Path, checkpoint: Callable[[], None] = lambda: None
+) -> list[BookLocation]:
     """アーカイブの目次から、1 冊になる場所を拾う。
 
     **読めなかったときは例外がそのまま出る。** 以前は ``BadZipFile`` と
@@ -499,18 +568,31 @@ def locate_books(archive_path: Path) -> list[BookLocation]:
 
     アーカイブでない名前（利用者が名指しした ``.txt`` など）は、読めなかったの
     ではないので空を返す。
+
+    ``checkpoint`` は ``input_expander.iter_inputs`` と同じ約束で、打ち切られて
+    いれば例外を上げる関数。入れ子を 1 つ読むごとに数え、
+    ``NESTED_READS_PER_CHECKPOINT`` 件ごとに呼ぶ。数え役
+    （``_NestedReadCheckpoint``）をここで作るのは、入れ子の何段目から呼ばれても
+    1 冊分で 1 つの数を共有させるため。
     """
     opener = _reader_for(archive_path.name)
     if opener is None:
         return []
     with opener(archive_path) as toc:
         # 展開先は一時領域の「アーカイブ名」フォルダ。巻数はその名前から読まれる
-        return _scan(toc, _Place("", "", archive_path.stem), depth=0)
+        return _scan(
+            toc,
+            _Place("", "", archive_path.stem),
+            depth=0,
+            checkpoint=_NestedReadCheckpoint(checkpoint),
+        )
 
 
-def _scan(toc: _Toc, place: _Place, depth: int) -> list[BookLocation]:
+def _scan(
+    toc: _Toc, place: _Place, depth: int, checkpoint: _NestedReadCheckpoint
+) -> list[BookLocation]:
     """1 つのアーカイブの目次を、展開後のフォルダ構成として読む"""
-    return _scan_directory(toc, _build_tree(toc.names), "", place, depth)
+    return _scan_directory(toc, _build_tree(toc.names), "", place, depth, checkpoint)
 
 
 def _scan_directory(
@@ -519,6 +601,7 @@ def _scan_directory(
     directory: str,
     place: _Place,
     depth: int,
+    checkpoint: _NestedReadCheckpoint,
 ) -> list[BookLocation]:
     """フォルダ 1 つ分を、実処理と同じ順序でたどる。
 
@@ -546,12 +629,20 @@ def _scan_directory(
                     tree.stored_names[_join(directory, name)],
                     place.nested(name),
                     depth,
+                    checkpoint,
                 )
             )
 
     for name in sorted(tree.subdirs[directory], key=natural_sort_key):
         found.extend(
-            _scan_directory(toc, tree, _join(directory, name), place.child(name), depth)
+            _scan_directory(
+                toc,
+                tree,
+                _join(directory, name),
+                place.child(name),
+                depth,
+                checkpoint,
+            )
         )
     return found
 
@@ -561,11 +652,18 @@ def _scan_nested(
     stored_name: str,
     place: _Place,
     depth: int,
+    checkpoint: _NestedReadCheckpoint,
 ) -> list[BookLocation]:
     """入れ子アーカイブの目次を、展開せずに読む。
 
     目次は末尾にあるので、内側のバイト列はメモリへ読み出す必要がある。読むだけで
     ディスクには何も書かない。
+
+    重いのはこの読み出しなので、打ち切りを見に行くのもここ。**受け止める順番を
+    違えてはいけない。** ``JobCancelled`` は ``RuntimeError`` の一種で、
+    ``_NESTED_READ_ERRORS`` にはその ``RuntimeError`` が入っている。先に
+    通しておかないと打ち切りが「読めない入れ子」として食われ、利用者は止めた
+    はずの解析が蔵書を最後まで読み続けるのを見ることになる。
     """
     if depth + 1 >= DEFAULT_LIMITS.max_depth:
         # 実処理も同じ深さで打ち切る。ここだけ深く潜ると予告と結果がずれる
@@ -581,8 +679,13 @@ def _scan_nested(
         return []
 
     try:
+        checkpoint.before_read()
         with opener(BytesIO(toc.read(stored_name))) as nested:
-            return _scan(nested, place, depth + 1)
+            return _scan(nested, place, depth + 1, checkpoint)
+    except OperationCancelled:
+        # 打ち切りは「入れ子が読めなかった」ではない。この行は下の
+        # ``except _NESTED_READ_ERRORS`` より必ず先に置く
+        raise
     except _NESTED_READ_ERRORS as error:
         # 壊れている・暗号化されている・未対応の圧縮方式。実行時に失敗として現れる
         logger.warning("入れ子の目次を読めませんでした: %s (%s)", stored_name, error)

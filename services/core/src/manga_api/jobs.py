@@ -17,6 +17,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from manga_core.cancellation import OperationCancelled
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,8 +39,19 @@ class JobNotFound(LookupError):
     """指定された ID のジョブが存在しない"""
 
 
-class JobCancelled(RuntimeError):
-    """キャンセルされたジョブの処理を続けようとした"""
+class JobCancelled(OperationCancelled, RuntimeError):
+    """キャンセルされたジョブの処理を続けようとした。
+
+    ``OperationCancelled``（コア層）を継ぐのは、``manga_core`` が
+    ``manga_api`` を取り込まないまま「これは打ち切りだ」と見分けられるように
+    するため。見分けられないと、目次読みの ``except`` がこれを壊れたアーカイブ
+    と同じ扱いで握りつぶし、利用者は止めたはずの解析が走り続けるうえに
+    「目次を読めません」の印まで受け取る（#80 段階 A）。
+
+    ``RuntimeError`` は残す。外すと、これを ``RuntimeError`` として受けている
+    かもしれない既存の経路の振る舞いが黙って変わる。握りつぶさないことは
+    受け止める順番で保証しており、継承を狭める必要は無い。
+    """
 
 
 @dataclass(frozen=True)

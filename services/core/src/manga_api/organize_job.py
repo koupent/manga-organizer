@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from manga_api.jobs import ProgressReporter
+from manga_core.cancellation import OperationCancelled
 from manga_core.toc_analyzer import locate_books
 from manga_core.volume_detector import SeriesName
 
@@ -187,7 +188,10 @@ def organize_work(
             if not series.author or not series.title:
                 failed.append(_nameless_failure(archive))
                 continue
-            skip = _skipped_locations(archive, wanted)
+            # 外す本を数えるのに 1 冊分の入れ子を全部読む。解析と同じ検査点を
+            # 渡さないと、打ち切りが効くのは読み切ったあとの最初のログ行に
+            # なり、数百 GB の入れ子を抱えた 1 冊ではそこまで丸ごと無駄になる
+            skip = _skipped_locations(archive, wanted, report)
             for result in organizer.process_single_archive(archive, skip, series):
                 if result.success and result.output_path:
                     produced.append(str(result.output_path))
@@ -243,20 +247,31 @@ def _series_for(
 
 
 def _skipped_locations(
-    archive: Path, wanted: dict[Path, _Wanted] | None
+    archive: Path,
+    wanted: dict[Path, _Wanted] | None,
+    checkpoint: Callable[[], None],
 ) -> frozenset[str]:
     """このアーカイブの中で、作らない本の位置を求める。
 
     外すのは「解析で予告できていて、かつ選ばれなかった」本だけにする。
     予告できなかったもの（RAR・壊れたアーカイブ・入れ子の RAR）を黙って
     落とすと、利用者が外したつもりのない本が何も言わずに消える。
+
+    ``checkpoint`` は解析（``analysis_job``）が渡すのと同じもの。整理だけ
+    渡さずにおくと、同じ ``locate_books`` を呼ぶ 2 つの経路で打ち切りの
+    効き方が食い違う。
     """
     if wanted is None:
         return frozenset()
     found = wanted.get(archive.resolve())
     chosen = found.entries if found is not None else frozenset()
     try:
-        located = locate_books(archive)
+        located = locate_books(archive, checkpoint)
+    except OperationCancelled:
+        # 打ち切りは「目次を読めなかった」ではない。この行は下の
+        # ``except Exception`` より必ず先に置く。食わせると、止めたのに
+        # 1 冊も外さないまま書き出しへ進み、利用者は外したはずの本を受け取る
+        raise
     except Exception as error:  # noqa: BLE001 - 読めないなら 1 冊も外さない
         # 目次を読めなければ、外していい本を 1 つも特定できない。ここで
         # 落とすと壊れた 1 つのせいで整理そのものが失敗する。読めなかった

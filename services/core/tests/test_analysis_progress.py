@@ -209,11 +209,11 @@ class AnalysisJobTestBase(unittest.TestCase):
         gate = threading.Event()
         original = toc_analyzer.locate_books
 
-        def spy(archive_path: Path):
+        def spy(archive_path: Path, *args, **kwargs):
             opened.append(archive_path)
             if blocked is not None and archive_path == blocked:
                 gate.wait(10)
-            return original(archive_path)
+            return original(archive_path, *args, **kwargs)
 
         patcher = mock.patch.object(toc_analyzer, "locate_books", spy)
         patcher.start()
@@ -282,10 +282,10 @@ class AnalysisJobParityTest(AnalysisJobTestBase):
         healthy = self.write_archive(folder / "b_02.zip")
         original = toc_analyzer.locate_books
 
-        def explode(archive_path: Path):
+        def explode(archive_path: Path, *args, **kwargs):
             if archive_path == broken:
                 raise MemoryError("目次が大きすぎます")
-            return original(archive_path)
+            return original(archive_path, *args, **kwargs)
 
         # Act
         with mock.patch.object(toc_analyzer, "locate_books", explode):
