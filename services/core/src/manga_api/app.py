@@ -8,20 +8,48 @@ Tauri シェル（#22）が子プロセスとして起動し、127.0.0.1 での�
 import io
 import logging
 import secrets
-import threading
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from PIL import Image
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from manga_api import thumbnails
-from manga_api.analysis_job import analysis_work
-from manga_api.jobs import Job, JobCancelled, JobNotFound, JobStore
+from manga_api.analysis_job import AnalyzeRequest, analysis_work
+from manga_api.cover_job import CoverRequest, cover_work
+from manga_api.cover_views import CoverView, describe_original
+from manga_api.http_images import (
+    THUMBNAIL_MEDIA_TYPE,
+    image_response,
+    media_type_of,
+)
+from manga_api.job_runner import start_job
+from manga_api.job_views import (
+    JobAccepted,
+    JobDetail,
+    JobList,
+    to_detail,
+    to_view,
+)
+from manga_api.jobs import JobNotFound, JobStore
+from manga_api.library_views import (
+    AuthorCandidate,
+    LibraryEntries,
+    LibraryEntry,
+    Suggestion,
+    SuggestRequest,
+)
+from manga_api.organize_job import (
+    OrganizeRequest,
+    organize_work,
+    wanted_entries,
+)
 from manga_api.output_roots import ChosenOutputRoots
+from manga_api.paths import PathGuard
+from manga_api.reorder_job import ReorderRequest, reorder_work
 from manga_api.split_job import (
     SplitConfirmRequest,
     SplitScanRequest,
@@ -30,49 +58,22 @@ from manga_api.split_job import (
     refuse_stale_token,
     scan_work,
 )
-from manga_core.cover_editor import (
-    COVER_ASPECT_RATIO,
-    CoverEditError,
-    CoverTransform,
-    apply_to_archive,
-    is_spread,
-)
-from manga_core.input_expander import ARCHIVE_SUFFIXES, expand_inputs
+from manga_core.cover_editor import COVER_ASPECT_RATIO, is_spread
+from manga_core.input_expander import ARCHIVE_SUFFIXES
 from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
 from manga_core.original_store import (
     OriginalStoreError,
-    content_hash,
     find_original,
     read_original,
 )
-from manga_core.page_reorder import PageReorderError, ZipPageEditor
-from manga_core.toc_analyzer import locate_books
+from manga_core.page_reorder import PageReorderError
 
 logger = logging.getLogger(__name__)
 
 TITLE = "Manga Organizer サイドカー"
 # 外部からは触らせない。Tauri シェルと同一ホスト内でのみ使う
 HOST = "127.0.0.1"
-
-# 作品名として妥当な長さ。これを超えるものは打ち間違いか攻撃とみなす
-MAX_TITLE_LENGTH = 200
-
-# 拡張子から media type を決める。画像として名指しできる形式だけを並べ、
-# 知らない拡張子はブラウザに画像として解釈させない
-IMAGE_MEDIA_TYPES = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-    ".avif": "image/avif",
-    ".gif": "image/gif",
-    ".bmp": "image/bmp",
-}
-FALLBACK_MEDIA_TYPE = "application/octet-stream"
-
-# サムネイルは描き直したもの。名前ではなく描き出した形式で決まる
-THUMBNAIL_MEDIA_TYPE = "image/jpeg"
 
 # Tauri の WebView と、開発・検証で使う Vite の dev server
 DEFAULT_ALLOWED_ORIGINS = (
@@ -81,54 +82,6 @@ DEFAULT_ALLOWED_ORIGINS = (
     "tauri://localhost",
     "http://tauri.localhost",
 )
-
-
-class ReorderRequest(BaseModel):
-    """ページ並べ替えの依頼"""
-
-    archive: str = Field(description="対象アーカイブの絶対パス")
-    order: list[str] = Field(description="並べ替え後のページ名（先頭が 1 ページ目）")
-
-
-class BookRef(BaseModel):
-    """本 1 冊の指定。
-
-    名前ではなく「元のアーカイブ + その中での位置」で指す。出来上がる名前は
-    作品名と著者で毎回変わるので、名前を鍵にすると入力欄をいじった瞬間に
-    選択が外れる。``entry`` はアーカイブ全体が 1 冊なら空文字。
-    """
-
-    source: str = Field(description="元のアーカイブ（または画像フォルダ）の絶対パス")
-    entry: str = Field(default="", description="アーカイブ内での位置")
-
-
-class AnalyzeRequest(BaseModel):
-    """出来上がる本を実行前に調べる依頼"""
-
-    archives: list[str] = Field(
-        description="解析対象の絶対パス。フォルダを渡すと中を再帰的に辿る"
-    )
-    title: str = Field(default="", description="作品名")
-    author: str = Field(default="", description="著者名")
-
-
-class OrganizeRequest(BaseModel):
-    """アーカイブ整理の依頼"""
-
-    archives: list[str] = Field(
-        description="整理対象の絶対パス。フォルダを渡すと中を再帰的に辿る"
-    )
-    output_directory: str = Field(description="出力先ディレクトリ")
-    title: str = Field(default="", description="作品名")
-    author: str = Field(default="", description="著者名")
-    keep_originals: bool = Field(default=True, description="元ファイルを残すか")
-    books: list[BookRef] | None = Field(
-        default=None,
-        description=(
-            "作る本。省くと投入されたものを全部作る。"
-            "与えると、その本だけを作る（空の配列は 1 冊も作らない）"
-        ),
-    )
 
 
 class OutputRootRequest(BaseModel):
@@ -185,162 +138,6 @@ class ResolveResult(BaseModel):
     searched_roots: list[str] = []
 
 
-class LibraryEntry(BaseModel):
-    """タイトルと著者の対応"""
-
-    title: str
-    author: str
-
-
-class LibraryEntries(BaseModel):
-    """辞書の中身"""
-
-    entries: list[LibraryEntry]
-
-
-class SuggestRequest(BaseModel):
-    """外部サービスへの問い合わせ依頼"""
-
-    title: str = Field(
-        description="調べたい作品名。空白のみは受け付けない",
-        max_length=MAX_TITLE_LENGTH,
-    )
-
-    @field_validator("title")
-    @classmethod
-    def _reject_blank_title(cls, value: str) -> str:
-        """中身の無い作品名を境界で断る。
-
-        空文字はどの作品にも当たってしまい、外部サービスへの問い合わせも
-        無駄になる。前後の空白を落としたうえで空なら受け付けない。
-        """
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("作品名を入力してください")
-        return stripped
-
-
-class AuthorCandidate(BaseModel):
-    """検索で見つかった作品と、その著者"""
-
-    title: str
-    author: str
-    source: str
-    similarity: float
-
-
-class Suggestion(BaseModel):
-    """補完の結果。近い順に候補を並べ、先頭を既定として示す"""
-
-    title: str | None = None
-    author: str | None = None
-    candidates: list[AuthorCandidate] = Field(default_factory=list)
-
-
-class CoverRequest(BaseModel):
-    """表紙加工の依頼。分割 → 切り抜き → 回転の順に適用される"""
-
-    archive: str = Field(description="対象アーカイブの絶対パス")
-    name: str = Field(description="加工するページ名（通常は先頭）")
-    split: str | None = Field(
-        default=None, description="見開きの残す側（left / right）"
-    )
-    crop: tuple[int, int, int, int] | None = Field(
-        default=None, description="切り抜き範囲 (left, upper, right, lower)"
-    )
-    rotate: int = Field(default=0, description="回転角。90 度単位")
-    make_first: bool = Field(
-        default=False,
-        description="加工した 1 枚を先頭ページ（サムネイル）へ移すかどうか",
-    )
-    from_original: bool = Field(
-        default=False,
-        description=(
-            "加工前の画像を対象にするかどうか。"
-            "立てると crop は加工前の画像の画素で解釈される"
-        ),
-    )
-
-
-class OperationView(BaseModel):
-    """元画像に施した加工 1 つ分。params の形は kind ごとに決まる"""
-
-    kind: str
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
-class OriginalView(BaseModel):
-    """いま見ている 1 枚の、加工前の姿。
-
-    ZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた
-    manifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。
-    画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。
-    """
-
-    width: int
-    height: int
-    # 既定値を持たせない。持たせると生成される画面側の型で任意項目になり、
-    # 常に載せているという実装と食い違う
-    operations: list[OperationView]
-
-
-class CoverView(BaseModel):
-    """表紙の状態。
-
-    寸法と見開き判定は「いま保存されている 1 枚」を指す。original は、その
-    1 枚が加工の結果なら加工前の姿を添える。画面は加工前を対象にして枠を
-    置き直すので、両方を 1 回の問い合わせで受け取る必要がある。
-    """
-
-    name: str
-    width: int
-    height: int
-    is_spread: bool
-    target_aspect_ratio: float
-    # 既定値を持たせない。載せ忘れと「元画像が無い」を、画面側が null で
-    # 見分けられるようにする
-    original: OriginalView | None = Field(
-        description="加工前の画像。一度も加工していなければ null",
-    )
-
-
-class JobAccepted(BaseModel):
-    """ジョブの受付結果"""
-
-    id: str
-
-
-class JobView(BaseModel):
-    """ジョブの状態。一覧はログを読まないので log を持たない"""
-
-    id: str
-    kind: str
-    state: str
-    current: int
-    total: int
-    message: str
-    result: Any | None = None
-    error: str | None = None
-    created_at: str
-    updated_at: str
-
-
-class JobDetail(JobView):
-    """ジョブ 1 件の詳細。
-
-    ログを返すのはここだけにする。一覧でも log を持つと、常に空配列が
-    載ってしまい「ログが無い」と「一覧では取らない」を区別できない。
-    """
-
-    log: list[str]
-
-
-class JobList(BaseModel):
-    """ジョブ一覧"""
-
-    jobs: list[JobView]
-
-
 class PageView(BaseModel):
     """ページ 1 枚の情報"""
 
@@ -362,102 +159,6 @@ class HealthView(BaseModel):
 
     status: str
     version: str
-
-
-def _media_type(name: str) -> str:
-    """エントリ名から media type を決める。知らない拡張子は画像として扱わない"""
-    return IMAGE_MEDIA_TYPES.get(Path(name).suffix.lower(), FALLBACK_MEDIA_TYPE)
-
-
-def _weak_form(candidate: str) -> str:
-    """W/ を外した検証子。弱い比較はこの形どうしで照合する"""
-    return candidate[2:] if candidate.startswith("W/") else candidate
-
-
-def _matches_tag(header: str | None, tag: str) -> bool:
-    """ブラウザが持っている版が、いまの中身と同じかどうか。
-
-    If-None-Match の書き方はブラウザが決めるもので、こちらでは選べない
-    （RFC 9110 13.1.2）。W/ 付き・`*`・複数並べのどれかを読み落とすと、
-    持っている版を名乗られても丸ごと送り直すことになり、200 ページの本を
-    開き直すたびに全ページが再送される。
-    """
-    if not header:
-        return False
-    candidates = {candidate.strip() for candidate in header.split(",")}
-    if "*" in candidates:
-        return True
-    return _weak_form(tag) in {_weak_form(candidate) for candidate in candidates}
-
-
-def _image_response(request: Request, body: bytes, media_type: str) -> Response:
-    """画像を返す。取り直すかどうかは、中身が変わったかどうかで決めさせる。
-
-    max-age で日持ちさせると、加工でページの中身が変わっても URL が同じなので
-    ブラウザは取りに行かず、加工前の絵を出し続ける。実際、同じ窓で本を開き直すと
-    サイドカーは新しい画像を返しているのに画面は古い画像を描いていた。
-
-    no-cache は「保存するな」ではなく「使う前に必ず確かめろ」なので、中身が
-    変わっていなければ 304 で済み、日持ちさせていたときの転送量とほぼ変わらない。
-    版の目印は中身そのもののハッシュにする。加工はファイルの日時を元に戻すので、
-    日時を目印にすると変わったことに気づけない。
-    """
-    tag = f'"{content_hash(body)}"'
-    headers = {
-        "Cache-Control": "no-cache",
-        "ETag": tag,
-        "X-Content-Type-Options": "nosniff",
-    }
-    if _matches_tag(request.headers.get("if-none-match"), tag):
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
-    return Response(content=body, media_type=media_type, headers=headers)
-
-
-def _describe_original(archive_path: Path, image: bytes) -> OriginalView | None:
-    """加工後の 1 枚から、加工前の姿を引く。記録が無ければ None。
-
-    寸法は PIL が見出しだけ読んで返すので、画素まで展開しない。
-    """
-    ref = find_original(archive_path, image)
-    if ref is None:
-        return None
-    try:
-        with Image.open(io.BytesIO(read_original(archive_path, ref))) as opened:
-            width, height = opened.size
-    except (OriginalStoreError, OSError):
-        # 記録はあるが読めない。同梱が失われた古いアーカイブでも画面が
-        # 開けるよう、元画像が無いものとして扱う
-        logger.warning("元画像を読めませんでした: %s", archive_path)
-        return None
-    return OriginalView(
-        width=width,
-        height=height,
-        operations=[
-            OperationView(kind=operation.kind, params=dict(operation.params))
-            for operation in ref.operations
-        ],
-    )
-
-
-def _to_view(job: Job) -> JobView:
-    """ジョブを一覧用の形へ直す"""
-    return JobView(
-        id=job.id,
-        kind=job.kind,
-        state=job.state.value,
-        current=job.current,
-        total=job.total,
-        message=job.message,
-        result=job.result,
-        error=job.error,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
-
-
-def _to_detail(job: Job, log: list[str]) -> JobDetail:
-    """ジョブを詳細用の形へ直す"""
-    return JobDetail(**_to_view(job).model_dump(), log=log)
 
 
 def create_app(
@@ -482,6 +183,9 @@ def create_app(
     app.state.jobs = JobStore(resolved_state / "jobs.db")
     app.state.thumbnails = thumbnails.ThumbnailCache()
     app.state.allowed_roots = [Path(r).resolve() for r in (allowed_roots or [])]
+    # 読む側の守り。app.state と同じ一覧を指させる。写しを持たせると、
+    # 許可を書き換えたときに守りと状態が別々の一覧を見ることになる
+    path_guard = PathGuard(app.state.allowed_roots)
     # 書き出す先の覚え。allowed_roots とは別に持つ。ここへ混ぜると、出力先を
     # 選んだだけでその場所を読む入口まで開いてしまう
     app.state.chosen_output_roots = ChosenOutputRoots()
@@ -522,51 +226,6 @@ def create_app(
         """
         return MangaDatabase(app.state.database_path)
 
-    def within_allowed(path: Path) -> bool:
-        """許可された場所に留まるかを見る。
-
-        判定は必ず resolve() した後のパスで行う。許可の中に置かれたリンクが
-        外を指していると、名前のままでは中に見えて、開くと外を読んでしまう。
-        """
-        roots = app.state.allowed_roots
-        if not roots:
-            return True
-        return any(path.resolve().is_relative_to(root) for root in roots)
-
-    def refuse_outside(path: Path) -> None:
-        """許可の外なら、開く前に断る"""
-        if not within_allowed(path):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="対象外のディレクトリです",
-            )
-
-    def resolve_archive(raw: str) -> Path:
-        """受け取ったパスを検証して解決する"""
-        path = Path(raw).resolve()
-        refuse_outside(path)
-        if not path.is_file():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="ファイルが見つかりません",
-            )
-        return path
-
-    def resolve_organize_target(raw: str) -> Path:
-        """整理の対象を検証して解決する。
-
-        こちらはフォルダも受け付ける。利用者はアーカイブを 1 つずつ選ばず、
-        フォルダごと投げ込むため（#70）。中身の展開は投入時に行う。
-        """
-        path = Path(raw).resolve()
-        refuse_outside(path)
-        if not path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="ファイルが見つかりません",
-            )
-        return path
-
     def resolve_output_directory(raw: str) -> Path:
         """書き出す先を検証して解決する。
 
@@ -578,41 +237,14 @@ def create_app(
         まだ無いフォルダも通す。出力先は整理のときに作られる。
         """
         path = Path(raw).resolve()
-        if within_allowed(path) or app.state.chosen_output_roots.allows(path):
+        if path_guard.within_allowed(path) or app.state.chosen_output_roots.allows(
+            path
+        ):
             return path
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="選ばれていない出力先です。出力先を選び直してください",
         )
-
-    def expand_targets(raws: list[str]) -> list[Path]:
-        """投入されたパスを、1 冊ずつの入力へ展開する。
-
-        辿って見つけたものは利用者が名指ししていない。リンクで許可の外を
-        指していないか、1 件ずつ確かめてから処理対象に入れる。
-
-        解析と整理で同じ展開を通すのは、処理順が同名衝突の ``_1`` の付き方を
-        決めるため。片方だけ順番が変わると、予告した名前と実際に出来る名前が
-        食い違う。
-        """
-        targets = [resolve_organize_target(raw) for raw in raws]
-        expanded: list[Path] = []
-        for found in expand_inputs(targets):
-            if within_allowed(found):
-                expanded.append(found)
-            else:
-                logger.warning("許可された場所の外を指すため除きました: %s", found)
-        return expanded
-
-    def open_editor(raw: str) -> ZipPageEditor:
-        """アーカイブを開く。開けない理由はそのまま伝える"""
-        path = resolve_archive(raw)
-        try:
-            return ZipPageEditor(path)
-        except PageReorderError as error:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
-            ) from error
 
     @app.get("/api/health", dependencies=guarded, response_model=HealthView)
     def health() -> HealthView:
@@ -622,7 +254,7 @@ def create_app(
     @app.get("/api/pages", dependencies=guarded, response_model=PageList)
     def list_pages(archive: str) -> PageList:
         """アーカイブ内のページを viewer と同じ並びで返す"""
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         try:
             return PageList(
                 archive=str(editor.zip_path),
@@ -640,7 +272,7 @@ def create_app(
         request: Request, archive: str, name: str, width: int = 240
     ) -> Response:
         """ページのサムネイルを返す"""
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         resolved = thumbnails.nearest_width(width)
         try:
             body = app.state.thumbnails.get_or_create(
@@ -658,7 +290,7 @@ def create_app(
             ) from error
         finally:
             editor.close()
-        return _image_response(request, body, THUMBNAIL_MEDIA_TYPE)
+        return image_response(request, body, THUMBNAIL_MEDIA_TYPE)
 
     @app.post("/api/resolve", dependencies=guarded, response_model=ResolveResult)
     def resolve(request: ResolveRequest) -> ResolveResult:
@@ -716,7 +348,7 @@ def create_app(
             target = roots[0] if roots else Path.home()
         else:
             target = Path(path).resolve()
-            refuse_outside(target)
+            path_guard.refuse_outside(target)
         if not target.is_dir():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -831,7 +463,7 @@ def create_app(
     @app.get("/api/image", dependencies=guarded, response_class=Response)
     def image(request: Request, archive: str, name: str) -> Response:
         """ページを原寸で返す。拡大表示に使う"""
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         try:
             body = editor.read_entry(name)
         except PageReorderError as error:
@@ -840,7 +472,7 @@ def create_app(
             ) from error
         finally:
             editor.close()
-        return _image_response(request, body, _media_type(name))
+        return image_response(request, body, media_type_of(name))
 
     @app.get("/api/original", dependencies=guarded, response_class=Response)
     def original(request: Request, archive: str, name: str) -> Response:
@@ -853,7 +485,7 @@ def create_app(
         バイト列を /api/cover と分けているのは、画像が JSON に載らないうえ、
         /api/cover は画面を描き直すたびに引かれる軽い経路であってほしいため。
         """
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         path = editor.zip_path
         try:
             body = editor.read_entry(name)
@@ -875,7 +507,7 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
             ) from error
-        return _image_response(request, data, _media_type(ref.entry))
+        return image_response(request, data, media_type_of(ref.entry))
 
     @app.get("/api/cover", dependencies=guarded, response_model=CoverView)
     def cover(archive: str, name: str | None = None) -> CoverView:
@@ -892,7 +524,7 @@ def create_app(
         「枠をどこに置くか」を 1 度に決める。別の入口に分けると、2 回
         問い合わせる間に片方だけ古い値を見た状態が作れてしまう。
         """
-        editor = open_editor(archive)
+        editor = path_guard.open_editor(archive)
         path = editor.zip_path
         try:
             if not editor.pages:
@@ -915,7 +547,7 @@ def create_app(
             height=height,
             is_spread=is_spread(width, height),
             target_aspect_ratio=COVER_ASPECT_RATIO,
-            original=_describe_original(path, body),
+            original=describe_original(path, body),
         )
 
     @app.post(
@@ -926,47 +558,23 @@ def create_app(
     )
     def submit_cover(request: CoverRequest) -> JobAccepted:
         """表紙の加工をジョブとして投入する"""
-        path = resolve_archive(request.archive)
+        path = path_guard.resolve_archive(request.archive)
         job_id = app.state.jobs.submit(
             "cover", {"archive": str(path), "name": request.name}
         )
-
-        def work(report):
-            report(current=0, total=1, message="加工中")
-            try:
-                result = apply_to_archive(
-                    path,
-                    request.name,
-                    CoverTransform(
-                        split=request.split, crop=request.crop, rotate=request.rotate
-                    ),
-                    make_first=request.make_first,
-                    from_original=request.from_original,
-                )
-            except CoverEditError as error:
-                raise RuntimeError(str(error)) from error
-            app.state.thumbnails.discard(str(path))
-            report(current=1, total=1, message="完了")
-            return {
-                "name": result.name,
-                "width": result.width,
-                "height": result.height,
-                "renamed": result.renamed,
-            }
-
-        _start(app, job_id, work)
+        start_job(app, job_id, cover_work(path, request, app.state.thumbnails))
         return JobAccepted(id=job_id)
 
     @app.get("/api/jobs", dependencies=guarded, response_model=JobList)
     def list_jobs() -> JobList:
         """新しい順にジョブを並べる"""
-        return JobList(jobs=[_to_view(job) for job in app.state.jobs.list_jobs()])
+        return JobList(jobs=[to_view(job) for job in app.state.jobs.list_jobs()])
 
     @app.get("/api/jobs/{job_id}", dependencies=guarded, response_model=JobDetail)
     def get_job(job_id: str) -> JobDetail:
         """ジョブ 1 件の状態を、経過のログとともに返す"""
         try:
-            return _to_detail(app.state.jobs.get(job_id), app.state.jobs.log_of(job_id))
+            return to_detail(app.state.jobs.get(job_id), app.state.jobs.log_of(job_id))
         except JobNotFound as error:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="ジョブが見つかりません"
@@ -991,31 +599,11 @@ def create_app(
     )
     def submit_reorder(request: ReorderRequest) -> JobAccepted:
         """ページ並べ替えをジョブとして投入する"""
-        path = resolve_archive(request.archive)
+        path = path_guard.resolve_archive(request.archive)
         job_id = app.state.jobs.submit(
             "reorder", {"archive": str(path), "pages": len(request.order)}
         )
-
-        def work(report):
-            editor = ZipPageEditor(path)
-            try:
-                result = editor.apply_order(
-                    request.order,
-                    progress=lambda current, total: report(
-                        current=current, total=total, message="書き換え中"
-                    ),
-                )
-            finally:
-                editor.close()
-            app.state.thumbnails.discard(str(path))
-            return {
-                "changed": result.changed,
-                "pageCount": result.page_count,
-                "renamedCount": result.renamed_count,
-                "timesRestored": result.times_restored,
-            }
-
-        _start(app, job_id, work)
+        start_job(app, job_id, reorder_work(path, request, app.state.thumbnails))
         return JobAccepted(id=job_id)
 
     @app.post(
@@ -1032,11 +620,11 @@ def create_app(
         失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
         残らず、画面は投入できたと思ってしまう。
         """
-        editor = open_editor(request.archive)
+        editor = path_guard.open_editor(request.archive)
         path = editor.zip_path
         editor.close()
         job_id = app.state.jobs.submit("split-scan", {"archive": str(path)})
-        _start(app, job_id, scan_work(path))
+        start_job(app, job_id, scan_work(path))
         return JobAccepted(id=job_id)
 
     @app.post(
@@ -1054,7 +642,7 @@ def create_app(
         （印）・行の名前を並べたものがいまのページ順と一致するか。どこで
         断ってもアーカイブは 1 バイトも変わらない。
         """
-        editor = open_editor(request.archive)
+        editor = path_guard.open_editor(request.archive)
         path = editor.zip_path
         try:
             pages = editor.pages
@@ -1065,7 +653,7 @@ def create_app(
         job_id = app.state.jobs.submit(
             "split", {"archive": str(path), "rows": len(rows)}
         )
-        _start(app, job_id, confirm_work(path, rows, app.state.thumbnails))
+        start_job(app, job_id, confirm_work(path, rows, app.state.thumbnails))
         return JobAccepted(id=job_id)
 
     @app.post(
@@ -1086,7 +674,7 @@ def create_app(
         失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
         残らず、画面は投入できたと思ってしまう。
         """
-        targets = [resolve_organize_target(raw) for raw in request.archives]
+        targets = [path_guard.resolve_organize_target(raw) for raw in request.archives]
         # 前回までの解析は用済み。1 件ずつ入れ物と本の一覧を抱えるうえ、
         # 投入を編集するたびに増える。履歴を読む画面も無い
         app.state.jobs.prune_finished("analyze")
@@ -1098,10 +686,12 @@ def create_app(
                 "author": request.author,
             },
         )
-        _start(
+        start_job(
             app,
             job_id,
-            analysis_work(targets, request.author, request.title, within_allowed),
+            analysis_work(
+                targets, request.author, request.title, path_guard.within_allowed
+            ),
         )
         return JobAccepted(id=job_id)
 
@@ -1140,10 +730,10 @@ def create_app(
         画面は投入できたと思ったまま、断る理由だけが後から届く（#58 と同じ）。
         """
         output_directory = resolve_output_directory(request.output_directory)
-        archives = expand_targets(request.archives)
+        archives = path_guard.expand_targets(request.archives)
         # 選んだ本が与えられていれば、その本を含まないアーカイブごと外す。
         # 進捗の総数もここで決まるので、外したぶんは最初から数に入らない
-        wanted = _wanted_entries(request.books)
+        wanted = wanted_entries(request.books)
         if wanted is not None:
             archives = [archive for archive in archives if archive.resolve() in wanted]
         job_id = app.state.jobs.submit(
@@ -1155,108 +745,9 @@ def create_app(
                 "author": request.author,
             },
         )
-
-        def work(report):
-            # 取り込みが重いので、整理を投入したときだけ読み込む
-            from manga_core.file_organizer import FileOrganizer
-
-            organizer = FileOrganizer(
-                # 確かめたパスをそのまま渡す。文字列から組み直すと、確かめた
-                # 場所と書き出す場所が別々に決まることになる
-                output_directory=output_directory,
-                keep_originals=request.keep_originals,
-                log_callback=lambda message: report(message=message),
-            )
-            organizer.set_manga_info(author=request.author, title=request.title)
-            produced: list[str] = []
-            failed: list[dict[str, str]] = []
-            for index, archive in enumerate(archives, 1):
-                report(current=index, total=len(archives), message=archive.name)
-                skip = _skipped_locations(archive, wanted)
-                for result in organizer.process_single_archive(archive, skip):
-                    if result.success and result.output_path:
-                        produced.append(str(result.output_path))
-                        continue
-                    # process_single_archive() は処理中の例外を握りつぶして
-                    # success=False を返すので、ジョブは最後まで走り succeeded で
-                    # 終わる。ここで拾わないと「produced が空の成功」になり、
-                    # 全件失敗と「対象が 0 件だった」の区別が付かなくなる
-                    failed.append(
-                        {
-                            "archive": str(result.original_path),
-                            "reason": result.error_message or "原因不明の失敗",
-                        }
-                    )
-            # 走り切ったこと（state）と、何が出来たか（result）は別に伝える。
-            # failed はキーごと省かない。省くと画面から見て「失敗が無い」のか
-            # 「失敗を数えていない」のかを区別できない
-            return {"produced": produced, "failed": failed}
-
-        _start(app, job_id, work)
+        start_job(
+            app, job_id, organize_work(output_directory, archives, request, wanted)
+        )
         return JobAccepted(id=job_id)
 
     return app
-
-
-def _wanted_entries(books: list[BookRef] | None) -> dict[Path, set[str]] | None:
-    """作る本を、元のアーカイブごとにまとめる。
-
-    ``None``（指定なし）と空の辞書（1 冊も作らない）は別物なので、``books`` を
-    省いたときだけ ``None`` を返す。パスはリンクを解いた形に揃える。解析が
-    返した文字列と整理で辿り直したパスは、同じ物でも書き方が違いうる。
-    """
-    if books is None:
-        return None
-    wanted: dict[Path, set[str]] = {}
-    for book in books:
-        wanted.setdefault(Path(book.source).resolve(), set()).add(book.entry)
-    return wanted
-
-
-def _skipped_locations(
-    archive: Path, wanted: dict[Path, set[str]] | None
-) -> frozenset[str]:
-    """このアーカイブの中で、作らない本の位置を求める。
-
-    外すのは「解析で予告できていて、かつ選ばれなかった」本だけにする。
-    予告できなかったもの（RAR・壊れたアーカイブ・入れ子の RAR）を黙って
-    落とすと、利用者が外したつもりのない本が何も言わずに消える。
-    """
-    if wanted is None:
-        return frozenset()
-    chosen = wanted.get(archive.resolve(), set())
-    try:
-        located = locate_books(archive)
-    except Exception as error:  # noqa: BLE001 - 読めないなら 1 冊も外さない
-        # 目次を読めなければ、外していい本を 1 つも特定できない。ここで
-        # 落とすと壊れた 1 つのせいで整理そのものが失敗する。読めなかった
-        # ことは解析が先に印として出しているので、黙って消えることはない
-        logger.warning("外す本を決められませんでした: %s (%s)", archive, error)
-        return frozenset()
-    return frozenset(
-        location.extracted_path for location in located if location.entry not in chosen
-    )
-
-
-def _start(app: FastAPI, job_id: str, work) -> None:
-    """ジョブを動かす。通常はワーカースレッド、テストでは同期実行する"""
-    if app.state.run_jobs_inline:
-        _run_quietly(app, job_id, work)
-        return
-    thread = threading.Thread(
-        target=_run_quietly, args=(app, job_id, work), name=f"job-{job_id}", daemon=True
-    )
-    thread.start()
-
-
-def _run_quietly(app: FastAPI, job_id: str, work) -> None:
-    """ワーカースレッドの例外でプロセスを落とさない"""
-    try:
-        app.state.jobs.run(job_id, work)
-    except JobCancelled:
-        # 打ち切りは失敗ではない。解析は投入を編集するたびに走り直して前のものを
-        # 止めるので、これを失敗として書き残すと、利用者は編集しただけで
-        # 「ジョブが失敗しました」の山を見ることになる
-        logger.debug("ジョブが打ち切られました: %s", job_id)
-    except Exception:  # noqa: BLE001 - 状態は JobStore が記録済み
-        logger.exception("ジョブが失敗しました: %s", job_id)
