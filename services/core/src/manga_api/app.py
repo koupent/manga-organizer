@@ -20,6 +20,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from manga_api import thumbnails
 from manga_api.analysis_job import analysis_work
+from manga_api.http_images import (
+    THUMBNAIL_MEDIA_TYPE,
+    image_response,
+    media_type_of,
+)
 from manga_api.jobs import Job, JobCancelled, JobNotFound, JobStore
 from manga_api.output_roots import ChosenOutputRoots
 from manga_api.split_job import (
@@ -42,7 +47,6 @@ from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
 from manga_core.original_store import (
     OriginalStoreError,
-    content_hash,
     find_original,
     read_original,
 )
@@ -57,22 +61,6 @@ HOST = "127.0.0.1"
 
 # 作品名として妥当な長さ。これを超えるものは打ち間違いか攻撃とみなす
 MAX_TITLE_LENGTH = 200
-
-# 拡張子から media type を決める。画像として名指しできる形式だけを並べ、
-# 知らない拡張子はブラウザに画像として解釈させない
-IMAGE_MEDIA_TYPES = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-    ".avif": "image/avif",
-    ".gif": "image/gif",
-    ".bmp": "image/bmp",
-}
-FALLBACK_MEDIA_TYPE = "application/octet-stream"
-
-# サムネイルは描き直したもの。名前ではなく描き出した形式で決まる
-THUMBNAIL_MEDIA_TYPE = "image/jpeg"
 
 # Tauri の WebView と、開発・検証で使う Vite の dev server
 DEFAULT_ALLOWED_ORIGINS = (
@@ -364,55 +352,6 @@ class HealthView(BaseModel):
     version: str
 
 
-def _media_type(name: str) -> str:
-    """エントリ名から media type を決める。知らない拡張子は画像として扱わない"""
-    return IMAGE_MEDIA_TYPES.get(Path(name).suffix.lower(), FALLBACK_MEDIA_TYPE)
-
-
-def _weak_form(candidate: str) -> str:
-    """W/ を外した検証子。弱い比較はこの形どうしで照合する"""
-    return candidate[2:] if candidate.startswith("W/") else candidate
-
-
-def _matches_tag(header: str | None, tag: str) -> bool:
-    """ブラウザが持っている版が、いまの中身と同じかどうか。
-
-    If-None-Match の書き方はブラウザが決めるもので、こちらでは選べない
-    （RFC 9110 13.1.2）。W/ 付き・`*`・複数並べのどれかを読み落とすと、
-    持っている版を名乗られても丸ごと送り直すことになり、200 ページの本を
-    開き直すたびに全ページが再送される。
-    """
-    if not header:
-        return False
-    candidates = {candidate.strip() for candidate in header.split(",")}
-    if "*" in candidates:
-        return True
-    return _weak_form(tag) in {_weak_form(candidate) for candidate in candidates}
-
-
-def _image_response(request: Request, body: bytes, media_type: str) -> Response:
-    """画像を返す。取り直すかどうかは、中身が変わったかどうかで決めさせる。
-
-    max-age で日持ちさせると、加工でページの中身が変わっても URL が同じなので
-    ブラウザは取りに行かず、加工前の絵を出し続ける。実際、同じ窓で本を開き直すと
-    サイドカーは新しい画像を返しているのに画面は古い画像を描いていた。
-
-    no-cache は「保存するな」ではなく「使う前に必ず確かめろ」なので、中身が
-    変わっていなければ 304 で済み、日持ちさせていたときの転送量とほぼ変わらない。
-    版の目印は中身そのもののハッシュにする。加工はファイルの日時を元に戻すので、
-    日時を目印にすると変わったことに気づけない。
-    """
-    tag = f'"{content_hash(body)}"'
-    headers = {
-        "Cache-Control": "no-cache",
-        "ETag": tag,
-        "X-Content-Type-Options": "nosniff",
-    }
-    if _matches_tag(request.headers.get("if-none-match"), tag):
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
-    return Response(content=body, media_type=media_type, headers=headers)
-
-
 def _describe_original(archive_path: Path, image: bytes) -> OriginalView | None:
     """加工後の 1 枚から、加工前の姿を引く。記録が無ければ None。
 
@@ -658,7 +597,7 @@ def create_app(
             ) from error
         finally:
             editor.close()
-        return _image_response(request, body, THUMBNAIL_MEDIA_TYPE)
+        return image_response(request, body, THUMBNAIL_MEDIA_TYPE)
 
     @app.post("/api/resolve", dependencies=guarded, response_model=ResolveResult)
     def resolve(request: ResolveRequest) -> ResolveResult:
@@ -840,7 +779,7 @@ def create_app(
             ) from error
         finally:
             editor.close()
-        return _image_response(request, body, _media_type(name))
+        return image_response(request, body, media_type_of(name))
 
     @app.get("/api/original", dependencies=guarded, response_class=Response)
     def original(request: Request, archive: str, name: str) -> Response:
@@ -875,7 +814,7 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
             ) from error
-        return _image_response(request, data, _media_type(ref.entry))
+        return image_response(request, data, media_type_of(ref.entry))
 
     @app.get("/api/cover", dependencies=guarded, response_model=CoverView)
     def cover(archive: str, name: str | None = None) -> CoverView:
