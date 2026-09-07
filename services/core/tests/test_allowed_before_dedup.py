@@ -159,9 +159,13 @@ class LinkOrderTestBase(VolumeOverrideApiTestBase):
         素材そのもので観測することはできない。同じ実体なので重複除去が先に
         働き、1 件しか返らないため。確かめたいのは**並び順だけ**なので、
         同じ名前を持つ**別々の** ZIP を下見用の棚に置いて観測する。
+
+        置く順は、期待する順の**逆**にする。期待どおりの順に作ってから同じ順を
+        期待すると、並べ替えを丸ごと消して作成順をそのまま返す実装でも通る。
+        逆に置けば、並べ替えが働いたときにしか期待どおりにならない。
         """
         rehearsal = self.work_dir / f"並び順の下見{tag}"
-        for name in names:
+        for name in reversed(names):
             zip_with(rehearsal / name, pages(count=PAGES))
         self.assertEqual(
             names,

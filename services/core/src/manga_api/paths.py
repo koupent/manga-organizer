@@ -97,7 +97,14 @@ class PathGuard:
         return list(iter_inputs(targets, accept=self._accept_inside))
 
     def _accept_inside(self, found: Path) -> bool:
-        """辿って見つけたものを処理対象にしてよいか。除いたものは記録に残す"""
+        """辿って見つけたものを処理対象にしてよいか。除いたものは記録に残す。
+
+        検査が重複除去より前へ来たので、**警告は綴りごとに 1 行出る**。以前は
+        実体で畳んだ後に書いていたため、外を指すリンクが何本あっても 1 行しか
+        出ず、許可の中の実体が先に来た場合は 1 行も出なかった。蔵書にそのリンクが
+        何本あるかは利用者が直したい事実なので、綴りごとに残す方を採る。
+        サーバのログだけの変化で、API にもジョブのログにも出ない。
+        """
         if self.within_allowed(found):
             return True
         logger.warning("許可された場所の外を指すため除きました: %s", found)
