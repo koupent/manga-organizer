@@ -179,22 +179,35 @@ class OrganizeRequest(BaseModel):
            ない。**同じ値なら通す。** 利用者がフォルダとその中のアーカイブを
            両方投入すると、同じ ``source`` と ``entry`` の行が 2 つ出来る
 
+        1 は**行の中だけを見ても足りない**。同じ本を 2 行に分け、片方に名前、
+        もう片方に訂正を載せると、行ごとの検査は素通りする。そのあと
+        ``wanted_books`` が名前と訂正を 1 冊へ**再結合する**ので、断ったはずの
+        訂正がそのまま効く。だから位置ごとに全行をまとめてから見る。まとめ方
+        （``source_key``）は ``wanted_books`` と揃える。片方だけ正規化すると、
+        門と実処理が別の本を指す。
+
         整理済みの本を守り切るのはここではない。名前欄を落として ``volume``
         だけ送る依頼はここを素通りするので、実行時の門（``_archive_plan``）が
         要る。
         """
         if self.books is None:
             return self
+        named = {
+            (source_key(book.source), book.entry)
+            for book in self.books
+            if book.title is not None or book.author is not None
+        }
         numbers: dict[tuple[Path, str], set[int | None]] = {}
         for book in self.books:
             if book.volume is None:
                 continue
-            if book.title is not None or book.author is not None:
+            place = (source_key(book.source), book.entry)
+            if place in named:
                 raise ValueError(
                     "自分の名前を持つ本の巻数は訂正できません"
                     f"（その名前のまま書き出されます）: {book.source}"
                 )
-            found = numbers.setdefault((source_key(book.source), book.entry), set())
+            found = numbers.setdefault(place, set())
             found.add(book.volume.number)
             if len(found) > 1:
                 raise ValueError(f"同じ本に違う巻数が指定されています: {book.source}")
@@ -407,6 +420,10 @@ def _archive_plan(
     既にこの道具が作った物そのものなので、そこへ載った訂正を通すと、利用者は
     自分の蔵書の名前を静かに書き換えられる。
 
+    **当て先の無い訂正は断りとして残す。** 訂正した位置がこのアーカイブに
+    無ければ、適用も拒否もされないまま消える。黙って落とすと、利用者から見た
+    症状は「直したのに直らない」だけになる。ZIP も画像フォルダも同じ扱い。
+
     ``checkpoint`` は解析（``analysis_job``）が渡すのと同じもの。整理だけ
     渡さずにおくと、同じ ``locate_books`` を呼ぶ 2 つの経路で打ち切りの
     効き方が食い違う。
@@ -421,8 +438,17 @@ def _archive_plan(
         # 裸の画像フォルダは ``locate_books`` を通らない（``_reader_for`` が
         # 名前の拡張子で ``None`` を返す）。丸ごと 1 冊なので位置は空文字の
         # ままで鍵になり、外すかどうかは投入の時点で決まっている。この道具が
-        # 書き出すのは ZIP だけなので、フォルダが整理済みになることも無い
-        return _ArchivePlan(frozenset(), corrections, ())
+        # 書き出すのは ZIP だけなので、フォルダが整理済みになることも無い。
+        # 当たるのは空文字だけ。それ以外の位置に載った訂正は当て先が無いので、
+        # ZIP の側と同じ形で断る
+        whole = (
+            MappingProxyType({"": corrections[""]})
+            if "" in corrections
+            else _NO_CORRECTIONS
+        )
+        return _ArchivePlan(
+            frozenset(), whole, _missing_refusals(archive, corrections, {""})
+        )
 
     try:
         located = locate_books(archive, checkpoint)
@@ -447,7 +473,9 @@ def _archive_plan(
     skip: set[str] = set()
     volumes: dict[str, int | None] = {}
     refused: list[dict[str, str]] = []
+    seen: set[str] = set()
     for location in located:
+        seen.add(location.entry)
         if location.entry not in chosen:
             skip.add(location.extracted_path)
             continue
@@ -462,6 +490,8 @@ def _archive_plan(
             refused.append(_organized_refusal(archive, location.entry))
             continue
         volumes[location.extracted_path] = corrections[location.entry]
+    # 目次に一度も現れなかった位置への訂正は、当て先そのものが無い
+    refused.extend(_missing_refusals(archive, corrections, seen))
     return _ArchivePlan(frozenset(skip), MappingProxyType(volumes), tuple(refused))
 
 
@@ -469,6 +499,35 @@ def _organized_refusal(archive: Path, entry: str) -> dict[str, str]:
     """整理済みの本に載っていた訂正を断ったこと（#114 段階 C）"""
     return _refusal(
         archive, entry, f"整理済みの本なので巻数の訂正は行いません: {archive.name}"
+    )
+
+
+def _missing_refusals(
+    archive: Path, corrections: Mapping[str, int | None], seen: set[str]
+) -> tuple[dict[str, str], ...]:
+    """当て先が見つからなかった訂正を、断りとして残す（#114 段階 C）。
+
+    適用も拒否もされなかった訂正を黙って落とすと、利用者から見た症状は
+    「直したのに直らない」だけになり、依頼が届かなかったのか断られたのかを
+    切り分ける手がかりが無くなる。依頼が間違っているとは限らない。解析の
+    あとにアーカイブの中身が変われば起きる。
+
+    ``seen`` はこのアーカイブで実際に在った位置。ZIP は目次に現れた位置、
+    画像フォルダは丸ごと 1 冊を指す空文字だけ。
+    """
+    return tuple(
+        _missing_refusal(archive, entry)
+        for entry in sorted(corrections)
+        if entry not in seen
+    )
+
+
+def _missing_refusal(archive: Path, entry: str) -> dict[str, str]:
+    """訂正した位置がこのアーカイブに無かったこと（#114 段階 C）"""
+    return _refusal(
+        archive,
+        entry,
+        f"訂正した位置が見つからないので巻数の訂正は行いません: {archive.name}",
     )
 
 
