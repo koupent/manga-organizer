@@ -14,19 +14,26 @@
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
 from manga_api.jobs import ProgressReporter
 from manga_core.cancellation import OperationCancelled
+from manga_core.organized_detector import judge_organized
 from manga_core.toc_analyzer import locate_books
 from manga_core.volume_detector import SeriesName
 
 logger = logging.getLogger(__name__)
+
+# 巻数の訂正が 1 つも無いときの地図。書き換えられない物を使い回すのは、
+# 空の辞書を返す場所が増えたときに、片方の呼び出しが書き足した訂正が
+# 別の呼び出しへ漏れるのを形の上で不可能にするため
+_NO_CORRECTIONS: Mapping[str, int | None] = MappingProxyType({})
 
 
 def source_key(source: str) -> Path:
@@ -37,6 +44,34 @@ def source_key(source: str) -> Path:
     取り違える形で通る。鍵の作り方は 1 か所にしか置かない。
     """
     return Path(source).resolve()
+
+
+class VolumeOverride(BaseModel):
+    """利用者が直した巻数（#114 段階 C）。
+
+    巻数だけを ``int | None`` で受けず、包みにするのは ``None`` に 2 つの意味が
+    乗るから。「まだ訂正していない」と「巻数を外す」が同じ ``null`` になり、
+    後から見分けられない。画面（``plan.ts`` の ``selectedBooks``）は既に
+    **全行へ** ``title`` / ``author`` の ``null`` を載せて送っているので、同じ
+    書き方を ``volume`` にも広げると、既定の依頼が「全冊の巻数を消す」依頼に
+    なる。包みの有無が「訂正したかどうか」で、中の ``number`` が「何巻か」。
+
+    ``number`` に既定値は付けない。``{"volume": {}}`` を黙って「巻数なし」と
+    読むと、包んだ意味そのものが消える。
+
+    下限が 0 なのは体裁の話ではなく、往復するかどうかの話（実測）。``-1`` は
+    ``[著者] 作品 第-01巻.zip`` になり、``organized_detector._ORGANIZED_STEM``
+    （``第(?P<volume>\\d+)巻``）に**一致しない**。つまりその本は二度と
+    「整理済み」にならず、投入するたびに永久に作り直される。しかも同じ名前は
+    ``VolumeDetector`` の ``第(\\d+)巻`` に拾われて**第 1 巻として読み戻される**
+    ので、利用者は「-1 巻にしたはずの本が 1 巻になっている」ものを受け取り
+    続ける。``0`` は ``第000巻.zip`` になり 0 へ読み戻るので許す。
+    """
+
+    number: int | None = Field(
+        ge=0,
+        description="訂正後の巻数。null は「巻数を付けない」。省略はできない",
+    )
 
 
 class BookRef(BaseModel):
@@ -56,6 +91,13 @@ class BookRef(BaseModel):
     author: str | None = Field(
         default=None,
         description="この本自身の著者名。整理済みの本だけが持つ。省くと依頼の値を使う",
+    )
+    volume: VolumeOverride | None = Field(
+        default=None,
+        description=(
+            "巻数の訂正。省くと自動判定のまま。"
+            "包みの有無が「訂正したかどうか」で、中の number が「何巻か」"
+        ),
     )
 
     def own_series(self) -> SeriesName | None:
@@ -117,13 +159,59 @@ class OrganizeRequest(BaseModel):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _corrections_stay_off_books_that_carry_their_own_name(
+        self,
+    ) -> "OrganizeRequest":
+        """巻数の訂正を載せてよい所を、ジョブになる前に決める（#114 段階 C）。
+
+        上の ``_names_belong_to_a_whole_archive`` には混ぜない。あちらが決めて
+        いるのは「名前を載せてよい所」という別の契約で、一緒にすると片方を
+        直したときにもう片方の理由まで動く。
+
+        断るのは 2 つだけ。
+
+        1. 自分の名前を載せた本への訂正。名前が載っている本は、その名前のまま
+           書き出される。**理由に「整理済みなので」とは書かない。** この時点で
+           サイドカーは整理済みかどうかを知らない（知るにはアーカイブを開く
+           しかない）ので、名前だけを載せた未整理の本にも同じ嘘が出る
+        2. 同じ 1 冊に**違う**巻数が 2 つ。どちらが利用者の意図か決めようが
+           ない。**同じ値なら通す。** 利用者がフォルダとその中のアーカイブを
+           両方投入すると、同じ ``source`` と ``entry`` の行が 2 つ出来る
+
+        整理済みの本を守り切るのはここではない。名前欄を落として ``volume``
+        だけ送る依頼はここを素通りするので、実行時の門（``_archive_plan``）が
+        要る。
+        """
+        if self.books is None:
+            return self
+        numbers: dict[tuple[Path, str], set[int | None]] = {}
+        for book in self.books:
+            if book.volume is None:
+                continue
+            if book.title is not None or book.author is not None:
+                raise ValueError(
+                    "自分の名前を持つ本の巻数は訂正できません"
+                    f"（その名前のまま書き出されます）: {book.source}"
+                )
+            found = numbers.setdefault((source_key(book.source), book.entry), set())
+            found.add(book.volume.number)
+            if len(found) > 1:
+                raise ValueError(f"同じ本に違う巻数が指定されています: {book.source}")
+        return self
+
 
 @dataclass(frozen=True)
 class _Wanted:
-    """1 つのアーカイブについて、作る本の位置と、その本自身の名前"""
+    """1 つのアーカイブについて、作る本の位置と、その本自身の名前と、巻数の訂正"""
 
     entries: frozenset[str]
     series: SeriesName | None
+    # 位置（``entry``） -> 訂正後の巻数。**鍵の有無が「訂正したかどうか」**で、
+    # 値の ``None`` は「巻数を付けない」という正当な訂正。値の側で見分けようと
+    # すると、巻数を外す依頼が自動判定の番号へ静かに戻る。既定値は付けない。
+    # 訂正が 1 つも無い形（``_NO_CORRECTIONS``）を組み立て側に必ず書かせる
+    volumes: Mapping[str, int | None]
 
 
 def wanted_books(books: list[BookRef] | None) -> dict[Path, _Wanted] | None:
@@ -133,22 +221,31 @@ def wanted_books(books: list[BookRef] | None) -> dict[Path, _Wanted] | None:
     省いたときだけ ``None`` を返す。パスはリンクを解いた形に揃える。解析が
     返した文字列と整理で辿り直したパスは、同じ物でも書き方が違いうる。
 
-    位置と名前を 1 つの表に載せる。別々の表にして片方だけ生のパスで引くと、
-    外す方は効いているのに名前だけが黙って依頼の対へ落ちる。リンクを解いた形と
-    生の形が一致する場所（テストの一時領域）では、それが誰にも見えない。
+    位置と名前と巻数の訂正を 1 つの表に載せる。別々の表にして片方だけ生のパスで
+    引くと、外す方は効いているのに名前や訂正だけが黙って落ちる。リンクを解いた
+    形と生の形が一致する場所（テストの一時領域）では、それが誰にも見えない。
     """
     if books is None:
         return None
     entries: dict[Path, set[str]] = {}
     series: dict[Path, SeriesName] = {}
+    volumes: dict[Path, dict[str, int | None]] = {}
     for book in books:
         key = source_key(book.source)
         entries.setdefault(key, set()).add(book.entry)
         own = book.own_series()
         if own is not None:
             series[key] = own
+        if book.volume is not None:
+            # 同じ本に違う巻数が 2 つ載った依頼は ``OrganizeRequest`` が既に
+            # 断っている。ここへ来る重複は同じ値なので、上書きしても変わらない
+            volumes.setdefault(key, {})[book.entry] = book.volume.number
     return {
-        key: _Wanted(entries=frozenset(found), series=series.get(key))
+        key: _Wanted(
+            entries=frozenset(found),
+            series=series.get(key),
+            volumes=MappingProxyType(volumes.get(key, {})),
+        )
         for key, found in entries.items()
     }
 
@@ -182,6 +279,7 @@ def organize_work(
         organizer.set_manga_info(author=request.author, title=request.title)
         produced: list[str] = []
         failed: list[dict[str, str]] = []
+        refused: list[dict[str, str]] = []
         for index, archive in enumerate(archives, 1):
             report(current=index, total=len(archives), message=archive.name)
             series = _series_for(archive, request, wanted)
@@ -191,8 +289,11 @@ def organize_work(
             # 外す本を数えるのに 1 冊分の入れ子を全部読む。解析と同じ検査点を
             # 渡さないと、打ち切りが効くのは読み切ったあとの最初のログ行に
             # なり、数百 GB の入れ子を抱えた 1 冊ではそこまで丸ごと無駄になる
-            skip = _skipped_locations(archive, wanted, report)
-            for result in organizer.process_single_archive(archive, skip, series):
+            plan = _archive_plan(archive, wanted, report)
+            refused.extend(_announce(plan.refused, report))
+            for result in organizer.process_single_archive(
+                archive, plan.skip, series, plan.volumes
+            ):
                 if result.success and result.output_path:
                     produced.append(str(result.output_path))
                     continue
@@ -207,11 +308,32 @@ def organize_work(
                     }
                 )
         # 走り切ったこと（state）と、何が出来たか（result）は別に伝える。
-        # failed はキーごと省かない。省くと画面から見て「失敗が無い」のか
-        # 「失敗を数えていない」のかを区別できない
-        return {"produced": produced, "failed": failed}
+        # failed も refused もキーごと省かない。省くと画面から見て「無い」のか
+        # 「数えていない」のかを区別できない
+        return {"produced": produced, "failed": failed, "refused": refused}
 
     return work
+
+
+def _announce(
+    refusals: tuple[dict[str, str], ...], report: ProgressReporter
+) -> tuple[dict[str, str], ...]:
+    """断った訂正を残る所へ流し、そのまま返す（#114 段階 C）。
+
+    黙って落とすのは禁止。利用者から見た症状が「直したのに直らない」だけに
+    なり、依頼が届かなかったのか断られたのかを切り分ける手がかりが無くなる。
+    跡は 3 つ――ジョブの結果（返した物を呼び出し側が積む）、``report`` が
+    ``job_logs`` へ積むログ 1 行（``OrganizePanel.tsx`` がそのまま読む）、
+    そして ``logger.warning``。1 つでも欠けると、画面と運用のどちらかから
+    断ったことが見えなくなる。
+
+    ``failed`` には混ぜない。あちらは「失敗した本」として画面に並ぶが、訂正を
+    断られた本そのものは今までどおり作られる。
+    """
+    for item in refusals:
+        report(message=item["reason"])
+        logger.warning("巻数の訂正を断りました: %s", item)
+    return refusals
 
 
 def _nameless_failure(archive: Path) -> dict[str, str]:
@@ -246,25 +368,62 @@ def _series_for(
     return SeriesName(author=request.author, title=request.title)
 
 
-def _skipped_locations(
+@dataclass(frozen=True)
+class _ArchivePlan:
+    """1 つのアーカイブについて、目次を 1 回読んで決まること。
+
+    ``skip`` と ``volumes`` は同じ鍵空間（``FileOrganizer._location_key`` が
+    返す、展開ルートからの相対パス）を共有する。``refused`` は載っていた訂正の
+    うち断ったもので、断られた本そのものは今までどおり作られる。
+    """
+
+    skip: frozenset[str]
+    volumes: Mapping[str, int | None]
+    refused: tuple[dict[str, str], ...]
+
+
+_NOTHING_PLANNED = _ArchivePlan(frozenset(), _NO_CORRECTIONS, ())
+
+
+def _archive_plan(
     archive: Path,
     wanted: dict[Path, _Wanted] | None,
     checkpoint: Callable[[], None],
-) -> frozenset[str]:
-    """このアーカイブの中で、作らない本の位置を求める。
+) -> _ArchivePlan:
+    """このアーカイブの中で、作らない本の位置と、位置ごとの巻数の訂正を求める。
 
     外すのは「解析で予告できていて、かつ選ばれなかった」本だけにする。
     予告できなかったもの（RAR・壊れたアーカイブ・入れ子の RAR）を黙って
     落とすと、利用者が外したつもりのない本が何も言わずに消える。
+
+    **目次は 1 冊につき 1 回しか読まない。** 外す本を決めるのも、訂正の載った
+    本が整理済みかどうかを見るのも、同じ ``locate_books`` の結果で足りる
+    （``BookLocation`` は ``toc_names``――目次そのもの――を既に持っている）。
+    2 回読むと、数百 GB の入れ子で目次読みが 2 倍になる。
+
+    整理済みの本を守るのがここである理由は、それが実際にアーカイブを開かないと
+    分からないため。依頼の**形**しか見ない門（``OrganizeRequest``）は、名前欄を
+    落として ``volume`` だけ送る古い画面や台本を素通りさせる。整理済みの本は
+    既にこの道具が作った物そのものなので、そこへ載った訂正を通すと、利用者は
+    自分の蔵書の名前を静かに書き換えられる。
 
     ``checkpoint`` は解析（``analysis_job``）が渡すのと同じもの。整理だけ
     渡さずにおくと、同じ ``locate_books`` を呼ぶ 2 つの経路で打ち切りの
     効き方が食い違う。
     """
     if wanted is None:
-        return frozenset()
+        return _NOTHING_PLANNED
     found = wanted.get(archive.resolve())
     chosen = found.entries if found is not None else frozenset()
+    corrections = found.volumes if found is not None else _NO_CORRECTIONS
+
+    if archive.is_dir():
+        # 裸の画像フォルダは ``locate_books`` を通らない（``_reader_for`` が
+        # 名前の拡張子で ``None`` を返す）。丸ごと 1 冊なので位置は空文字の
+        # ままで鍵になり、外すかどうかは投入の時点で決まっている。この道具が
+        # 書き出すのは ZIP だけなので、フォルダが整理済みになることも無い
+        return _ArchivePlan(frozenset(), corrections, ())
+
     try:
         located = locate_books(archive, checkpoint)
     except OperationCancelled:
@@ -277,7 +436,56 @@ def _skipped_locations(
         # 落とすと壊れた 1 つのせいで整理そのものが失敗する。読めなかった
         # ことは解析が先に印として出しているので、黙って消えることはない
         logger.warning("外す本を決められませんでした: %s (%s)", archive, error)
-        return frozenset()
-    return frozenset(
-        location.extracted_path for location in located if location.entry not in chosen
+        # 訂正も当てる先が無い。黙って落とすと、利用者から見た症状は
+        # 「直したのに直らない」だけになる
+        return _ArchivePlan(
+            frozenset(),
+            _NO_CORRECTIONS,
+            tuple(_unreadable_refusal(archive, entry) for entry in sorted(corrections)),
+        )
+
+    skip: set[str] = set()
+    volumes: dict[str, int | None] = {}
+    refused: list[dict[str, str]] = []
+    for location in located:
+        if location.entry not in chosen:
+            skip.add(location.extracted_path)
+            continue
+        if location.entry not in corrections:
+            continue
+        # 目次はもう手元にある。整理済みかどうかを見るために、ファイルを
+        # 1 バイトも読み直さない
+        verdict = judge_organized(
+            archive, location.entry, len(located), location.toc_names
+        )
+        if verdict.organized:
+            refused.append(_organized_refusal(archive, location.entry))
+            continue
+        volumes[location.extracted_path] = corrections[location.entry]
+    return _ArchivePlan(frozenset(skip), MappingProxyType(volumes), tuple(refused))
+
+
+def _organized_refusal(archive: Path, entry: str) -> dict[str, str]:
+    """整理済みの本に載っていた訂正を断ったこと（#114 段階 C）"""
+    return _refusal(
+        archive, entry, f"整理済みの本なので巻数の訂正は行いません: {archive.name}"
     )
+
+
+def _unreadable_refusal(archive: Path, entry: str) -> dict[str, str]:
+    """目次を読めず、訂正を当てる先が分からなかったこと（#114 段階 C）"""
+    return _refusal(
+        archive, entry, f"目次を読めないので巻数の訂正は行いません: {archive.name}"
+    )
+
+
+def _refusal(archive: Path, entry: str, reason: str) -> dict[str, str]:
+    """断った訂正 1 件。
+
+    理由には必ずファイル名を入れる。解析したときと実行したときで判定が食い違う
+    ことはありうるので、どの本の話かが読めないと問い合わせに答えられない。
+
+    ``failed`` には混ぜない。あちらは「失敗した本」として画面に並ぶが、訂正を
+    断られた本そのものは今までどおり作られる。
+    """
+    return {"archive": str(archive), "entry": entry, "reason": reason}

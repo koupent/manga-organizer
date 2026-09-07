@@ -13,7 +13,7 @@
 - ``_read_container`` は素の ``Exception`` を受けるので、入れ物そのものの目次
   読みで上がった打ち切りは ``AnalysisStep.error`` に化け、画面には
   「目次を読めません」のバッジが出る
-- ``manga_api.organize_job._skipped_locations`` も ``locate_books`` を検査点
+- ``manga_api.organize_job._archive_plan`` も ``locate_books`` を検査点
   無しで呼び、``except Exception`` で包んでいる。解析だけを直すと、2 つの
   経路が食い違う
 
@@ -35,7 +35,7 @@
 1. 目次読みの最中（入れ子を含む）にも打ち切りの検査点があり、そこで上がった
    例外は ``toc_analyzer`` に握りつぶされず呼び出し側まで届く
 2. 届いた打ち切りは ``unreadable``（「目次を読めません」）にしない
-3. 整理の側（``_skipped_locations``）も同じ検査点を通し、同じように握り
+3. 整理の側（``_archive_plan``）も同じ検査点を通し、同じように握り
    つぶさない
 4. **本当に壊れている入れ子は、いままでどおり外側の本ごと巻き添えにしない。**
    ``RecursionError`` も ``RuntimeError`` の一種なので、``_NESTED_READ_ERRORS``
@@ -443,7 +443,7 @@ class AnalysisNestedReadCancellationTest(NestedReadSpyMixin, AnalysisJobTestBase
 class OrganizeNestedReadCancellationTest(NestedReadSpyMixin, AnalysisJobTestBase):
     """4. 整理の側の目次読みも、同じところで止まる
 
-    ``organize_job._skipped_locations`` は「作らない本」を決めるために
+    ``organize_job._archive_plan`` は「作らない本」を決めるために
     ``locate_books`` をもう一度呼ぶ。こちらは検査点を渡しておらず、
     ``except Exception`` で包んでいるので、解析だけを直すと 2 つの経路が
     食い違う。
@@ -490,7 +490,7 @@ class OrganizeNestedReadCancellationTest(NestedReadSpyMixin, AnalysisJobTestBase
 
     def test_cancelling_during_the_skip_lookup_stops_the_reading_and_the_writing(self):
         # Arrange - 入れ子が 40 個。作るのはそのうち 1 冊だけ。残り 39 冊を
-        # 「外す」と決めるために ``_skipped_locations`` が目次を読みに行く
+        # 「外す」と決めるために ``_archive_plan`` が目次を読みに行く
         folder, outer = self.build_nest_heavy_folder("整理の打ち切り")
         output = self.work_dir / "out-整理の打ち切り"
         books = [{"source": str(outer), "entry": self.CHOSEN_ENTRY}]
