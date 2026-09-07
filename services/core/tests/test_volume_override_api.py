@@ -1494,5 +1494,202 @@ class RefusalWordingTest(VolumeOverrideApiTestBase):
         )
 
 
+# 同じ実体に与えるもう 1 つの名前。数字を ``PLAIN_NAME`` と揃えるのは、綴りが
+# 2 つに割れたときに出来上がりが「同じ本の 2 冊目」（``_1`` 付き）として現れ、
+# 失敗の出力からそれと読めるようにするため
+LINK_NAME = "複製_09.zip"
+
+
+class SameFileTestBase(VolumeOverrideApiTestBase):
+    """同じ 1 つのファイルに、2 通りの綴りを与える土台。
+
+    ``source_key``（``organize_job.py``）は ``Path.resolve()`` で鍵を作る。
+    **これは「同じファイルの別の綴り」を同じ鍵にできない。** 大文字小文字を
+    区別しないファイルシステム（配布先の Windows、この開発環境の
+    ``/workspaces``）では綴り違いがそのまま起きるが、テストが走る ``/tmp`` は
+    区別するので、大文字小文字では書けない。
+
+    ハードリンクなら**どのファイルシステムでも**同じ穴を踏める（実測）::
+
+        resolve a: a.zip / resolve b: b.zip
+        samefile: True
+        Path.resolve() が一致: False      <- ここが穴
+        (st_dev, st_ino) が一致: True
+    """
+
+    def twin(self, original: Path, name: str = LINK_NAME) -> Path:
+        """同じ実体に、もう 1 つの名前を与える。
+
+        中身を写した別ファイルではいけない。それは「同じ本が 2 つある」だけの
+        話で、鍵の作り方とは関係が無い。ここで確かめたいのは**同じ 1 つの
+        ファイル**が 2 つの鍵に割れることなので、実体を 1 つに保つ。
+        """
+        link = original.parent / name
+        link.hardlink_to(original)
+        return link
+
+    def assert_two_spellings_of_one_file(self, original: Path, link: Path) -> None:
+        """素材が本当に「1 つのファイルの 2 通りの綴り」であることを、依頼の前に
+        確かめる。
+
+        前提が崩れた素材（別々のファイル、あるいは ``resolve()`` が一致する
+        綴り）だと、この下のテストは**何も確かめずに緑になる**。ハードリンクを
+        張れない環境で黙って通り抜けるのを防ぐ。
+        """
+        self.assertTrue(
+            original.samefile(link),
+            f"素材が同じファイルになっていない: {original} / {link}",
+        )
+        self.assertNotEqual(
+            original.resolve(),
+            link.resolve(),
+            "2 つの綴りが同じパスに解けている。これでは穴を踏めない: "
+            f"{original} / {link}",
+        )
+
+
+class SplitSpellingOverrideTest(SameFileTestBase):
+    """C16. 綴りを 2 つに分けても、門 1 は名前と訂正の同居を見抜く。
+
+    C11 が塞いだのは「同じ ``(source, entry)`` を 2 **行**に分ける」抜け道
+    だった。門 1 は位置ごとに全行をまとめてから見るようになったが、**その
+    まとめ方（``source_key``）が同じファイルの別の綴りを別の位置として扱う。**
+
+    実測（``raw_09.zip`` と、その実体へのハードリンク ``複製_09.zip``。素材は
+    整理済みではないので門 2 も拾わない）:
+
+    | 依頼の形 | いまの答え | 出来る物 |
+    |---|---|---|
+    | 1 つの綴りに名前と訂正 | 422 | （作らない） |
+    | 2 つの綴りに分ける | **202** | ``[著者] 作品 第007巻.zip`` |
+
+    ``wanted_books`` も同じ ``source_key`` で鍵を作るので、同じファイルが 2 つの
+    鍵に分かれ、名前の載っていない側の鍵に訂正がそのまま残る。**つまり門が
+    1 つも塞がっていない。**
+
+    対照を 2 つ置く。「綴りが 2 つあれば断る」実装と「訂正の載った綴りが 2 つ
+    あれば断る」実装が、両方ここで落ちる。
+    """
+
+    def test_a_name_and_a_correction_split_across_two_spellings_are_refused(self):
+        # Arrange - 素材が「1 つのファイルの 2 通りの綴り」であることを先に
+        # 確かめる。前提が崩れているのに緑になるのを防ぐ
+        library = self.work_dir / "蔵書C16"
+        plain = self.plain(library)
+        twin = self.twin(plain)
+        self.assert_two_spellings_of_one_file(plain, twin)
+        split_output = self.work_dir / "綴りを分けた側"
+        nameless_output = self.work_dir / "対照a"
+        fixed_output = self.work_dir / "対照b"
+
+        # Act / Assert - 一方の綴りに名前、もう一方に訂正。断る。しかも 1 冊も
+        # 書き出さない。``produced_map`` を見るのは、受け付けてジョブにしてから
+        # 失敗させる実装を落とすため
+        split = self.submit(
+            [plain, twin],
+            split_output,
+            books=[
+                {"source": str(plain), "entry": "", "title": TITLE, "author": AUTHOR},
+                {"source": str(twin), "entry": "", "volume": {"number": FIXED}},
+            ],
+        )
+        self.assertEqual(
+            422,
+            split.status_code,
+            f"綴りを 2 つに分けた依頼が門 1 を素通りしている: {split.text}",
+        )
+        self.assertEqual(
+            {}, self.produced_map(split_output), "断ったのに書き出している"
+        )
+
+        # Act / Assert - 対照 (a)。2 つの綴りに分けるが、どちらにも訂正が無い。
+        # 「綴りが 2 つあれば断る」実装はここで落ちる
+        nameless = self.submit(
+            [plain, twin],
+            nameless_output,
+            books=[
+                {"source": str(plain), "entry": "", "title": TITLE, "author": AUTHOR},
+                {"source": str(twin), "entry": ""},
+            ],
+        )
+        self.assertEqual(
+            202,
+            nameless.status_code,
+            f"訂正の無い 2 つの綴りの依頼まで断っている: {nameless.text}",
+        )
+
+        # Act / Assert - 対照 (b)。2 つの綴りに同じ訂正だけ（名前は 1 行も
+        # 載せない）。受け付けて、訂正が効く。「訂正の載った綴りが 2 つあれば
+        # 断る」実装と「何にでも 422 を返す」実装が、両方ここで落ちる
+        accepted = self.submit(
+            [plain, twin],
+            fixed_output,
+            books=[
+                {"source": str(plain), "entry": "", "volume": {"number": FIXED}},
+                {"source": str(twin), "entry": "", "volume": {"number": FIXED}},
+            ],
+        )
+        self.assertEqual(
+            202,
+            accepted.status_code,
+            f"名前の載らない 2 つの綴りの訂正まで断っている: {accepted.text}",
+        )
+        job = self.job(accepted.json()["id"])
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+
+        # Assert - 出来た物はどれも訂正どおりの番号を持つ。**冊数はここでは
+        # 見ない。** 同じファイルが 2 冊に増えるかどうかは C17 の担当で、
+        # ここで一緒に見ると門 1 の話と展開の話が 1 本のテストで混ざる
+        produced = self.produced_map(fixed_output)
+        corrected = f"[{REQUEST_AUTHOR}] {REQUEST_TITLE} 第{FIXED:03d}巻"
+        self.assertEqual(
+            [REQUEST_DIR], list(produced), f"行き先が想定と違う: {produced}"
+        )
+        self.assertTrue(
+            produced[REQUEST_DIR]
+            and all(name.startswith(corrected) for name in produced[REQUEST_DIR]),
+            f"2 つの綴りに載せた訂正が効いていない: {produced}",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+
+
+class DuplicateSpellingExpansionTest(SameFileTestBase):
+    """C17. 同じファイルを 2 通りに書いて投入しても、本が 2 冊できない。
+
+    ``input_expander.iter_inputs`` は ``set[Path]`` で重複を落とすが、**綴りが
+    違えば同じ実体を 2 回返す。** その 2 件はどちらも整理されるので、同じ本が
+    2 回書き出され、2 冊目に ``_1`` が付く。
+
+    利用者から見た症状は「同じ本が 2 冊出来た」。しかも中身は同じなので、
+    どちらを消せばよいのかは名前からは分からない。
+
+    ``produced_map`` を丸ごと比べる。件数だけだと、別の理由で 1 冊になった場合
+    （行き先を取り違えた、片方が失敗した）も通ってしまう。
+    """
+
+    def test_two_spellings_of_the_same_file_do_not_produce_two_books(self):
+        # Arrange - 素材が「1 つのファイルの 2 通りの綴り」であることを先に
+        # 確かめる。別々のファイルなら 2 冊出来て当たり前で、何も確かめられない
+        library = self.work_dir / "蔵書C17"
+        plain = self.plain(library)
+        twin = self.twin(plain)
+        self.assert_two_spellings_of_one_file(plain, twin)
+        output = self.work_dir / "出力C17"
+
+        # Act - 2 つの綴りを両方投入する。``books`` は載せない（投入したものを
+        # 全部作る）。訂正の話をここへ持ち込まないのは、展開の重複そのものが
+        # 訂正と関わりなく起きるため
+        job = self.organize([plain, twin], output, books=None)
+
+        # Assert - 出来る本は 1 冊。自動判定の 9 のまま。``_1`` の付いた
+        # 2 冊目はどこにも無い
+        self.assertEqual(
+            {REQUEST_DIR: [volume_name(REQUEST_AUTHOR, REQUEST_TITLE, PLAIN_VOLUME)]},
+            self.produced_map(output),
+            "同じファイルの 2 通りの綴りから、本が 2 冊出来ている",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+
+
 if __name__ == "__main__":
     unittest.main()
