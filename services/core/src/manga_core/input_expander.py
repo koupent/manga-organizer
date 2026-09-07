@@ -13,9 +13,10 @@
 """
 
 import os
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Hashable, Iterable, Iterator
 from pathlib import Path
 
+from manga_core.file_identity import file_key
 from manga_core.naming import natural_sort_key
 from manga_core.viewer_contract import is_page_source
 
@@ -39,7 +40,9 @@ def expand_inputs(paths: Iterable[Path]) -> list[Path]:
 
 
 def iter_inputs(
-    paths: Iterable[Path], checkpoint: Callable[[], None] = lambda: None
+    paths: Iterable[Path],
+    checkpoint: Callable[[], None] = lambda: None,
+    accept: Callable[[Path], bool] = lambda _item: True,
 ) -> Iterator[Path]:
     """``expand_inputs`` と同じものを、見つけた順に 1 件ずつ返す。
 
@@ -50,14 +53,30 @@ def iter_inputs(
     ``checkpoint`` はフォルダを 1 つ覗くたびに呼ぶ。**拾ったものを返すだけでは
     打ち切りの機会にならない。** アーカイブが 1 つも無い木では 1 件も返さない
     まま数分歩き続けるので、区切りは「歩いた回数」の側に付ける。
+
+    重複はパスの形ではなく**実体**で落とす（``file_key``）。利用者は同じ蔵書を
+    別の綴りで 2 回投げ込める（フォルダとその中のファイル、大文字小文字違い、
+    ハードリンク）。形で比べると同じ 1 冊を 2 回返し、2 冊目に ``_1`` が付いた
+    同じ本が黙って出来る。中身が同じだけの別ファイルは別の実体なので、今までど
+    おり両方返る。
+
+    ``accept`` は、辿って見つけたものを処理対象にしてよいかの判定。何を許すかは
+    呼ぶ側が持つ（``manga_core`` は許可された場所を知らない）。**重複を落とすより
+    前に呼ぶ。** 順番を逆にすると、許可の外を指すリンクと許可の中のハードリンク
+    が同じ実体を指しているとき、**先に列挙されたリンクが実体の鍵を取る**。中の
+    ハードリンクは重複として落ち、残ったリンクは呼ぶ側で除かれ、利用者の本が
+    並び順次第で黙って消える。
     """
-    seen: set[Path] = set()
+    seen: set[Hashable] = set()
     for path in paths:
         found = _walk_directory(path, checkpoint) if path.is_dir() else (path,)
         for item in found:
+            if not accept(item):
+                continue
             # 同じものを二度処理しないよう、順番を保ったまま重複を落とす
-            if item not in seen:
-                seen.add(item)
+            key = file_key(item)
+            if key not in seen:
+                seen.add(key)
                 yield item
 
 

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from fastapi import HTTPException, status
 
-from manga_core.input_expander import expand_inputs
+from manga_core.input_expander import iter_inputs
 from manga_core.page_reorder import PageReorderError, ZipPageEditor
 
 logger = logging.getLogger(__name__)
@@ -85,18 +85,30 @@ class PathGuard:
         辿って見つけたものは利用者が名指ししていない。リンクで許可の外を
         指していないか、1 件ずつ確かめてから処理対象に入れる。
 
+        検査は展開の**中へ**渡す。外で絞ると、展開が同じ実体の重複を落とし
+        終えた後になり、許可の外を指すリンクが先に列挙されただけで許可の中の
+        ハードリンクが消える（``input_expander.iter_inputs`` の ``accept``）。
+
         解析と整理で同じ展開を通すのは、処理順が同名衝突の ``_1`` の付き方を
         決めるため。片方だけ順番が変わると、予告した名前と実際に出来る名前が
         食い違う。
         """
         targets = [self.resolve_organize_target(raw) for raw in raws]
-        expanded: list[Path] = []
-        for found in expand_inputs(targets):
-            if self.within_allowed(found):
-                expanded.append(found)
-            else:
-                logger.warning("許可された場所の外を指すため除きました: %s", found)
-        return expanded
+        return list(iter_inputs(targets, accept=self._accept_inside))
+
+    def _accept_inside(self, found: Path) -> bool:
+        """辿って見つけたものを処理対象にしてよいか。除いたものは記録に残す。
+
+        検査が重複除去より前へ来たので、**警告は綴りごとに 1 行出る**。以前は
+        実体で畳んだ後に書いていたため、外を指すリンクが何本あっても 1 行しか
+        出ず、許可の中の実体が先に来た場合は 1 行も出なかった。蔵書にそのリンクが
+        何本あるかは利用者が直したい事実なので、綴りごとに残す方を採る。
+        サーバのログだけの変化で、API にもジョブのログにも出ない。
+        """
+        if self.within_allowed(found):
+            return True
+        logger.warning("許可された場所の外を指すため除きました: %s", found)
+        return False
 
     def open_editor(self, raw: str) -> ZipPageEditor:
         """アーカイブを開く。開けない理由はそのまま伝える"""

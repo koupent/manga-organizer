@@ -567,6 +567,8 @@ export interface components {
        * @description この本自身の著者名。整理済みの本だけが持つ。省くと依頼の値を使う
        */
       author?: string | null;
+      /** @description 巻数の訂正。省くと自動判定のまま。包みの有無が「訂正したかどうか」で、中の number が「何巻か」 */
+      volume?: components["schemas"]["VolumeOverride"] | null;
     };
     /**
      * BrowseEntry
@@ -1066,6 +1068,35 @@ export interface components {
       input?: unknown;
       /** Context */
       ctx?: Record<string, never>;
+    };
+    /**
+     * VolumeOverride
+     * @description 利用者が直した巻数（#114 段階 C）。
+     *
+     *     巻数だけを ``int | None`` で受けず、包みにするのは ``None`` に 2 つの意味が
+     *     乗るから。「まだ訂正していない」と「巻数を外す」が同じ ``null`` になり、
+     *     後から見分けられない。画面（``plan.ts`` の ``selectedBooks``）は既に
+     *     **全行へ** ``title`` / ``author`` の ``null`` を載せて送っているので、同じ
+     *     書き方を ``volume`` にも広げると、既定の依頼が「全冊の巻数を消す」依頼に
+     *     なる。包みの有無が「訂正したかどうか」で、中の ``number`` が「何巻か」。
+     *
+     *     ``number`` に既定値は付けない。``{"volume": {}}`` を黙って「巻数なし」と
+     *     読むと、包んだ意味そのものが消える。
+     *
+     *     下限が 0 なのは体裁の話ではなく、往復するかどうかの話（実測）。``-1`` は
+     *     ``[著者] 作品 第-01巻.zip`` になり、``organized_detector._ORGANIZED_STEM``
+     *     （``第(?P<volume>\d+)巻``）に**一致しない**。つまりその本は二度と
+     *     「整理済み」にならず、投入するたびに永久に作り直される。しかも同じ名前は
+     *     ``VolumeDetector`` の ``第(\d+)巻`` に拾われて**第 1 巻として読み戻される**
+     *     ので、利用者は「-1 巻にしたはずの本が 1 巻になっている」ものを受け取り
+     *     続ける。``0`` は ``第000巻.zip`` になり 0 へ読み戻るので許す。
+     */
+    VolumeOverride: {
+      /**
+       * Number
+       * @description 訂正後の巻数。null は「巻数を付けない」。省略はできない
+       */
+      number: number | null;
     };
   };
   responses: never;
