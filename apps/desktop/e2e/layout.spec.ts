@@ -567,24 +567,45 @@ test.describe("ワークベンチ: ファイル整理", () => {
     ).toEqual([]);
   });
 
-  test("ファイルを選ぶと処理対象の一覧が入れ替わる", async ({ page }) => {
-    // Arrange - 入れ替わりが見えるよう、一覧に中身がある状態から始める
+  /*
+   * 元は「ファイルを選ぶと処理対象の一覧が入れ替わる」で、一覧が退くことを
+   * 固定していた。ファイルブラウザを別窓へ移す作業（browser-dialog.spec.ts）で
+   * 意図的に否定する仕様そのものなので、ここで反転させる。
+   *
+   * 退かせていたのは、右側の 1 枚の面を「投入」「ファイルブラウザ」「解析結果」の
+   * 3 者が奪い合っていたため。両方を積むとどちらも半分の高さになるので、
+   * 開いている方だけを置いていた。結果として、何階層も辿って何件も入れる作業を、
+   * 入れた一覧を見ないまま進めることになっていた。窓を重ねれば作業面の奪い合いは
+   * 起きず、一覧を見ながら選べる。
+   */
+  test("ファイルを選ぶ間も処理対象の一覧が見えている", async ({ page }) => {
+    // Arrange - 一覧に中身がある状態から始める。空では「消えていない」ことを
+    // 確かめようがない
     await openOrganize(page, "out-swap");
     await addSome(page, archiveNames.slice(0, FEW));
     const rows = droppedRows(page);
+    const first = join(sidecar.workDir, ARCHIVE_DIR, archiveNames[0]);
     await expect(rows.first()).toBeVisible();
 
     // Act - ファイルを選ぶ
     await page.getByTestId("open-browser").click();
 
-    // Assert - 同じ場所を使うので、一覧は退く
+    // Assert - 別窓に出る。行だけを見ると、何も開かない実装でも通る
+    await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByTestId("file-browser")).toBeVisible();
-    await expect(rows.first(), "ファイルを選ぶ間も一覧が出たまま").toBeHidden();
 
-    // Act - 閉じる
+    // Assert - 一覧は退かない。件数ではなくパスで名指しした 1 行を見る
+    await expect(
+      page.locator(
+        `[data-testid="plan-row"][data-level="0"][data-path="${first}"]`,
+      ),
+      "ファイルを選ぶ間に、投入した一覧が画面から消えている",
+    ).toBeVisible();
+
+    // Act - 閉じる。トグルは据え置く
     await page.getByTestId("open-browser").click();
 
-    // Assert - 一覧が戻る。件数も保たれている
+    // Assert - 件数も中身も保たれている
     await expect(page.getByTestId("file-browser")).toBeHidden();
     await expect(rows).toHaveCount(FEW);
     await expect(rows.first()).toBeVisible();
