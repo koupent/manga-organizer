@@ -10,12 +10,13 @@ import { parentDirectory } from "../path";
 import { resolveDroppedPaths } from "../lib/dropped";
 import { cn } from "../lib/utils";
 import {
-  FileBrowser,
+  FileBrowserDialog,
   type BrowseEntry,
   type BrowseLocation,
-} from "./FileBrowser";
+} from "./FileBrowserDialog";
 import { Alert } from "./ui/alert";
 import { Button } from "./ui/button";
+import { Dialog, DialogTrigger } from "./ui/dialog";
 import { Empty } from "./ui/empty";
 import { SectionTitle } from "./ui/section-title";
 import type { SidecarClient } from "../api/client";
@@ -142,20 +143,25 @@ export function FilePicker({
   }, [browsing, location.path, load]);
 
   /**
-   * 一覧を書き換える唯一の入り口。
+   * 一覧を書き換える唯一の入り口。書き換えたときだけ true を返す。
    *
    * 実行中に中身が変わると、実際に処理される内容と画面が食い違う。
    * 経路ごとに止め忘れないよう、ここで一括して弾く。
    */
   const replace = (paths: string[]) => {
-    if (locked.current) return;
+    if (locked.current) return false;
     // 単一選択でまとめて投入されたら、黙って捨てずに先頭を採る。
     // どれを使ったかは呼び出し側が対象として画面に出す
     onChange(single ? paths.slice(0, 1) : paths);
+    return true;
   };
 
   const add = (paths: string[]) => {
-    replace([...new Set([...selected, ...paths])]);
+    const applied = replace([...new Set([...selected, ...paths])]);
+    // 1 冊だけ選ぶ画面では、選んだ時点で窓は用済み。開いたままだと読み込んだ
+    // ページの格子を覆ってしまう。一覧を持つ画面は続けて何件も入れるので、
+    // 1 件ごとに閉じると辿り直しになる。閉じるのはここだけの振る舞い
+    if (applied && single) setBrowsing(false);
   };
 
   /** ドロップを受ける。実パスの引き当ては単一選択と共通の経路で行う */
@@ -229,75 +235,91 @@ export function FilePicker({
     </div>
   );
 
-  const browser = (
-    <FileBrowser
-      location={location}
-      entries={entries}
-      selected={selected}
-      single={single}
-      disabled={disabled}
-      fill={fill}
-      onOpen={load}
-      onAdd={add}
-    />
-  );
+  const sectionTitle =
+    title ?? (single ? "並べ替えるアーカイブ" : "処理対象ファイル");
 
   return (
-    <section className={cn("flex flex-col gap-2", fill && "min-h-0 flex-1")}>
-      <div className="flex items-center gap-2">
-        <SectionTitle>
-          {title ?? (single ? "並べ替えるアーカイブ" : "処理対象ファイル")}
-        </SectionTitle>
-        {/* 単一選択は一覧を持たない。件数も一括操作も指すものが無い */}
-        {single ? null : (
-          <>
-            <span
-              className="tabular text-[12px] text-ink-faint"
-              data-testid="selected-count"
+    /*
+      辿る一覧は重ねた窓で出す。開閉のボタンは窓の外の見出し行に残るので、
+      Radix に「この窓を開いた当人」として扱わせるため DialogTrigger にする。
+      そうしないと、開いている間にボタンを押したとき、窓の外を押した扱いで
+      一度閉じてから、ボタン自身の切り替えで開き直してしまう。
+
+      重ねるが後ろは塞がない（modal なし）。塞ぐと、見えている処理対象の一覧に
+      触れなくなるうえ、開閉のボタン自体も覆いの下へ入って押せなくなる。
+    */
+    <Dialog modal={false} open={browsing} onOpenChange={setBrowsing}>
+      <section className={cn("flex flex-col gap-2", fill && "min-h-0 flex-1")}>
+        <div className="flex items-center gap-2">
+          <SectionTitle>{sectionTitle}</SectionTitle>
+          {/* 単一選択は一覧を持たない。件数も一括操作も指すものが無い */}
+          {single ? null : (
+            <>
+              <span
+                className="tabular text-[12px] text-ink-faint"
+                data-testid="selected-count"
+              >
+                {selected.length} 件
+              </span>
+              {hint && selected.length > 0 ? (
+                <span className="text-[11.5px] text-ink-faint">{hint}</span>
+              ) : null}
+            </>
+          )}
+          <div className="flex-1" />
+          <DialogTrigger asChild>
+            <Button
+              variant={browsing ? "primary" : "secondary"}
+              data-testid="open-browser"
+              disabled={disabled}
             >
-              {selected.length} 件
-            </span>
-            {hint && selected.length > 0 ? (
-              <span className="text-[11.5px] text-ink-faint">{hint}</span>
-            ) : null}
-          </>
-        )}
-        <div className="flex-1" />
-        <Button
-          variant={browsing ? "primary" : "secondary"}
-          data-testid="open-browser"
-          disabled={disabled}
-          onClick={() => setBrowsing((open) => !open)}
-        >
-          <FolderOpen />
-          {browsing ? "選択を閉じる" : "ファイルを選ぶ"}
-        </Button>
-        {single ? null : (
-          <Button
-            variant="ghost"
-            data-testid="clear-selection"
-            disabled={disabled || selected.length === 0}
-            onClick={() => replace([])}
-          >
-            一覧を空にする
-          </Button>
-        )}
-      </div>
+              <FolderOpen />
+              {browsing ? "選択を閉じる" : "ファイルを選ぶ"}
+            </Button>
+          </DialogTrigger>
+          {single ? null : (
+            <Button
+              variant="ghost"
+              data-testid="clear-selection"
+              disabled={disabled || selected.length === 0}
+              onClick={() => replace([])}
+            >
+              一覧を空にする
+            </Button>
+          )}
+        </div>
 
-      {/* 主操作は一覧とファイルブラウザの入れ替わりの外に置く。
-          ファイルを選んでいる間も同じ場所にあり、押しに行ける */}
-      {actions}
+        {/* 主操作は一覧の直上に置く。ファイルを選んでいる間も同じ場所にあり、
+            押しに行ける */}
+        {actions}
 
-      {/* 一覧とファイルブラウザは同じ作業面を奪い合う。両方を積むと
-          どちらも半分の高さになるので、開いている方だけをここに置く */}
-      {browsing ? browser : dropzone}
+        {/* 落とす場所と投入した一覧は、辿っている間も居場所を明け渡さない。
+            入れたものを見ながら次を選べるようにするのが窓へ移した理由 */}
+        {dropzone}
 
-      {error ? (
-        <Alert tone="danger" data-testid="picker-error">
-          <TriangleAlert />
-          <span>{error}</span>
-        </Alert>
-      ) : null}
-    </section>
+        {error ? (
+          <Alert tone="danger" data-testid="picker-error">
+            <TriangleAlert />
+            <span>{error}</span>
+          </Alert>
+        ) : null}
+      </section>
+
+      <FileBrowserDialog
+        location={location}
+        entries={entries}
+        selected={selected}
+        single={single}
+        disabled={disabled}
+        title={`${sectionTitle}を選ぶ`}
+        description={
+          single
+            ? "フォルダを辿って、対象にするアーカイブを 1 つ選びます。選ぶとこの窓は閉じます。"
+            : "フォルダやアーカイブを辿って、処理対象の一覧へ足します。足してもこの窓は開いたままです。"
+        }
+        onOpen={load}
+        onAdd={add}
+      />
+    </Dialog>
   );
 }
