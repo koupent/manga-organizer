@@ -313,6 +313,80 @@ mod tests {
         );
     }
 
+    /// 何も落とされなかったとき、何も返さない
+    #[test]
+    fn an_empty_drop_keeps_nothing() {
+        let empty: Vec<(String, bool)> = Vec::new();
+
+        assert_eq!(empty, actual(&dropped_entries(&[])));
+    }
+
+    /// 対応形式と大小文字を、まとめて押さえる。
+    ///
+    /// 他のテストは小文字の .zip しか使わないので、ARCHIVE_SUFFIXES から
+    /// 1 つ落ちても、大小を畳む処理が消えても、どれも通ってしまう。
+    /// 7 形式すべてと大文字混じりを実在させて、まとめてここで見る
+    #[test]
+    fn keeps_every_supported_suffix_whatever_the_case() {
+        let tree = TempTree::new("every-supported-suffix");
+        // 並び順は path 順に決まる。先頭の番号で期待する順序を固定する
+        let archives: Vec<PathBuf> = [
+            "01_蔵書.zip",
+            "02_蔵書.CBZ",
+            "03_蔵書.rar",
+            "04_蔵書.Cbr",
+            "05_蔵書.7Z",
+            "06_蔵書.cb7",
+            "07_蔵書.ePub",
+        ]
+        .iter()
+        .map(|name| tree.file(name))
+        .collect();
+        // 対象外のものは、大小どちらで書かれていても残らない
+        let notes = [tree.file("08_メモ.txt"), tree.file("09_メモ.TXT")];
+
+        let dropped: Vec<PathBuf> = archives.iter().chain(notes.iter()).cloned().collect();
+
+        assert_eq!(
+            archives
+                .iter()
+                .map(|archive| expected(archive, false))
+                .collect::<Vec<_>>(),
+            actual(&dropped_entries(&dropped))
+        );
+    }
+
+    /// 境界の綴りを固定する。
+    ///
+    /// フロントエンドは `{ path: string; is_dir: boolean }` を手で書いており、
+    /// こちらのフィールド名を変えても、どちらのコンパイラも何も言わない。
+    /// 直列化した結果をここに写して、綴りを黙って動かせなくする
+    #[test]
+    fn the_payload_keeps_the_names_the_front_end_reads() {
+        let payload = DroppedEntries {
+            entries: vec![
+                DroppedEntry {
+                    path: "D:\\蔵書\\作品フォルダ".to_string(),
+                    is_dir: true,
+                },
+                DroppedEntry {
+                    path: "D:\\蔵書\\作品 第1巻.zip".to_string(),
+                    is_dir: false,
+                },
+            ],
+        };
+
+        assert_eq!(
+            serde_json::json!({
+                "entries": [
+                    { "path": "D:\\蔵書\\作品フォルダ", "is_dir": true },
+                    { "path": "D:\\蔵書\\作品 第1巻.zip", "is_dir": false },
+                ]
+            }),
+            serde_json::to_value(&payload).expect("直列化できませんでした")
+        );
+    }
+
     /// 配線を 1 本にする。
     ///
     /// 上のテストは `dropped_entries` だけを見るので、`on_window_event` が
