@@ -1,7 +1,9 @@
 import logging
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from manga_core.archive_handler import ArchiveHandler
 from manga_core.original_store import sidecar_members
@@ -14,6 +16,15 @@ logger = logging.getLogger(__name__)
 # 実際に書き出す名前を決める所で別々に書くと、片方だけを直したときに
 # 見張っている行き先と本当の行き先が食い違う
 OUTPUT_SUFFIX = ".zip"
+
+# 巻数の訂正が 1 つも無いときの地図（#114 段階 B）。書き換えられない物にして
+# おくのは、既定値の辞書を呼び出し側が取り違えて書き換えると、1 回の実行の
+# 訂正が次の実行へ漏れるため
+NO_VOLUME_OVERRIDES: Mapping[str, int | None] = MappingProxyType({})
+
+# フォルダを丸ごと 1 冊として扱うときの鍵。展開ルートからの相対パスが ``.``
+# になる場合と同じ扱いで、``_location_key`` が返す値と 1 バイトも違わない
+IMAGE_DIRECTORY_KEY = ""
 
 
 @dataclass
@@ -186,23 +197,57 @@ class FileOrganizer:
         self._log(f"    Kept {len(members)} pre-edit entries")
         return None
 
-    def _skipped(self, image_dir: Path, skip_locations: frozenset[str]) -> bool:
-        """利用者が一覧で外した本かどうかを見る（#70 第 3 段階）。
+    def _location_key(self, image_dir: Path) -> str | None:
+        """本の位置を表す鍵。展開ルートからの相対パスで、ルート自身は空文字。
 
-        突き合わせは展開ルートからの相対パスで行う。名前や並び順では、
-        1 つのアーカイブから同じ名前の本が 2 冊出たときに選り分けられない。
+        外す指定（``skip_locations``）と巻数の訂正（``volumes``）は、この 1 つの
+        鍵空間を共有する。作り方を 2 か所に書いて片方だけずれると、同じ依頼の
+        中で外す判定は効いているのに訂正だけが黙って落ちる。利用者から見えるのは
+        「外したい本は外れたのに、直した巻数だけ元のまま」で、訂正が届かなかった
+        のか値が無視されたのかを切り分ける手がかりが無い。
+
+        鍵を決められないときは ``None``。名前や並び順で代用しないのは、1 つの
+        アーカイブから同じ名前の本が 2 冊出たときに選り分けられないため。
         """
-        if not skip_locations:
-            return False
         root = self.archive_handler.extract_root
         if root is None:
-            return False
+            return None
         try:
             relative = image_dir.relative_to(root).as_posix()
         except ValueError:
-            # 展開ルートの外は、そもそも予告できていない。作る側に倒す
+            # 展開ルートの外は、そもそも予告できていない
+            return None
+        return relative if relative != "." else ""
+
+    def _skipped(self, image_dir: Path, skip_locations: frozenset[str]) -> bool:
+        """利用者が一覧で外した本かどうかを見る（#70 第 3 段階）。"""
+        if not skip_locations:
             return False
-        return (relative if relative != "." else "") in skip_locations
+        key = self._location_key(image_dir)
+        if key is None:
+            # 位置を名指しできない本は、予告もできていない。作る側に倒す
+            return False
+        return key in skip_locations
+
+    def _corrected_volume(
+        self,
+        key: str | None,
+        detected: int | None,
+        volumes: Mapping[str, int | None],
+    ) -> int | None:
+        """利用者が訂正した巻数。訂正が無ければ自動判定のまま（#114 段階 B）。
+
+        分けるのは鍵の**有無**であって値の有無ではない。``None`` は「巻数を
+        付けないでほしい」という正当な訂正の値で、「まだ訂正していない」とは
+        別物。両者を混ぜると、巻数を外す依頼が自動判定の番号へ静かに戻る。
+
+        ``Mapping`` の既定値は鍵が無いときにしか使われないので、
+        ``volumes.get(key, detected)`` は「鍵があればその値、無ければ自動判定」
+        と同じ意味になる。既定は自動判定であって ``None`` ではない。
+        """
+        if key is None:
+            return detected
+        return volumes.get(key, detected)
 
     def _handle_original_deletion(
         self, archive_path: Path, results: list[ProcessResult], skipped: bool
@@ -220,7 +265,10 @@ class FileOrganizer:
                 self._log(f"Failed to delete original: {e}", "error")
 
     def _process_image_directory(
-        self, image_dir: Path, series: SeriesName
+        self,
+        image_dir: Path,
+        series: SeriesName,
+        volumes: Mapping[str, int | None] = NO_VOLUME_OVERRIDES,
     ) -> list[ProcessResult]:
         """裸の画像フォルダを 1 冊として整える。
 
@@ -228,11 +276,21 @@ class FileOrganizer:
         展開が要らないので一時領域は作らず、元のフォルダをそのまま読む。
         巻数はフォルダ名から取る。アーカイブと違い元を消さないのは、
         フォルダごと消すのが取り返しのつかない操作だから。
+
+        巻数の訂正を差し込む点が通常経路と 2 つに分かれるのは、この関数が
+        展開もループも通らない別経路だから（#114 段階 B）。外すかどうかは
+        呼び出し側が決める取り決めなので ``skip_locations`` は見ないが、
+        フォルダ 1 つでも巻数は間違いうるので訂正は届く必要がある。
+        フォルダは丸ごと 1 冊なので鍵は常に空文字。
         """
         self._log(f"Processing: {image_dir}")
         try:
             manga_dir = self._create_manga_directory(series)
-            volume = self.volume_detector.detect_volume(image_dir)
+            volume = self._corrected_volume(
+                IMAGE_DIRECTORY_KEY,
+                self.volume_detector.detect_volume(image_dir),
+                volumes,
+            )
             result = self._process_volume(
                 image_dir, image_dir, manga_dir, volume, series
             )
@@ -254,6 +312,7 @@ class FileOrganizer:
         archive_path: Path,
         skip_locations: frozenset[str] = frozenset(),
         series: SeriesName | None = None,
+        volumes: Mapping[str, int | None] = NO_VOLUME_OVERRIDES,
     ) -> list[ProcessResult]:
         """Process a single archive file.
 
@@ -263,13 +322,19 @@ class FileOrganizer:
         ``series`` はこの本を置く場所と名前を決める対（#73 段階 4a）。整理済みの
         本は自分自身の名前を持っているので、1 回の実行の中に依頼の対とは別の対が
         混ざる。省くと、いままでどおり ``set_manga_info`` で受けた依頼の対を使う。
+
+        ``volumes`` は「位置 -> 訂正後の巻数」の地図（#114 段階 B）。自動判定を
+        間違えた本を利用者が直せるようにする。鍵は ``skip_locations`` と同じ
+        鍵空間（``_location_key``）で、値の ``None`` は「巻数を付けない」。
+        省くと全冊が自動判定のまま、つまり今までどおりになる。
         """
         series = series or SeriesName(self.author, self.title)
 
         # フォルダが来たら、その中身が 1 冊分。展開する物が無いので別経路へ回す
-        # フォルダは丸ごと 1 冊なので、外すかどうかは呼び出し側が決めている
+        # フォルダは丸ごと 1 冊なので、外すかどうかは呼び出し側が決めている。
+        # 巻数の訂正はそうはいかないので、あちらの経路にも渡す
         if archive_path.is_dir():
-            return self._process_image_directory(archive_path, series)
+            return self._process_image_directory(archive_path, series, volumes)
 
         self._log(f"Processing: {archive_path}")
         results = []
@@ -302,8 +367,12 @@ class FileOrganizer:
                 # Detect volume number
                 # 外した本のぶんも先に番号を決める。並び順（Priority 3）が
                 # 巻数に効くので、飛ばしてから数えると残した本の巻数がずれる
-                volume = self._detect_volume_number(
-                    image_dir, archive_path, vol_idx, len(image_dirs)
+                volume = self._corrected_volume(
+                    self._location_key(image_dir),
+                    self._detect_volume_number(
+                        image_dir, archive_path, vol_idx, len(image_dirs)
+                    ),
+                    volumes,
                 )
 
                 if self._skipped(image_dir, skip_locations):
