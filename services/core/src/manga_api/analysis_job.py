@@ -69,19 +69,18 @@ class PlannedBookView(BaseModel):
     entry: str
     output_name: str
     volume: int | None = None
-    # 巻数の根拠。``Literal`` にしないのは、``volume_detector`` に 5 個目の
-    # origin が足された瞬間、表示用のこの欄のせいで解析ジョブ全体が
-    # ``ValidationError`` で落ちるため。巻数の読み方を増やしただけで解析が
-    # 全滅するのは、増やす側から見えない罠になる（``organized_reason`` と同じ扱い）。
+    # 巻数の根拠。``PlannedBook`` の同名の欄をそのまま写す（値の意味と、
+    # 走らせて確かめた落とし穴はそちらに書いてある）。
     #
-    # **画面が ``volume_origin`` から ``organized`` を導いてはいけない。逆も同じ。**
-    # ``第000巻`` は整理済みでありながら ``last-number`` になる（0 が
-    # ``decide_volume_from_name`` の真偽値判定で偽と扱われ、型の枝を抜けるため）。
-    # 2 つは別の判定で、たまたま多くの本で揃って見えるだけ。
+    # ``Literal`` にしないのは、``volume_detector`` に 5 個目の origin が足された
+    # 瞬間、表示用のこの欄のせいで解析ジョブ全体が ``ValidationError`` で落ちる
+    # ため。巻数の読み方を増やしただけで解析が全滅するのは、増やす側から見え
+    # ない罠になる（``organized_reason`` と同じ扱い）。
     #
-    # ``issues`` から根拠を逆算するのも不可。``volume-uncertain`` は ``position``
-    # と「数字が複数ある ``last-number``」の両方に付き、``内_05`` のような素直な
-    # ``last-number`` には付かない。印と根拠は別物。
+    # **画面はこの 2 欄から ``organized`` や ``issues`` を導いてはいけない。**
+    # 逆も同じ。整理済みでありながら ``last-number`` になる本があり（``第000巻``。
+    # 理由は ``PlannedBook`` 側）、``volume-uncertain`` は ``last-number`` の一部
+    # にしか付かない。どれも別の判定で、たまたま多くの本で揃って見えるだけ。
     volume_origin: str = Field(
         default=ORIGIN_NONE,
         description=(
