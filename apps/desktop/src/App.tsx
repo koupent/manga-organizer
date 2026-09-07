@@ -214,20 +214,41 @@ export function App() {
       .catch((reason) => setError(String(reason.message ?? reason)));
 
     // ネイティブ側で受けたドロップは、いま見ている画面の入力にする。
-    // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直
-    const pending = onFilesDropped((paths) => {
+    // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直。
+    //
+    // 中身が読めたときしかここへは来ない。読めないまま changeMode まで
+    // 進むと、画面だけ整理へ切り替わって入力が増えない形が残る
+    const pending = onFilesDropped((entries) => {
       if (isArchiveMode(modeRef.current)) {
-        // どれも 1 冊ずつしか扱えない。まとめて落とされたら先頭を採る
-        if (paths.length > 0) changeArchive(paths[0]);
+        // どれも 1 冊ずつしか扱えない。フォルダは本として開けないので飛ばし、
+        // まとめて落とされたら最初の 1 冊を採る。フォルダしか無ければ何もしない
+        const book = entries.find((entry) => !entry.is_dir);
+        if (book) changeArchive(book.path);
         return;
       }
+      // 整理はフォルダごと受ける。フォルダも本もそのまま入力に足す
       changeMode("organize");
-      changeSources([...new Set([...sourcesRef.current, ...paths])]);
+      changeSources([
+        ...new Set([
+          ...sourcesRef.current,
+          ...entries.map((entry) => entry.path),
+        ]),
+      ]);
+    }, setError);
+
+    // 購読そのものが立たないこともある（動的 import や listen の失敗）。
+    // 放っておくと未処理の rejection になるだけで、利用者からは「落として
+    // も何も起きない」画面に見える。理由を出したうえで、後片付けが必ず
+    // 成り立つよう、解除する側は失敗しない約束の方から辿る
+    const settled = pending.catch((reason) => {
+      if (!cancelled) setError(String(reason.message ?? reason));
+      return () => undefined;
     });
 
     return () => {
       cancelled = true;
-      pending.then((unlisten) => unlisten());
+      // 解除は購読が立ってから。立つ前に画面が消えても、立った直後に解く
+      void settled.then((unlisten) => unlisten());
     };
   }, []);
 
