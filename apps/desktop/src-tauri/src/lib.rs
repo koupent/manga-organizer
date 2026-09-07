@@ -22,7 +22,7 @@ pub struct DroppedEntry {
 
 /// フロントエンドへ渡すドロップ結果
 #[derive(Clone, Debug, Serialize)]
-pub struct DroppedPaths {
+pub struct DroppedEntries {
     pub entries: Vec<DroppedEntry>,
 }
 
@@ -132,7 +132,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                 // ブラウザでは実パスが取れない。ネイティブ側で受けて渡す
-                let payload = DroppedPaths {
+                let payload = DroppedEntries {
                     entries: dropped_entries(paths),
                 };
                 let _ = window.emit("files-dropped", payload);
