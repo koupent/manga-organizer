@@ -209,8 +209,10 @@ def _scan(
 ) -> list[Path]:
     """投入されたパスの下を歩き、許可された入れ物だけを拾う。
 
-    **辿るのと落とすのは必ず一組。** 1 つの式にしてあるのは、離すと許可された
-    場所に置かれた「外を指すリンク」が解析の対象に戻るため。
+    **辿るのと落とすのは必ず一組。** ``is_allowed`` を展開へ渡すのは、離すと
+    許可された場所に置かれた「外を指すリンク」が解析の対象に戻るため。しかも
+    展開の後で絞ると、そのリンクが同じ実体の鍵を先に取り、許可の中のハード
+    リンクまで重複として消える（``input_expander.iter_inputs`` の ``accept``）。
 
     歩いている最中も折々で ``report`` を呼ぶ。欄は 1 つも書き換えない報告だが、
     打ち切られていればここで ``JobCancelled`` が上がる。歩き切ってから初めて
@@ -224,7 +226,7 @@ def _scan(
         if walked % SCAN_CHECKPOINT_PATHS == 0:
             report()
 
-    return [path for path in iter_inputs(targets, checkpoint) if is_allowed(path)]
+    return list(iter_inputs(targets, checkpoint, accept=is_allowed))
 
 
 def _failure_line(container: Path, error: str | None) -> str:
