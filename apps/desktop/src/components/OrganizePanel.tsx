@@ -1,4 +1,4 @@
-import { BookMarked, Loader2, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   sidecarReason,
@@ -14,7 +14,6 @@ import {
   type Analysis,
 } from "../lib/analysis";
 import {
-  nameHint,
   ORGANIZED_STATUS_TIP,
   organizeSummary,
   planSummary,
@@ -36,11 +35,11 @@ import {
   type Decisions,
   type PlanRow,
 } from "../lib/plan";
-import { cn } from "../lib/utils";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FailedList, type OrganizeFailure } from "./FailedList";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
+import { SeriesInfoSection } from "./organize/SeriesInfoSection";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
 import { PlanList } from "./PlanList";
@@ -54,7 +53,6 @@ import {
   DialogDescription,
   DialogTitle,
 } from "./ui/dialog";
-import { Input } from "./ui/input";
 import { SectionTitle } from "./ui/section-title";
 
 /** 対を突き合わせるための鍵。作品名と著者の両方が同じものを 1 つと見る */
@@ -589,93 +587,20 @@ export function OrganizePanel({
         右の作業面は巻き添えにしない。
       */}
       <aside className="flex w-[360px] shrink-0 flex-col gap-4 overflow-y-auto pr-1">
-        <section className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <SectionTitle>作品情報</SectionTitle>
-            {/* 整理済みの行があるときだけ、左の列が何に使われるかを添える */}
-            {hasOrganized ? (
-              <span
-                className="min-w-0 truncate text-[11px] text-ink-faint"
-                data-testid="organize-name-hint"
-              >
-                {nameHint(keptLeafCount, namelessCount)}
-              </span>
-            ) : null}
-            <div className="flex-1" />
-            <Button
-              data-testid="open-library"
-              onClick={() => changeLibraryOpen(true)}
-            >
-              <BookMarked />
-              辞書
-            </Button>
-          </div>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-[11.5px] font-medium text-ink-muted">
-              作品名
-            </span>
-            <Input
-              value={title}
-              list="known-titles"
-              placeholder="作品名を入れると著者を探します"
-              data-testid="organize-title"
-              onChange={(event) => changeTitle(event.target.value)}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink-muted">
-              著者
-              {searching ? (
-                <span
-                  className="flex items-center gap-1 text-ink-faint"
-                  data-testid="author-searching"
-                >
-                  <Loader2 className="size-3 animate-spin" />
-                  検索中
-                </span>
-              ) : null}
-            </span>
-            <Input
-              value={author}
-              list="known-authors"
-              placeholder="著者"
-              data-testid="organize-author"
-              data-source={authorSource}
-              className={authorSource === "library" ? "text-brand" : undefined}
-              onChange={(event) => typeAuthor(event.target.value)}
-            />
-          </label>
-
-          {candidates.length > 0 ? (
-            <div
-              className="flex flex-wrap items-center gap-1.5"
-              data-testid="author-candidates"
-            >
-              <span className="text-[11.5px] text-ink-faint">検索結果</span>
-              {candidates.map((candidate) => (
-                <button
-                  key={candidate.author}
-                  type="button"
-                  data-testid="author-candidate"
-                  data-author={candidate.author}
-                  title={`${candidate.title}（${candidate.source}）`}
-                  className={cn(
-                    "rounded-full border px-2 py-0.5 text-[11.5px] transition-colors",
-                    candidate.author === author
-                      ? "border-brand bg-brand/10 text-brand"
-                      : "border-line text-ink-muted hover:border-line-strong hover:text-ink",
-                  )}
-                  onClick={() => chooseAuthor(candidate.author)}
-                >
-                  {candidate.author}
-                  <span className="ml-1 text-ink-faint">{candidate.title}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </section>
+        <SeriesInfoSection
+          title={title}
+          author={author}
+          authorSource={authorSource}
+          candidates={candidates}
+          searching={searching}
+          hasOrganized={hasOrganized}
+          keptLeafCount={keptLeafCount}
+          namelessCount={namelessCount}
+          onChangeTitle={changeTitle}
+          onTypeAuthor={typeAuthor}
+          onChooseAuthor={chooseAuthor}
+          onOpenLibrary={() => changeLibraryOpen(true)}
+        />
 
         <section className="flex flex-col gap-2">
           <SectionTitle>オプション</SectionTitle>
