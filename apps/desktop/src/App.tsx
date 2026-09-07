@@ -236,9 +236,19 @@ export function App() {
       ]);
     }, setError);
 
+    // 購読そのものが立たないこともある（動的 import や listen の失敗）。
+    // 放っておくと未処理の rejection になるだけで、利用者からは「落として
+    // も何も起きない」画面に見える。理由を出したうえで、後片付けが必ず
+    // 成り立つよう、解除する側は失敗しない約束の方から辿る
+    const settled = pending.catch((reason) => {
+      if (!cancelled) setError(String(reason.message ?? reason));
+      return () => undefined;
+    });
+
     return () => {
       cancelled = true;
-      pending.then((unlisten) => unlisten());
+      // 解除は購読が立ってから。立つ前に画面が消えても、立った直後に解く
+      void settled.then((unlisten) => unlisten());
     };
   }, []);
 
