@@ -214,7 +214,10 @@ export function App() {
       .catch((reason) => setError(String(reason.message ?? reason)));
 
     // ネイティブ側で受けたドロップは、いま見ている画面の入力にする。
-    // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直
+    // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直。
+    //
+    // 中身が読めたときしかここへは来ない。読めないまま changeMode まで
+    // 進むと、画面だけ整理へ切り替わって入力が増えない形が残る
     const pending = onFilesDropped((entries) => {
       if (isArchiveMode(modeRef.current)) {
         // どれも 1 冊ずつしか扱えない。フォルダは本として開けないので飛ばし、
@@ -231,7 +234,7 @@ export function App() {
           ...entries.map((entry) => entry.path),
         ]),
       ]);
-    });
+    }, setError);
 
     return () => {
       cancelled = true;
