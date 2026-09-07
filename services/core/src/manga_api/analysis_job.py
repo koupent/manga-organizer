@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from manga_api.jobs import ProgressReporter
 from manga_core.input_expander import iter_inputs
 from manga_core.toc_analyzer import AnalysisScan, PlannedBook, analyze_stream
+from manga_core.volume_detector import ORIGIN_NONE
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +60,43 @@ class PlannedBookView(BaseModel):
     と同じ理由で、省くと画面から「整理済みでない」のか「判定していない」のかを
     区別できない。判定を ``issues`` に混ぜないのは、``issues`` が画面で警告バッジに
     なり、状態を問題として見せてしまうため。
+
+    ``volume_origin`` / ``volume_source_name`` も同じ理由で省かない。省くと
+    「並び順で決めた」のか「まだ判定していない」のかを画面から区別できない。
     """
 
     source: str
     entry: str
     output_name: str
     volume: int | None = None
+    # 巻数の根拠。``PlannedBook`` の同名の欄をそのまま写す（値の意味と、
+    # 走らせて確かめた落とし穴はそちらに書いてある）。
+    #
+    # ``Literal`` にしないのは、``volume_detector`` に 5 個目の origin が足された
+    # 瞬間、表示用のこの欄のせいで解析ジョブ全体が ``ValidationError`` で落ちる
+    # ため。巻数の読み方を増やしただけで解析が全滅するのは、増やす側から見え
+    # ない罠になる（``organized_reason`` と同じ扱い）。
+    #
+    # **画面はこの 2 欄から ``organized`` や ``issues`` を導いてはいけない。**
+    # 逆も同じ。整理済みでありながら ``last-number`` になる本があり（``第000巻``。
+    # 理由は ``PlannedBook`` 側）、``volume-uncertain`` は ``last-number`` の一部
+    # にしか付かない。どれも別の判定で、たまたま多くの本で揃って見えるだけ。
+    volume_origin: str = Field(
+        default=ORIGIN_NONE,
+        description=(
+            "巻数をどこから読んだか。pattern（第3巻・vol.3 などの型）/ "
+            "last-number（名前の最後の数字）/ position（名前から読めず並び順を"
+            "当てはめた）/ none（読めなかった）のいずれか。利用者に見せる言葉では"
+            "なく、画面が読み分けるための識別子"
+        ),
+    )
+    volume_source_name: str = Field(
+        default="",
+        description=(
+            "巻数を読み取った名前。position のときは名前を読んでいないので空。"
+            "空かどうかではなく volume_origin で読み分けること"
+        ),
+    )
     issues: list[str] = Field(
         default_factory=list, description="実行前に利用者へ見せる印"
     )
@@ -213,6 +245,8 @@ def _book_view(book: PlannedBook) -> dict[str, Any]:
         entry=book.entry,
         output_name=book.output_name,
         volume=book.volume,
+        volume_origin=book.volume_origin,
+        volume_source_name=book.volume_source_name,
         issues=list(book.issues),
         organized=book.organized,
         author=book.author,
