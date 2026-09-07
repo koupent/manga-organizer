@@ -1,10 +1,11 @@
 import { BookMarked, Loader2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   sidecarReason,
   type LibraryImportResult,
   type SidecarClient,
 } from "../api/client";
+import { useAuthorLookup, type Entry } from "../hooks/useAuthorLookup";
 import {
   analysisResult,
   IDLE_ANALYSIS,
@@ -56,29 +57,10 @@ import {
 import { Input } from "./ui/input";
 import { SectionTitle } from "./ui/section-title";
 
-type Entry = { title: string; author: string };
-
 /** 対を突き合わせるための鍵。作品名と著者の両方が同じものを 1 つと見る */
 function pairKey(entry: Entry): string {
   return JSON.stringify([entry.title, entry.author]);
 }
-
-/** 検索で見つかった作品と著者。近い順に並ぶ */
-type Candidate = {
-  title: string;
-  author: string;
-  source: string;
-  similarity: number;
-};
-
-/** 著者をどこから持ってきたか。元の実装と同じく、辞書由来は色を変えて示す */
-type AuthorSource = "" | "library" | "search";
-
-/** 何文字目から自動で著者を探しに行くか。元の実装と同じ */
-const MIN_SEARCH_LENGTH = 2;
-
-/** 打つたびに問い合わせないための待ち時間 */
-const SEARCH_DELAY_MS = 400;
 
 type OrganizePanelProps = {
   client: SidecarClient;
@@ -107,17 +89,11 @@ export function OrganizePanel({
   onOutputDirectoryChange,
   onOpenProduced,
 }: OrganizePanelProps) {
-  const [entries, setEntries] = useState<Entry[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   // 辞書から返事をもらった作品名。もう一度は勧めない。断られた対は辞書に
   // 入らないままなので、これが無いと「押しても何も起きない操作」が画面に
   // 残り続ける
   const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set());
-  const [title, setTitle] = useState("");
-  const [author, setAuthor] = useState("");
-  const [authorSource, setAuthorSource] = useState<AuthorSource>("");
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [searching, setSearching] = useState(false);
 
   const [keepOriginals, setKeepOriginals] = useState(true);
   const [running, setRunning] = useState(false);
@@ -142,13 +118,6 @@ export function OrganizePanel({
   // 終わるため、ここに出さないと処理ログを開くまで失敗に気づけない
   const [failures, setFailures] = useState<OrganizeFailure[]>([]);
 
-  // 打ち直しの途中で古い検索結果が届いても無視できるようにする
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchSeq = useRef(0);
-
-  // 利用者が著者を決めたか。決めた後に遅れて届いた検索結果で上書きしないため
-  const authorChosen = useRef(false);
-
   // ジョブ番号は描画に使わない。中断時に最新の値を確実に読むため ref で持つ
   const jobId = useRef<string | null>(null);
 
@@ -167,10 +136,7 @@ export function OrganizePanel({
   useEffect(() => {
     const controller = new AbortController();
     unmounted.current = controller;
-    return () => {
-      controller.abort();
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -181,17 +147,20 @@ export function OrganizePanel({
     return () => controller.abort();
   }, [active]);
 
-  const loadEntries = useCallback(() => {
-    client
-      .knownEntries()
-      .then((payload) => {
-        if (isGone()) return;
-        setEntries(payload.entries);
-      })
-      .catch(() => undefined);
-  }, [client]);
-
-  useEffect(loadEntries, [loadEntries]);
+  // 作品名から著者を引く一式。辞書の読み込みと外部検索は絡み合っているので、
+  // 状態ごと useAuthorLookup が持つ
+  const {
+    entries,
+    title,
+    author,
+    authorSource,
+    candidates,
+    searching,
+    loadEntries,
+    changeTitle,
+    typeAuthor,
+    chooseAuthor,
+  } = useAuthorLookup(client);
 
   /**
    * 辞書を開け閉めする。
@@ -202,53 +171,6 @@ export function OrganizePanel({
   const changeLibraryOpen = (open: boolean) => {
     setLibraryOpen(open);
     if (!open) loadEntries();
-  };
-
-  /**
-   * 作品名が変わったら著者を引き直す。
-   *
-   * 辞書に完全一致があれば即座に埋める。無ければ少し待ってから外部検索する。
-   * 古い作品名の著者が残らないよう、まず空にする。
-   */
-  const changeTitle = (next: string) => {
-    setTitle(next);
-    setAuthor("");
-    setAuthorSource("");
-    setCandidates([]);
-    setSearching(false);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    const seq = ++searchSeq.current;
-    authorChosen.current = false;
-
-    const known = entries.find((entry) => entry.title === next);
-    if (known?.author) {
-      setAuthor(known.author);
-      setAuthorSource("library");
-      return;
-    }
-    if (next.trim().length < MIN_SEARCH_LENGTH) return;
-
-    setSearching(true);
-    searchTimer.current = setTimeout(() => {
-      client
-        .suggestAuthor(next)
-        .then((found) => {
-          if (isGone() || seq !== searchSeq.current) return;
-          // 選び直す助けになるので、候補そのものは著者を決めた後でも出す
-          setCandidates(found.candidates ?? []);
-          // 近い順に並ぶので、先頭をそのまま入れて残りは候補に出す。
-          // ただし利用者が先に決めていれば、遅れて届いた答えで覆さない
-          if (found.author && !authorChosen.current) {
-            setAuthor(found.author);
-            setAuthorSource("search");
-          }
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          if (isGone() || seq !== searchSeq.current) return;
-          setSearching(false);
-        });
-    }, SEARCH_DELAY_MS);
   };
 
   /**
@@ -722,11 +644,7 @@ export function OrganizePanel({
               data-testid="organize-author"
               data-source={authorSource}
               className={authorSource === "library" ? "text-brand" : undefined}
-              onChange={(event) => {
-                setAuthor(event.target.value);
-                setAuthorSource("");
-                authorChosen.current = true;
-              }}
+              onChange={(event) => typeAuthor(event.target.value)}
             />
           </label>
 
@@ -749,11 +667,7 @@ export function OrganizePanel({
                       ? "border-brand bg-brand/10 text-brand"
                       : "border-line text-ink-muted hover:border-line-strong hover:text-ink",
                   )}
-                  onClick={() => {
-                    setAuthor(candidate.author);
-                    setAuthorSource("search");
-                    authorChosen.current = true;
-                  }}
+                  onClick={() => chooseAuthor(candidate.author)}
                 >
                   {candidate.author}
                   <span className="ml-1 text-ink-faint">{candidate.title}</span>
