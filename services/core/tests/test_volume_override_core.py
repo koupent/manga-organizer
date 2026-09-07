@@ -203,17 +203,24 @@ class VolumeOverrideTestBase(unittest.TestCase):
             return organizer.process_single_archive(target)
         return organizer.process_single_archive(target, volumes=volumes)
 
-    def reported(self, results: list[ProcessResult]) -> list[int | None]:
-        """報告された巻数（``ProcessResult.volume_number``）を並べる。
+    def reported(self, results: list[ProcessResult]) -> dict[str, int | None]:
+        """出来たファイル名 -> 報告された巻数（``ProcessResult.volume_number``）。
 
-        ``None`` が混じっても落ちない並べ方にする。素の ``sorted`` は
-        ``None`` どうしを比べて ``TypeError`` になり、巻数を全部消す実装の
-        失敗が「比較できません」という無関係な出力に化ける。
+        巻数だけを並べると、``第007巻`` のファイルが ``volume_number=2`` を、
+        ``第002巻`` のファイルが 7 を持つ**入れ替わり**が素通りする。並びは
+        どちらでも ``[2, 7]`` になり、名前とページ数を見る別のテストも通る。
+        画面はこの番号を読んで一覧に出すので、番号の集合ではなく、名前と
+        番号の**対応そのもの**を見る。
+
+        並べずに対応で見ることで、``None`` どうしの比較（``TypeError``）も
+        起きない。巻数を全部消す実装の失敗が「比較できません」という無関係な
+        出力に化けることもない。
         """
-        return sorted(
-            (result.volume_number for result in results if result.success),
-            key=lambda number: (number is not None, number or 0),
-        )
+        return {
+            result.output_path.name: result.volume_number
+            for result in results
+            if result.success and result.output_path is not None
+        }
 
     def produced_pages(self, results: list[ProcessResult]) -> dict[str, int]:
         """出来たファイル名 -> 中のページ枚数。
@@ -285,7 +292,10 @@ class CompoundOverrideTest(VolumeOverrideTestBase):
         # Assert - 並べ替えは None を含んでも落ちない形にする。巻数を全部
         # 消す実装が TypeError で終わると、失敗の出力から何が起きたか読めない
         self.assertEqual(
-            [2, 7],
+            {
+                "[著者] 作品 第007巻.zip": 7,
+                "[著者] 作品 第002巻.zip": 2,
+            },
             self.reported(results),
             f"報告された巻数が訂正に従っていない: {[r.volume_number for r in results]}",
         )
@@ -414,7 +424,10 @@ class VolumeRemovalTest(VolumeOverrideTestBase):
 
         # Assert - 巻数なしと 2 巻が 1 冊ずつ
         self.assertEqual(
-            [None, 2],
+            {
+                "[著者] 作品 Unknown.zip": None,
+                "[著者] 作品 第002巻.zip": 2,
+            },
             self.reported(results),
             f"報告された巻数が訂正に従っていない: {[r.volume_number for r in results]}",
         )
@@ -515,6 +528,88 @@ class ImageDirectoryOverrideTest(VolumeOverrideTestBase):
             {"[著者] 作品 Unknown.zip": BARE_PAGES},
             self.produced_pages(results),
             "フォルダの巻数を外す訂正が効いていない",
+        )
+
+
+class SkippedBookNumberingTest(VolumeOverrideTestBase):
+    """外した本のぶんも番号を数え続けること（訂正を差し込んでも壊れない）。
+
+    名前から巻数を読めない合本は、並び順（``position``）で番号が決まる。
+    実処理は**外した本のぶんも先に番号を決めてから**外す判定をしている。
+    飛ばしてから数えると、1 冊目を外した瞬間に 2 冊目が 1 巻になり、
+    利用者が「作らない」と言っただけで残した本の名前が変わる。
+
+    段階 B で ``_skipped`` から鍵の作り方を ``_location_key`` へ切り出し、
+    巻数を決める行の隣に訂正を差し込んだ。**順序を入れ替えれば静かに壊れる**
+    場所なので、ここで押さえる。新しい 10 本はどれも ``skip_locations`` を
+    渡さないため、この経路を一度も通らない。
+    """
+
+    def numberless(self) -> Path:
+        """1 つの ZIP に 2 冊。**名前に数字を入れない**ので並び順で決まる。
+
+        ``第01巻`` のような名前だと ``pattern`` で決まってしまい、外した本を
+        数え続けているかどうかが分からない。
+        """
+        return zip_with(
+            self.work_dir / "素材" / "並び順.zip",
+            {
+                **pages("上巻/", FIRST_PAGES),
+                **pages("下巻/", SECOND_PAGES),
+            },
+        )
+
+    def organize_with_skip(
+        self, target: Path, output: Path, skip: frozenset[str]
+    ) -> list[ProcessResult]:
+        organizer = FileOrganizer(output_directory=output, keep_originals=True)
+        organizer.set_manga_info(author=AUTHOR, title=TITLE)
+        return organizer.process_single_archive(target, skip)
+
+    def test_the_kept_book_keeps_the_number_the_skipped_one_left_behind(self):
+        """1 冊目を外しても、2 冊目は 2 巻のまま。"""
+        # Arrange - 素材が本当に並び順で 1 と 2 になることを、先に確かめる
+        compound = self.numberless()
+        self.assertEqual(
+            {"上巻": 1, "下巻": 2},
+            self.detected(compound),
+            "素材が並び順で決まっていない。この形でないと外した本を"
+            "数え続けているかどうかが分からない",
+        )
+        output = self.work_dir / "出力"
+
+        # Act - 1 冊目だけ外す
+        results = self.organize_with_skip(compound, output, frozenset({"上巻"}))
+
+        # Assert - 残った 1 冊が 2 巻。外した本のぶんを数えていない実装は、
+        # ここで 第001巻 を作る。ページ枚数まで見て、中身の取り違えも塞ぐ
+        self.assertEqual(
+            {"[著者] 作品 第002巻.zip": SECOND_PAGES},
+            self.produced_pages(results),
+            "外した本のぶんを数えずに番号を振り直している",
+        )
+
+    def test_nothing_is_skipped_when_no_location_is_given(self):
+        """対照。外す指定が無ければ 2 冊とも出来る。
+
+        これが無いと「``skip_locations`` を無視して全部作る」実装も、
+        「何を渡されても 1 冊しか作らない」実装も上のテストを通る。
+        """
+        # Arrange
+        compound = self.numberless()
+        output = self.work_dir / "出力"
+
+        # Act
+        results = self.organize_with_skip(compound, output, frozenset())
+
+        # Assert
+        self.assertEqual(
+            {
+                "[著者] 作品 第001巻.zip": FIRST_PAGES,
+                "[著者] 作品 第002巻.zip": SECOND_PAGES,
+            },
+            self.produced_pages(results),
+            "外す指定が空なのに本が減っている",
         )
 
 

@@ -268,7 +268,11 @@ class FileOrganizer:
         self,
         image_dir: Path,
         series: SeriesName,
-        volumes: Mapping[str, int | None] = NO_VOLUME_OVERRIDES,
+        # 既定値は付けない。ここは「利用者が直したのに直らない」が黙って
+        # 起きる経路で、渡し忘れても何も起きない形にしておくと、次に
+        # 呼び出しを足す人が訂正を落としたことに誰も気づけない。
+        # 公開側（``process_single_archive``）の既定値は残してある
+        volumes: Mapping[str, int | None],
     ) -> list[ProcessResult]:
         """裸の画像フォルダを 1 冊として整える。
 
@@ -360,13 +364,19 @@ class FileOrganizer:
                 self._log(f"  Processing {len(image_dirs)} volumes...")
 
             skipped = False
+            # 外した本も数え続ける。並び順（Priority 3）で巻数が決まる合本では
+            # ``vol_idx`` がそのまま巻数になるので、``image_dirs`` を先に絞ると
+            # 1 冊目を外した瞬間に 2 冊目が 1 巻になる。利用者は「作らない」と
+            # 言っただけなのに、残した本の名前が変わる。
+            #
+            # 守るべきはこの ``enumerate`` の対象であって、ループの中で番号を
+            # 決める位置ではない。中の 2 行（番号を決める / 外す判定）は
+            # 入れ替えても何も変わらない（``vol_idx`` は既に決まっている）
             for vol_idx, image_dir in enumerate(image_dirs, 1):
                 if len(image_dirs) > 1:
                     self._log(f"  Processing volume {vol_idx}/{len(image_dirs)}...")
 
                 # Detect volume number
-                # 外した本のぶんも先に番号を決める。並び順（Priority 3）が
-                # 巻数に効くので、飛ばしてから数えると残した本の巻数がずれる
                 volume = self._corrected_volume(
                     self._location_key(image_dir),
                     self._detect_volume_number(
