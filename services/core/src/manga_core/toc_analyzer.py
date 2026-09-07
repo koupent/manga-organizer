@@ -65,6 +65,7 @@ from manga_core.volume_detector import (
     # 別々に持つと、片方を変えた瞬間に予告と実処理の巻数が食い違う
     EXTRACTED_PREFIX,
     ORIGIN_LAST_NUMBER,
+    ORIGIN_NONE,
     ORIGIN_POSITION,
     VolumeDecision,
     VolumeDetector,
@@ -105,12 +106,32 @@ class PlannedBook:
     ``author`` / ``title`` は**本の名前から読んだ**値で、依頼の値ではない。
     整理済みでなければ ``None``。判定を ``issues`` に混ぜないのは、``issues`` が
     画面で警告バッジになり、除外された本の印が数えられないため。
+
+    ``volume_origin`` / ``volume_source_name`` は巻数の根拠で、
+    ``VolumeDecision`` が既に持っているものをそのまま運ぶ。番号だけでは
+    「``第3巻`` と書いてあった 3」と「名前の最後に転がっていた 3」と
+    「並び順を当てはめた 3」が同じ顔で並び、利用者が信頼度を測れない。
     """
 
     source: Path
     entry: str
     output_name: str
     volume: int | None
+    # 巻数をどこから読んだか（``ORIGIN_*``）と、読み取った名前。
+    #
+    # **「整理済みなら必ず pattern」は偽。** ``第000巻`` は
+    # ``decide_volume_from_name`` の ``if volume:``（真偽値判定）で 0 が偽と
+    # 扱われ、型の枝を抜けて ``last-number`` になる。``organized`` と
+    # ``volume_origin`` は別の判定で、片方からもう片方を導いてはいけない。
+    #
+    # **入れ子アーカイブの ``volume_source_name`` は元の名前へ戻る（#74）。**
+    # ``_extracted_内_05_zip`` ではなく ``内_05``。利用者が見たことのある名前
+    # だけが載る。
+    #
+    # **``position`` のとき ``volume_source_name`` は空。** 名前を読んでいない
+    # ため。読み分けは「空かどうか」ではなく ``volume_origin`` で行う。
+    volume_origin: str = ORIGIN_NONE
+    volume_source_name: str = ""
     issues: tuple[str, ...] = ()
     organized: bool = False
     author: str | None = None
@@ -378,6 +399,8 @@ class _Planner:
             entry=entry,
             output_name=output_name,
             volume=decision.number,
+            volume_origin=decision.origin,
+            volume_source_name=decision.source_name,
             issues=_volume_issues(self.detector, decision),
             organized=verdict.organized,
             author=verdict.author,
