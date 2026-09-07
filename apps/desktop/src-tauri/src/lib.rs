@@ -156,6 +156,7 @@ mod tests {
 
     use std::fs;
     use std::path::Path;
+    use std::time::SystemTime;
 
     // ここから下は、整理の入り口へフォルダを落としたときの挙動を固定する。
     // フォルダには拡張子が無く、拡張子だけで見ると捨てられてしまう。
@@ -163,21 +164,28 @@ mod tests {
     /// テストのあいだだけ実在させる作業用ディレクトリ。
     ///
     /// フォルダかどうかは実在を見ないと決まらないため、本物を作る必要がある。
-    /// `tempfile` は依存に入っていないので、プロセス ID とテスト名で一意な名前を
-    /// 作り、`Drop` で後片付けまでやる（テストが落ちても残さない）。
+    /// `tempfile` は依存に入っていないので、プロセス ID・時刻・テスト名で一意な
+    /// 名前を作り、`Drop` で後片付けまでやる（テストが落ちても残さない）。
     struct TempTree {
         root: PathBuf,
     }
 
     impl TempTree {
         fn new(label: &str) -> Self {
+            // 一時領域は他人と共有する。名前が読めてしまうと、先回りして
+            // 作られた場所の中へ書きに行くことになり、中身がリンクなら
+            // その先を空にしかねない。時刻を混ぜて名前を当てさせない
+            let unique = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("時刻を読めませんでした")
+                .as_nanos();
             let root = std::env::temp_dir().join(format!(
-                "manga-organizer-drop-{}-{label}",
+                "manga-organizer-drop-{}-{unique}-{label}",
                 std::process::id()
             ));
-            // 前回の残骸があっても、まっさらから始める
-            let _ = fs::remove_dir_all(&root);
-            fs::create_dir_all(&root).expect("作業用ディレクトリを作れませんでした");
+            // create_dir_all と違い、既にあれば作れずに落ちる。他人の場所を
+            // 黙って使い回すより、そこで止まる方が正しい
+            fs::create_dir(&root).expect("作業用ディレクトリを作れませんでした");
             Self { root }
         }
 
