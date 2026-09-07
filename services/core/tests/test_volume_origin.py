@@ -47,8 +47,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 # ときに「同じ入力のはず」の 2 つが静かに食い違う
 from test_toc_analysis import pages, zip_with  # noqa: E402
 
-from manga_api.analysis_job import analysis_work  # noqa: E402
+from manga_api.analysis_job import PlannedBookView, analysis_work  # noqa: E402
 from manga_core.file_organizer import FileOrganizer  # noqa: E402
+from manga_core.toc_analyzer import PlannedBook  # noqa: E402
 
 # 蔵書に入っている本の著者・作品名
 AUTHOR = "著者"
@@ -349,6 +350,68 @@ class OrganizedVolumeOriginTest(VolumeOriginTestBase):
             views[(patterned.name, "")][VOLUME_SOURCE_NAME],
             "拡張子まで載っている",
         )
+
+
+class VolumeOriginDefaultsTest(unittest.TestCase):
+    """欄そのものが省かれないことを、解析を通さずに直に押さえる。
+
+    上の 3 つは ``_Planner._plan`` と ``_book_view`` を通るが、その 2 つは
+    新しい欄を**常に明示で**渡す。だから既定値を消しても上の 3 つは通ってしまう。
+    欄を「省かない」という約束は、最小の引数で作ったときにしか現れない。
+
+    並びに意味を持たせない（``kw_only``）ことも、ここで一緒に押さえる。
+    根拠の 2 欄は ``volume`` の隣に置いた。位置引数で書かれた古い呼び出しが
+    残っていると、``issues`` が ``volume_origin`` へ、``organized`` が
+    ``volume_source_name`` へと**例外を出さずに**流れ込む。型が tuple/bool と
+    str で食い違うのに dataclass は何も言わない。欄の並びを直すたびに同じ罠が
+    戻るので、名前でしか渡せない形に固める。
+    """
+
+    def test_a_book_built_with_the_fewest_arguments_still_carries_the_origin(
+        self,
+    ) -> None:
+        book = PlannedBook(
+            source=Path("/蔵書/特別編.zip"),
+            entry="",
+            output_name="[著者] 作品 Unknown.zip",
+            volume=None,
+        )
+
+        self.assertEqual(
+            (ORIGIN_NONE, ""),
+            (book.volume_origin, book.volume_source_name),
+            "最小の引数で作ると根拠が欠ける",
+        )
+
+    def test_a_view_built_with_the_fewest_arguments_still_publishes_the_origin(
+        self,
+    ) -> None:
+        view = PlannedBookView(
+            source="/蔵書/特別編.zip",
+            entry="",
+            output_name="[著者] 作品 Unknown.zip",
+        ).model_dump()
+
+        # 属性ではなく出力を見る。画面へ届くのは model_dump の結果で、
+        # 既定値を持っていても出力から省かれれば画面には無いのと同じ
+        self.assertEqual(
+            (ORIGIN_NONE, ""),
+            (view[VOLUME_ORIGIN], view[VOLUME_SOURCE_NAME]),
+            "画面へ渡す形から根拠が抜けている",
+        )
+
+    def test_the_planned_book_refuses_positional_arguments(self) -> None:
+        # 段階 A より前の並び（source, entry, output_name, volume, issues, ...）
+        # をそのまま渡す。名前で渡す形なら TypeError で止まり、位置で渡せる形
+        # なら issues が volume_origin へ黙って入って通ってしまう
+        with self.assertRaises(TypeError):
+            PlannedBook(  # type: ignore[misc]
+                Path("/蔵書/特別編.zip"),
+                "",
+                "[著者] 作品 Unknown.zip",
+                None,
+                ("volume-unknown",),
+            )
 
 
 if __name__ == "__main__":

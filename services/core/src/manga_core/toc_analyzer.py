@@ -94,7 +94,12 @@ SEVENZIP_SUFFIXES = frozenset({".7z", ".cb7"})
 NESTED_READS_PER_CHECKPOINT = 10
 
 
-@dataclass(frozen=True)
+# 欄は名前でしか渡せない。巻数の根拠 2 欄を ``volume`` の隣へ置いたことで、
+# 位置引数で書かれた古い呼び出しは ``issues`` が ``volume_origin`` へ、
+# ``organized`` が ``volume_source_name`` へと**例外を出さずに**流れ込む。
+# 型が str と tuple/bool で食い違うのに dataclass は何も言わない。
+# 欄の並びを直すたびに同じ罠が戻るので、並びに意味を持たせない
+@dataclass(frozen=True, kw_only=True)
 class PlannedBook:
     """実行すると 1 冊出来る、という予告。
 
