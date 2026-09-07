@@ -47,7 +47,15 @@ pub fn dropped_entries(paths: &[PathBuf]) -> Vec<DroppedEntry> {
     let mut kept: Vec<DroppedEntry> = paths
         .iter()
         .filter_map(|path| {
-            let is_dir = path.is_dir();
+            // 実在を見るには読みに行くしかなく、読みに行けば失敗しうる。
+            // 権限が無い、リンクの先が消えている、共有が応答しない——
+            // どれもディレクトリではないものとして扱う。理由を区別しても、
+            // 落とした人へ伝える手立てが今は無いためで、区別できるように
+            // なったらここが分かれ目になる
+            let is_dir = match path.metadata() {
+                Ok(metadata) => metadata.is_dir(),
+                Err(_unreadable) => false,
+            };
             if !is_dir && !has_archive_suffix(path) {
                 return None;
             }
