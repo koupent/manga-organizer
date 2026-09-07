@@ -130,7 +130,10 @@ def analysis_work(
         read = 0
         # 途中経過を最後に書いた時刻。None は「まだ一度も書いていない」
         written: float | None = None
-        for event in analyze_stream(found, author, title):
+        # 目次読みの最中にも打ち切りを見に行く。切れ目（1 件返るごと）でしか
+        # 見ないと、入れ子だらけの 1 冊を読んでいる数分は打ち切りが効かず、
+        # しかもその打ち切りは ``unreadable`` の「目次を読めません」に化ける
+        for event in analyze_stream(found, author, title, report):
             if isinstance(event, AnalysisScan):
                 # 走査が終わった時点で入れ物を全部渡す。画面はここで行を
                 # 並べ切ってしまい、あとは本が生えるだけになる

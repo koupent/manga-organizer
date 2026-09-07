@@ -84,9 +84,9 @@ class AnalysisStreamTestBase(unittest.TestCase):
         opened: list[Path] = []
         original = toc_analyzer.locate_books
 
-        def spy(archive_path: Path):
+        def spy(archive_path: Path, *args, **kwargs):
             opened.append(archive_path)
-            return original(archive_path)
+            return original(archive_path, *args, **kwargs)
 
         patcher = mock.patch.object(toc_analyzer, "locate_books", spy)
         patcher.start()
@@ -246,10 +246,10 @@ class UnreadableContainerTest(AnalysisStreamTestBase):
         )
         original = toc_analyzer.locate_books
 
-        def explode(archive_path: Path):
+        def explode(archive_path: Path, *args, **kwargs):
             if archive_path == broken:
                 raise MemoryError("目次が大きすぎます")
-            return original(archive_path)
+            return original(archive_path, *args, **kwargs)
 
         # Act
         with mock.patch.object(toc_analyzer, "locate_books", explode):
@@ -296,10 +296,10 @@ class UnreadableContainerTest(AnalysisStreamTestBase):
         self.assertEqual([first, broken, last], expand_inputs([folder]))
         original = toc_analyzer.locate_books
 
-        def explode(archive_path: Path):
+        def explode(archive_path: Path, *args, **kwargs):
             if archive_path == broken:
                 raise MemoryError("目次が大きすぎます")
-            return original(archive_path)
+            return original(archive_path, *args, **kwargs)
 
         # Act
         with mock.patch.object(toc_analyzer, "locate_books", explode):
