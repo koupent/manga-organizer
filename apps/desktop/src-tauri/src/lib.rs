@@ -6,44 +6,59 @@
 
 mod sidecar;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use sidecar::{ConnectionView, Sidecar, SidecarState};
 
+/// フロントエンドへ渡すドロップ 1 件
+#[derive(Clone, Debug, Serialize)]
+pub struct DroppedEntry {
+    pub path: String,
+    pub is_dir: bool,
+}
+
 /// フロントエンドへ渡すドロップ結果
 #[derive(Clone, Debug, Serialize)]
 pub struct DroppedPaths {
-    pub paths: Vec<String>,
+    pub entries: Vec<DroppedEntry>,
 }
-
-/// ページ順を編集できる形式。viewer が読む ZIP に限る
-const EDITABLE_SUFFIXES: [&str; 2] = ["zip", "cbz"];
 
 /// 整理の入力として受け付ける形式
 const ARCHIVE_SUFFIXES: [&str; 7] = ["zip", "cbz", "rar", "cbr", "7z", "cb7", "epub"];
 
-/// ドロップされたパスから、扱えるアーカイブだけを取り出す
-pub fn keep_archives(paths: &[PathBuf], editable_only: bool) -> Vec<String> {
-    let allowed: &[&str] = if editable_only {
-        &EDITABLE_SUFFIXES
-    } else {
-        &ARCHIVE_SUFFIXES
-    };
-    let mut kept: Vec<String> = paths
+/// 整理の入力として扱える拡張子を持つか
+fn has_archive_suffix(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|suffix| ARCHIVE_SUFFIXES.contains(&suffix.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// ドロップされたパスから、整理へ渡せるものだけを取り出す。
+///
+/// フォルダには拡張子が無いので、拡張子だけで絞るとフォルダが 1 件も残らない。
+/// そこで実在するディレクトリは拡張子を見ずに残し、それ以外だけ拡張子で決める。
+/// 「蔵書.zip」という名前のフォルダを取り違えないよう、判断は名前ではなく実在を
+/// 見る。実在しないパスはディレクトリではないものとして扱う。
+pub fn dropped_entries(paths: &[PathBuf]) -> Vec<DroppedEntry> {
+    let mut kept: Vec<DroppedEntry> = paths
         .iter()
-        .filter(|path| {
-            path.extension()
-                .and_then(|value| value.to_str())
-                .map(|suffix| allowed.contains(&suffix.to_ascii_lowercase().as_str()))
-                .unwrap_or(false)
+        .filter_map(|path| {
+            let is_dir = path.is_dir();
+            if !is_dir && !has_archive_suffix(path) {
+                return None;
+            }
+            Some(DroppedEntry {
+                path: path.to_string_lossy().into_owned(),
+                is_dir,
+            })
         })
-        .map(|path| path.to_string_lossy().into_owned())
         .collect();
-    kept.sort();
-    kept.dedup();
+    kept.sort_by(|left, right| left.path.cmp(&right.path));
+    kept.dedup_by(|left, right| left.path == right.path);
     kept
 }
 
@@ -118,7 +133,7 @@ pub fn run() {
             if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                 // ブラウザでは実パスが取れない。ネイティブ側で受けて渡す
                 let payload = DroppedPaths {
-                    paths: keep_archives(paths, false),
+                    entries: dropped_entries(paths),
                 };
                 let _ = window.emit("files-dropped", payload);
             }
@@ -133,44 +148,6 @@ mod tests {
 
     use std::fs;
     use std::path::Path;
-
-    #[test]
-    fn keeps_only_archives() {
-        let paths = vec![
-            PathBuf::from("/library/a.zip"),
-            PathBuf::from("/library/b.CBZ"),
-            PathBuf::from("/library/c.txt"),
-            PathBuf::from("/library/d"),
-        ];
-        assert_eq!(
-            vec!["/library/a.zip".to_string(), "/library/b.CBZ".to_string()],
-            keep_archives(&paths, true)
-        );
-    }
-
-    #[test]
-    fn accepts_more_formats_when_organising() {
-        let paths = vec![
-            PathBuf::from("/library/a.rar"),
-            PathBuf::from("/library/b.7z"),
-            PathBuf::from("/library/c.zip"),
-        ];
-        assert_eq!(3, keep_archives(&paths, false).len());
-        assert_eq!(1, keep_archives(&paths, true).len());
-    }
-
-    #[test]
-    fn removes_duplicates_and_sorts() {
-        let paths = vec![
-            PathBuf::from("/library/b.zip"),
-            PathBuf::from("/library/a.zip"),
-            PathBuf::from("/library/a.zip"),
-        ];
-        assert_eq!(
-            vec!["/library/a.zip".to_string(), "/library/b.zip".to_string()],
-            keep_archives(&paths, true)
-        );
-    }
 
     // ここから下は、整理の入り口へフォルダを落としたときの挙動を固定する。
     // フォルダには拡張子が無く、拡張子だけで見ると捨てられてしまう。

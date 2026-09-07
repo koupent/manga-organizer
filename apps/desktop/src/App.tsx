@@ -215,14 +215,22 @@ export function App() {
 
     // ネイティブ側で受けたドロップは、いま見ている画面の入力にする。
     // 別のタブへ勝手に連れて行かれるより、落とした先で受かる方が素直
-    const pending = onFilesDropped((paths) => {
+    const pending = onFilesDropped((entries) => {
       if (isArchiveMode(modeRef.current)) {
-        // どれも 1 冊ずつしか扱えない。まとめて落とされたら先頭を採る
-        if (paths.length > 0) changeArchive(paths[0]);
+        // どれも 1 冊ずつしか扱えない。フォルダは本として開けないので飛ばし、
+        // まとめて落とされたら最初の 1 冊を採る。フォルダしか無ければ何もしない
+        const book = entries.find((entry) => !entry.is_dir);
+        if (book) changeArchive(book.path);
         return;
       }
+      // 整理はフォルダごと受ける。フォルダも本もそのまま入力に足す
       changeMode("organize");
-      changeSources([...new Set([...sourcesRef.current, ...paths])]);
+      changeSources([
+        ...new Set([
+          ...sourcesRef.current,
+          ...entries.map((entry) => entry.path),
+        ]),
+      ]);
     });
 
     return () => {

@@ -31,20 +31,31 @@ export async function resolveConnection(): Promise<SidecarConnection | null> {
 }
 
 /**
+ * ドロップされた 1 件。
+ *
+ * フォルダかファイルかは実パスの文字列からは決まらないため、実在を見た
+ * ネイティブ側の判断をそのまま受け取る。`is_dir` の綴りは Rust が出すまま。
+ */
+export type DroppedEntry = {
+  path: string;
+  is_dir: boolean;
+};
+
+/**
  * エクスプローラーからのドロップを受ける。
  *
  * ブラウザはドロップされたファイルの実パスを取得できないため、Tauri の
  * ネイティブ側で受けてイベントで渡してもらう。ブラウザでは何もしない。
  */
 export async function onFilesDropped(
-  handler: (paths: string[]) => void,
+  handler: (entries: DroppedEntry[]) => void,
 ): Promise<() => void> {
   if (!isTauri()) return () => undefined;
   const { listen } = await import("@tauri-apps/api/event");
-  const unlisten = await listen<{ paths: string[] }>(
+  const unlisten = await listen<{ entries: DroppedEntry[] }>(
     "files-dropped",
     (event) => {
-      handler(event.payload.paths);
+      handler(event.payload.entries);
     },
   );
   return unlisten;
