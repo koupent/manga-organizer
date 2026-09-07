@@ -845,5 +845,93 @@ class ConflictingOverrideTest(VolumeOverrideApiTestBase):
         self.assertEqual([], job["result"]["failed"], job["result"])
 
 
+class UnreadableTocRefusalTest(VolumeOverrideApiTestBase):
+    """C10. 目次を読めなかったアーカイブに載っていた訂正も、黙って落とさない。
+
+    訂正の当て先は目次から決まる。目次を読めなければ当て先が無い。**ここで
+    黙って落とすと、利用者から見た症状は「直したのに直らない」だけになる。**
+    しかもこの本は実処理でも失敗するので、失敗の一覧に並ぶ 1 行を見て
+    「訂正は届いていたが本が作れなかった」のか「訂正がそもそも届かなかった」
+    のかを切り分ける手がかりが無い。
+
+    実装は ``_archive_plan`` の ``except Exception`` の枝にある。既存の
+    9 本はどれも読める素材しか使わないので、**この枝を一度も通らない**。
+    """
+
+    def broken(self, library: Path) -> Path:
+        """拡張子は ZIP だが中身が ZIP ではないファイル。
+
+        名前で読み手が決まるので目次を読みに行き、そこで失敗する。
+        """
+        path = library / "壊れた_04.zip"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"this is not a zip")
+        return path
+
+    def test_a_correction_on_an_unreadable_archive_is_reported_not_dropped(self):
+        # Arrange - 読めない 1 冊と、読める 1 冊を混ぜる。読める方が
+        # 「訂正の仕組みそのものが動いている」ことの対照になる。混ぜないと、
+        # 訂正を丸ごと実装していない実装もこのテストを通ってしまう
+        library = self.work_dir / "蔵書C10"
+        broken = self.broken(library)
+        plain = self.plain(library)
+        output = self.work_dir / "出力C10"
+        books = [
+            {"source": str(broken), "entry": "", "volume": {"number": 4}},
+            {"source": str(plain), "entry": "", "volume": {"number": 7}},
+        ]
+
+        # Act
+        accepted = self.submit([broken, plain], output, books)
+
+        # Assert 1 - 202。読めない 1 つのせいで整理そのものを断らない
+        self.assertEqual(
+            202,
+            accepted.status_code,
+            f"読めない素材を投入の時点で断っている: {accepted.text}",
+        )
+        job = self.job(accepted.json()["id"])
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+
+        # Assert 2 - 読める方の訂正は効いている。これが対照
+        self.assertEqual(
+            {
+                f"[{REQUEST_AUTHOR}] {REQUEST_TITLE}": [
+                    volume_name(REQUEST_AUTHOR, REQUEST_TITLE, 7)
+                ]
+            },
+            self.produced_map(output),
+            "読める方の訂正が効いていない。訂正の仕組みそのものが動いていない",
+        )
+
+        # Assert 3 - 読めない方は失敗として並ぶ（今までどおり）
+        self.assertEqual(
+            [broken.name],
+            [Path(item["archive"]).name for item in job["result"]["failed"]],
+            f"読めない素材が失敗として並んでいない: {job['result']}",
+        )
+
+        # Assert 4 - **ここが本体。** 訂正を当てられなかったことが跡に残る。
+        # 失敗の一覧に混ぜてはいけない。あちらは「本が作れなかった」の話で、
+        # 訂正が届かなかったこととは別
+        refused = job["result"]["refused"]
+        self.assertEqual(
+            [broken.name],
+            [Path(item["archive"]).name for item in refused],
+            f"読めなかった訂正が跡に残っていない: {job['result']}",
+        )
+        self.assertRegex(
+            refused[0]["reason"],
+            r"[ぁ-んァ-ヶ一-龠]",
+            f"理由が利用者の言葉になっていない: {refused[0]}",
+        )
+
+        # Assert 5 - 同じ理由がログにも出る。結果に積むだけで黙っている実装が落ちる
+        self.assertTrue(
+            [line for line in job["log"] if refused[0]["reason"] in line],
+            f"断った理由がログに 1 行も出ていない: {job['log']}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
