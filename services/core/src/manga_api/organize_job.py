@@ -14,7 +14,7 @@
 """
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from manga_api.jobs import ProgressReporter
 from manga_core.cancellation import OperationCancelled
+from manga_core.file_identity import file_key
 from manga_core.organized_detector import judge_organized
 from manga_core.toc_analyzer import locate_books
 from manga_core.volume_detector import SeriesName
@@ -36,14 +37,19 @@ logger = logging.getLogger(__name__)
 _NO_CORRECTIONS: Mapping[str, int | None] = MappingProxyType({})
 
 
-def source_key(source: str) -> Path:
-    """元のアーカイブを指す鍵。リンクを解いた形に揃える。
+def source_key(source: str | Path) -> Hashable:
+    """依頼が指す元のアーカイブの鍵。同じファイルの別の綴りは同じ鍵になる。
 
     名前を載せてよいかを見るときと、作る本をまとめるときで別々に鍵を作ると、
     同じファイルを別の書き方で 2 回指した依頼が、検証は素通りして名前だけ
     取り違える形で通る。鍵の作り方は 1 か所にしか置かない。
+
+    綴りの違いを畳むのは ``file_key``（投入の展開と共有する）。パスの形で
+    比べると、片方の綴りに名前・もう片方に訂正を載せた依頼が門を素通りする。
+    依頼の文字列と、整理が辿り直した ``Path`` の両方を受ける。ここが受けないと
+    呼び出し側が ``str`` へ直して渡すことになり、鍵の作り方が散らばる。
     """
-    return Path(source).resolve()
+    return file_key(source)
 
 
 class VolumeOverride(BaseModel):
@@ -142,7 +148,7 @@ class OrganizeRequest(BaseModel):
         """
         if self.books is None:
             return self
-        entries: dict[Path, set[str]] = {}
+        entries: dict[Hashable, set[str]] = {}
         for book in self.books:
             entries.setdefault(source_key(book.source), set()).add(book.entry)
         for book in self.books:
@@ -197,7 +203,7 @@ class OrganizeRequest(BaseModel):
             for book in self.books
             if book.title is not None or book.author is not None
         }
-        numbers: dict[tuple[Path, str], set[int | None]] = {}
+        numbers: dict[tuple[Hashable, str], set[int | None]] = {}
         for book in self.books:
             if book.volume is None:
                 continue
@@ -227,22 +233,23 @@ class _Wanted:
     volumes: Mapping[str, int | None]
 
 
-def wanted_books(books: list[BookRef] | None) -> dict[Path, _Wanted] | None:
+def wanted_books(books: list[BookRef] | None) -> dict[Hashable, _Wanted] | None:
     """作る本を、元のアーカイブごとにまとめる。
 
     ``None``（指定なし）と空の辞書（1 冊も作らない）は別物なので、``books`` を
-    省いたときだけ ``None`` を返す。パスはリンクを解いた形に揃える。解析が
-    返した文字列と整理で辿り直したパスは、同じ物でも書き方が違いうる。
+    省いたときだけ ``None`` を返す。鍵は ``source_key``――**パスの形ではなく
+    実体**――で作る。解析が返した文字列と整理で辿り直したパスは、同じ物でも
+    書き方が違いうるし、同じファイルを 2 通りに綴った依頼も届く。
 
     位置と名前と巻数の訂正を 1 つの表に載せる。別々の表にして片方だけ生のパスで
-    引くと、外す方は効いているのに名前や訂正だけが黙って落ちる。リンクを解いた
-    形と生の形が一致する場所（テストの一時領域）では、それが誰にも見えない。
+    引くと、外す方は効いているのに名前や訂正だけが黙って落ちる。綴りの違いが
+    起きない場所（テストの一時領域）では、それが誰にも見えない。
     """
     if books is None:
         return None
-    entries: dict[Path, set[str]] = {}
-    series: dict[Path, SeriesName] = {}
-    volumes: dict[Path, dict[str, int | None]] = {}
+    entries: dict[Hashable, set[str]] = {}
+    series: dict[Hashable, SeriesName] = {}
+    volumes: dict[Hashable, dict[str, int | None]] = {}
     for book in books:
         key = source_key(book.source)
         entries.setdefault(key, set()).add(book.entry)
@@ -267,7 +274,7 @@ def organize_work(
     output_directory: Path,
     archives: list[Path],
     request: OrganizeRequest,
-    wanted: dict[Path, _Wanted] | None,
+    wanted: dict[Hashable, _Wanted] | None,
 ) -> Callable[[ProgressReporter], dict[str, Any]]:
     """整理ジョブの中身を組み立てる。
 
@@ -366,7 +373,7 @@ def _nameless_failure(archive: Path) -> dict[str, str]:
 def _series_for(
     archive: Path,
     request: OrganizeRequest,
-    wanted: dict[Path, _Wanted] | None,
+    wanted: dict[Hashable, _Wanted] | None,
 ) -> SeriesName:
     """このアーカイブを書き出す名前を決める（#73 段階 4a）。
 
@@ -375,7 +382,7 @@ def _series_for(
     渡す側と「名前が無いから失敗させる」側が別々に決めると、片方が依頼の対へ
     落ちたまま、もう片方だけが失敗を報せることになるため。
     """
-    found = wanted.get(archive.resolve()) if wanted is not None else None
+    found = wanted.get(source_key(archive)) if wanted is not None else None
     if found is not None and found.series is not None:
         return found.series
     return SeriesName(author=request.author, title=request.title)
@@ -400,7 +407,7 @@ _NOTHING_PLANNED = _ArchivePlan(frozenset(), _NO_CORRECTIONS, ())
 
 def _archive_plan(
     archive: Path,
-    wanted: dict[Path, _Wanted] | None,
+    wanted: dict[Hashable, _Wanted] | None,
     checkpoint: Callable[[], None],
 ) -> _ArchivePlan:
     """このアーカイブの中で、作らない本の位置と、位置ごとの巻数の訂正を求める。
@@ -430,7 +437,7 @@ def _archive_plan(
     """
     if wanted is None:
         return _NOTHING_PLANNED
-    found = wanted.get(archive.resolve())
+    found = wanted.get(source_key(archive))
     chosen = found.entries if found is not None else frozenset()
     corrections = found.volumes if found is not None else _NO_CORRECTIONS
 

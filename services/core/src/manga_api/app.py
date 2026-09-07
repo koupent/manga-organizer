@@ -49,6 +49,7 @@ from manga_api.library_views import (
 from manga_api.organize_job import (
     OrganizeRequest,
     organize_work,
+    source_key,
     wanted_books,
 )
 from manga_api.output_roots import ChosenOutputRoots
@@ -770,7 +771,12 @@ def create_app(
         # 進捗の総数もここで決まるので、外したぶんは最初から数に入らない
         wanted = wanted_books(request.books)
         if wanted is not None:
-            archives = [archive for archive in archives if archive.resolve() in wanted]
+            # 鍵は ``wanted`` を組み立てたのと同じ ``source_key``。ここだけ
+            # パスの形で引くと、同じファイルを別の綴りで指した依頼が、門は
+            # 通ったのに 1 冊も作られないまま成功する
+            archives = [
+                archive for archive in archives if source_key(archive) in wanted
+            ]
         job_id = app.state.jobs.submit(
             "organize",
             {

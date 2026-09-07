@@ -13,9 +13,10 @@
 """
 
 import os
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Hashable, Iterable, Iterator
 from pathlib import Path
 
+from manga_core.file_identity import file_key
 from manga_core.naming import natural_sort_key
 from manga_core.viewer_contract import is_page_source
 
@@ -50,14 +51,21 @@ def iter_inputs(
     ``checkpoint`` はフォルダを 1 つ覗くたびに呼ぶ。**拾ったものを返すだけでは
     打ち切りの機会にならない。** アーカイブが 1 つも無い木では 1 件も返さない
     まま数分歩き続けるので、区切りは「歩いた回数」の側に付ける。
+
+    重複はパスの形ではなく**実体**で落とす（``file_key``）。利用者は同じ蔵書を
+    別の綴りで 2 回投げ込める（フォルダとその中のファイル、大文字小文字違い、
+    ハードリンク）。形で比べると同じ 1 冊を 2 回返し、2 冊目に ``_1`` が付いた
+    同じ本が黙って出来る。中身が同じだけの別ファイルは別の実体なので、今までど
+    おり両方返る。
     """
-    seen: set[Path] = set()
+    seen: set[Hashable] = set()
     for path in paths:
         found = _walk_directory(path, checkpoint) if path.is_dir() else (path,)
         for item in found:
             # 同じものを二度処理しないよう、順番を保ったまま重複を落とす
-            if item not in seen:
-                seen.add(item)
+            key = file_key(item)
+            if key not in seen:
+                seen.add(key)
                 yield item
 
 
