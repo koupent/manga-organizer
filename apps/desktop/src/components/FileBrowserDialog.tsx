@@ -1,15 +1,15 @@
 import { ChevronUp, Folder, Package } from "lucide-react";
-import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Card, CardHeader } from "./ui/card";
+import { CardHeader } from "./ui/card";
+import { DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 
 export type BrowseEntry = { name: string; path: string; is_directory: boolean };
 
 /** いま見ている場所と、その 1 つ上。根まで来たら parent は無い */
 export type BrowseLocation = { path: string; parent: string | null };
 
-type FileBrowserProps = {
+type FileBrowserDialogProps = {
   location: BrowseLocation;
   entries: BrowseEntry[];
   /** すでに処理対象に入っているパス。二度追加しても増えないことを示す */
@@ -17,33 +17,46 @@ type FileBrowserProps = {
   /** 単一選択。まとめて追加する操作は指すものが無いので出さない */
   single: boolean;
   disabled: boolean;
-  /** 与えられた高さいっぱいまで伸ばす */
-  fill: boolean;
+  /** 窓の見出し。何のために選ぶのかは呼び出し側の機能でしか分からない */
+  title: string;
+  /** 窓の説明。選んだ後に窓が閉じるかどうかは画面ごとに違う */
+  description: string;
   onOpen: (path: string) => void;
   onAdd: (paths: string[]) => void;
 };
 
 /**
- * サーバー側を辿って対象を選ぶ一覧。
+ * サーバー側を辿って対象を選ぶ一覧を、重ねた窓で出す。
  *
  * ブラウザはドロップされたファイルの実パスを取得できないので、
  * 落とす以外の経路としてサイドカーが返す実パスを辿れるようにする。
+ *
+ * 窓にしているのは、辿る一覧と処理対象の一覧が同じ作業面を奪い合っていたため。
+ * 同じ面に置くと、両方を積めばどちらも半分の高さになり、片方だけを置けば
+ * 何階層も辿って何件も入れる作業を、入れた一覧を見ないまま進めることになる。
+ * 重ねれば奪い合いは起きず、入れたものを見ながら選べる。出力先の「参照」
+ * （`DirectoryPicker`）が先に同じ形を採っているので、それに揃える。
+ *
+ * `Dialog` の根と開閉のボタンは `FilePicker` が持つ。ボタンを窓の外に置いたまま
+ * 「この窓を開いた当人」として Radix に扱わせるには、同じ根の下に居る必要がある。
  */
-export function FileBrowser({
+export function FileBrowserDialog({
   location,
   entries,
   selected,
   single,
   disabled,
-  fill,
+  title,
+  description,
   onOpen,
   onAdd,
-}: FileBrowserProps) {
+}: FileBrowserDialogProps) {
   return (
-    <Card
-      data-testid="file-browser"
-      className={cn("flex flex-col overflow-hidden", fill && "min-h-0 flex-1")}
-    >
+    <DialogContent data-testid="file-browser">
+      {/* 見出しは窓の中では読み上げにだけ出す。いま見ている場所を出す
+          code が実質の見出しで、文字の見出しを重ねると二段になる */}
+      <DialogTitle className="sr-only">{title}</DialogTitle>
+      <DialogDescription className="sr-only">{description}</DialogDescription>
       <CardHeader>
         <Button
           variant="ghost"
@@ -76,12 +89,9 @@ export function FileBrowser({
           </Button>
         )}
       </CardHeader>
-      <ul
-        className={cn(
-          "overflow-y-auto p-1",
-          fill ? "min-h-0 flex-1" : "max-h-72",
-        )}
-      >
+      {/* 窓そのものも 85vh で止まるが、溢れたぶんは行の側でスクロールさせる。
+          窓ごと流れると「上へ」と現在地が画面の外へ出ていってしまう */}
+      <ul className="max-h-[60vh] overflow-y-auto p-1">
         {entries.map((entry) => (
           <li
             key={entry.path}
@@ -120,6 +130,6 @@ export function FileBrowser({
           </li>
         ))}
       </ul>
-    </Card>
+    </DialogContent>
   );
 }
