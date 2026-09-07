@@ -933,5 +933,566 @@ class UnreadableTocRefusalTest(VolumeOverrideApiTestBase):
         )
 
 
+# 画像を直接置いたフォルダの素材。名前の数字から巻数は 8 に読める。ZIP と
+# 違う経路（``_archive_plan`` は ``locate_books`` より先に ``is_dir()`` を見る）
+# を通るので、ZIP だけの素材ではこの分岐を一度も踏まない
+FOLDER_NAME = "画像_08"
+FOLDER_VOLUME = 8
+FOLDER_PAGES = 3
+
+# 解析が予告しなかった位置。素材の目次（第01巻 / 第02巻）とわざと重ねない
+MISSING_ENTRY = "第99巻"
+MISSING_FOLDER_ENTRY = "在らぬ位置"
+
+# 巻数を外したときの名前。``format_volume_name`` を呼ばずに書き下すのは
+# ``volume_name`` と同じ理由（作る側と同じ関数で期待値を作らない）
+UNKNOWN_NAME = f"[{REQUEST_AUTHOR}] {REQUEST_TITLE} Unknown.zip"
+
+
+def image_folder(library: Path, name: str = FOLDER_NAME) -> Path:
+    """画像を直接置いたフォルダ。自動判定は 8。
+
+    ページの作り方は ``pages`` と共有する。同じ物を別々に書くと、片方を直した
+    ときに「同じ入力のはず」の 2 つが静かに食い違う。
+    """
+    folder = library / name
+    folder.mkdir(parents=True, exist_ok=True)
+    for page_name, data in pages(count=FOLDER_PAGES).items():
+        (folder / page_name).write_bytes(data)
+    return folder
+
+
+class SplitRowOverrideTest(VolumeOverrideApiTestBase):
+    """C11. 行を 2 つに分けても、門 1 は名前と訂正の同居を見抜く。
+
+    門 1（``_corrections_stay_off_books_that_carry_their_own_name``）は
+    **1 行の中しか見ていない**。同じ ``(source, entry)`` を 2 行に分け、片方に
+    ``title`` / ``author``、もう片方に ``volume`` を載せると素通りする。
+    そのあと ``wanted_books`` が名前と訂正を**元どおり 1 つの本へ再結合する**
+    ので、断ったはずの訂正がそのまま効く。
+
+    実測（``raw_09.zip``、自動判定 9、整理済みではない）:
+
+    | 依頼の形 | いまの答え | 出来る物 |
+    |---|---|---|
+    | 1 行に名前と訂正 | 422 | （作らない） |
+    | 2 行に分ける | **202** | ``[著者] 作品 第007巻.zip`` |
+
+    2 行目の形は門 2 も通り抜ける。門 2 が見るのは「整理済みかどうか」だけで、
+    この本は整理済みではないため ``refused`` は空のまま訂正が通る。**つまり
+    いま塞いでいる門が 1 つも無い。**
+
+    素材に整理済みでない本を選ぶのが要点。整理済みの本で試すと門 2 が拾って
+    しまい、抜け道が塞がっているように見える。
+
+    対照を 2 つ置く。「行が 2 つあれば断る」実装と「``volume`` の行が 2 つ
+    あれば断る」実装が、両方ここで落ちる。
+    """
+
+    def named_row(self, plain: Path) -> dict:
+        """自分の名前だけを載せた行"""
+        return {"source": str(plain), "entry": "", "title": TITLE, "author": AUTHOR}
+
+    def fixed_row(self, plain: Path) -> dict:
+        """訂正だけを載せた行"""
+        return {"source": str(plain), "entry": "", "volume": {"number": FIXED}}
+
+    def test_a_name_and_a_correction_split_across_two_rows_are_still_refused(self):
+        # Arrange - 整理済みでない本。門 2 に拾わせない
+        library = self.work_dir / "蔵書C11"
+        plain = self.plain(library)
+        split_output = self.work_dir / "分けた側"
+        reversed_output = self.work_dir / "並びを変えた側"
+
+        # Act / Assert - 名前の行と訂正の行に分ける。断る。しかも 1 冊も
+        # 書き出さない。``produced_map`` を見るのは、受け付けてジョブにしてから
+        # 失敗させる実装を落とすため
+        split = self.submit(
+            [plain],
+            split_output,
+            books=[self.named_row(plain), self.fixed_row(plain)],
+        )
+        self.assertEqual(
+            422,
+            split.status_code,
+            f"行を 2 つに分けた依頼が門 1 を素通りしている: {split.text}",
+        )
+        self.assertEqual(
+            {}, self.produced_map(split_output), "断ったのに書き出している"
+        )
+
+        # Act / Assert - 並びを逆にしても同じ。行を上から 1 度なぞるだけの
+        # 実装（名前を見る前に訂正の行を通す）はここで落ちる
+        backwards = self.submit(
+            [plain],
+            reversed_output,
+            books=[self.fixed_row(plain), self.named_row(plain)],
+        )
+        self.assertEqual(
+            422,
+            backwards.status_code,
+            f"訂正の行が先だと素通りしている: {backwards.text}",
+        )
+        self.assertEqual(
+            {}, self.produced_map(reversed_output), "断ったのに書き出している"
+        )
+
+    def test_two_rows_without_a_correction_are_still_accepted(self):
+        # Arrange - 対照 (a)。利用者がフォルダとその中のアーカイブを両方
+        # 投入すると、同じ本の行が 2 つ出来る（既存の契約）
+        library = self.work_dir / "蔵書C11a"
+        plain = self.plain(library)
+        output = self.work_dir / "対照a"
+
+        # Act - 2 行に分けるが、どちらにも訂正が無い
+        job = self.organize(
+            [plain],
+            output,
+            books=[self.named_row(plain), {"source": str(plain), "entry": ""}],
+        )
+
+        # Assert - 自分の名前で、自動判定の巻数のまま出来る。「行が 2 つあれば
+        # 断る」実装はここで落ちる
+        self.assertEqual(
+            {SERIES_DIR: [volume_name(AUTHOR, TITLE, PLAIN_VOLUME)]},
+            self.produced_map(output),
+            "訂正の無い 2 行の依頼まで断っている",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+        self.assertEqual([], job["result"]["refused"], job["result"])
+
+    def test_two_rows_carrying_only_the_same_correction_are_still_accepted(self):
+        # Arrange - 対照 (b)。名前は 1 行も載せない
+        library = self.work_dir / "蔵書C11b"
+        plain = self.plain(library)
+        output = self.work_dir / "対照b"
+
+        # Act - 2 行に同じ訂正だけ
+        job = self.organize(
+            [plain],
+            output,
+            books=[self.fixed_row(plain), self.fixed_row(plain)],
+        )
+
+        # Assert - 受け付けて、訂正が効く。「``volume`` の行が 2 つあれば断る」
+        # 実装と「何にでも 422 を返す」実装が、両方ここで落ちる
+        self.assertEqual(
+            {REQUEST_DIR: [volume_name(REQUEST_AUTHOR, REQUEST_TITLE, FIXED)]},
+            self.produced_map(output),
+            "名前の載らない 2 行の訂正まで断っている、または訂正が効いていない",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+        self.assertEqual([], job["result"]["refused"], job["result"])
+
+
+class MissingPlaceOverrideTest(VolumeOverrideApiTestBase):
+    """C12. 当て先の消えた訂正を、黙って落とさない。
+
+    ``_archive_plan`` は**目次に現れた位置だけ**をなぞって訂正を当てる。訂正した
+    位置が目次に無ければ、``volumes`` にも ``refused`` にも何も残らない。解析の
+    あとにアーカイブの中身が変わると起きる（利用者が中を差し替える、別の道具が
+    触る、解析の結果を古いまま送る）。
+
+    実測（合本の目次は 第01巻 / 第02巻）:
+
+    | 訂正した位置 | 当たったか | ``refused`` |
+    |---|---|---|
+    | ``第02巻`` | 当たる | （空） |
+    | ``第99巻`` | **当たらない** | **（空）** |
+
+    これは「黙らせない」という決めごと（C10 が目次を読めない側で固定したもの）
+    への違反。利用者から見た症状は「直したのに直らない」だけで、届かなかったのか
+    断られたのかを切り分ける手がかりが無い。
+
+    当たる訂正を同じ実行に混ぜるのが要点。混ぜないと、訂正を丸ごと実装して
+    いない実装がそのまま通る。
+    """
+
+    def test_a_correction_for_a_place_that_is_gone_is_reported_not_dropped(self):
+        # Arrange - 素材の目次を先に固定する。第99巻 が「たまたま在る」形だと
+        # 何も確かめられない
+        library = self.work_dir / "蔵書C12"
+        compound = self.compound(library)
+        output = self.work_dir / "出力C12"
+        books = self.analyze([compound])
+        self.assertEqual(
+            {"第01巻": 1, "第02巻": 2},
+            self.detected(books),
+            f"素材の目次が想定と違う。{MISSING_ENTRY} が在ったら何も確かめられない",
+        )
+
+        # Act - 当たる訂正（第02巻 -> 7）と、当て先の無い訂正（第99巻 -> 4）を
+        # 同じ実行に混ぜる
+        accepted = self.submit(
+            [compound],
+            output,
+            books=[
+                {"source": str(compound), "entry": "第01巻"},
+                {
+                    "source": str(compound),
+                    "entry": "第02巻",
+                    "volume": {"number": FIXED},
+                },
+                {
+                    "source": str(compound),
+                    "entry": MISSING_ENTRY,
+                    "volume": {"number": OTHER_FIXED},
+                },
+            ],
+        )
+
+        # Assert 1 - 202。当て先の無い訂正 1 つのせいで整理そのものを断らない
+        self.assertEqual(
+            202,
+            accepted.status_code,
+            f"当て先の無い訂正を投入の時点で断っている: {accepted.text}",
+        )
+        job = self.job(accepted.json()["id"])
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+
+        # Assert 2 - 当たる方の訂正は効いている。これが対照。第004巻 は
+        # どこにも現れない（当たらなかった訂正が別の本に流れ込んでいない）
+        self.assertEqual(
+            {
+                REQUEST_DIR: [
+                    volume_name(REQUEST_AUTHOR, REQUEST_TITLE, 1),
+                    volume_name(REQUEST_AUTHOR, REQUEST_TITLE, FIXED),
+                ]
+            },
+            self.produced_map(output),
+            "当たる方の訂正が効いていない、または当たらない訂正が別の本に流れた",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+
+        # Assert 3 - **ここが本体。** 当たらなかった訂正が跡に残る
+        refused = job["result"]["refused"]
+        self.assertEqual(1, len(refused), f"拒否が 1 件でない: {job['result']}")
+        self.assertEqual(
+            ["archive", "entry", "reason"],
+            sorted(refused[0]),
+            f"拒否の形が違う: {refused[0]}",
+        )
+
+        # Assert 4 - どの位置が当たらなかったのかが読める。ここが空文字や
+        # アーカイブ名だけだと、合本の中のどの本の話か利用者に伝わらない
+        self.assertEqual(
+            MISSING_ENTRY,
+            refused[0]["entry"],
+            f"当たらなかった位置が読めない: {refused[0]}",
+        )
+        self.assertEqual(
+            str(compound), refused[0]["archive"], f"どの本か読めない: {refused[0]}"
+        )
+        self.assertRegex(
+            refused[0]["reason"],
+            r"[ぁ-んァ-ヶ一-龠]",
+            f"理由が利用者の言葉になっていない: {refused[0]}",
+        )
+
+        # Assert 5 - 同じ理由がログにも 1 行出る。結果に積むだけで黙っている
+        # 実装はここで落ちる
+        self.assertIn(
+            refused[0]["reason"],
+            job["log"],
+            f"断った理由がログに 1 行も出ていない: {job['log']}",
+        )
+
+    def test_the_image_folder_path_reports_a_gone_place_too(self):
+        # Arrange - フォルダは ``locate_books`` を通らない別の経路。ZIP の側を
+        # 直しただけの実装は、こちらを黙って落としたままになる
+        library = self.work_dir / "蔵書C12F"
+        folder = image_folder(library)
+        output = self.work_dir / "出力C12F"
+
+        # Act - 丸ごと 1 冊の行（訂正なし）と、当て先の無い位置への訂正
+        accepted = self.submit(
+            [folder],
+            output,
+            books=[
+                {"source": str(folder), "entry": ""},
+                {
+                    "source": str(folder),
+                    "entry": MISSING_FOLDER_ENTRY,
+                    "volume": {"number": FIXED},
+                },
+            ],
+        )
+        self.assertEqual(
+            202,
+            accepted.status_code,
+            f"フォルダの依頼を投入の時点で断っている: {accepted.text}",
+        )
+        job = self.job(accepted.json()["id"])
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+
+        # Assert - 本そのものは自動判定のまま出来る（訂正は当たらなかった）
+        self.assertEqual(
+            {REQUEST_DIR: [volume_name(REQUEST_AUTHOR, REQUEST_TITLE, FOLDER_VOLUME)]},
+            self.produced_map(output),
+            "当たらないはずの訂正がフォルダの本に当たっている",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+
+        # Assert - 当たらなかったことが、ZIP と同じ形で跡に残る
+        refused = job["result"]["refused"]
+        self.assertEqual(1, len(refused), f"拒否が 1 件でない: {job['result']}")
+        self.assertEqual(
+            MISSING_FOLDER_ENTRY,
+            refused[0]["entry"],
+            f"当たらなかった位置が読めない: {refused[0]}",
+        )
+        self.assertIn(
+            refused[0]["reason"],
+            job["log"],
+            f"断った理由がログに 1 行も出ていない: {job['log']}",
+        )
+
+
+class NullNumberOverTheWireTest(VolumeOverrideApiTestBase):
+    """C13. ``{"number": null}`` を HTTP で送ると、その本だけ巻数が外れる。
+
+    ``null`` が「巻数を外す」という正当な訂正であることは、包みを ``int | None``
+    に潰さない理由そのもの（C2 の表）。ところがコア側のテストは Pydantic の
+    検証も ``wanted_books`` の経路も通らないので、**``number`` を非 null にする
+    変更でも、``None`` を「未訂正」として捨てる変更でも、この経路は誰も
+    見張っていない。**
+
+    ``_Wanted.volumes`` は「鍵の有無が訂正したかどうか、値の ``None`` が
+    巻数なし」という約束で出来ている。値の側で見分ける実装（``if number:`` や
+    ``volumes.get(entry)``）は、外す依頼を自動判定の番号へ静かに戻す。
+
+    訂正していない対照を同じ実行に置き、``produced_map`` を 1 回の比較で
+    両方見る。片方だけを見ると「渡された訂正を全部の巻に配る」実装が通る。
+    """
+
+    def test_clearing_the_number_leaves_only_that_book_without_one(self):
+        # Arrange - 自動判定は 1 と 2。どちらも番号が付いている
+        library = self.work_dir / "蔵書C13"
+        compound = self.compound(library)
+        output = self.work_dir / "出力C13"
+        books = self.analyze([compound])
+        self.assertEqual(
+            {"第01巻": 1, "第02巻": 2},
+            self.detected(books),
+            "素材の自動判定が想定と違う。もともと番号が無ければ何も確かめられない",
+        )
+
+        # Act - 2 冊目だけ巻数を外す。1 冊目は ``volume`` の鍵ごと省く
+        job = self.organize(
+            [compound],
+            output,
+            books=[
+                {
+                    "source": book["source"],
+                    "entry": book["entry"],
+                    **({"volume": {"number": None}} if book["volume"] == 2 else {}),
+                }
+                for book in books
+            ],
+        )
+
+        # Assert - 2 冊分を 1 回の比較で見る。外した方だけが Unknown になり、
+        # 訂正していない方は自動判定の番号のまま。全冊 Unknown になる実装
+        # （``null`` を全行へ配る）と、外す依頼を捨てて 第002巻 を作る実装が、
+        # 両方ここで落ちる
+        self.assertEqual(
+            {
+                REQUEST_DIR: sorted(
+                    [UNKNOWN_NAME, volume_name(REQUEST_AUTHOR, REQUEST_TITLE, 1)]
+                )
+            },
+            self.produced_map(output),
+            "巻数を外す訂正が効いていない、または訂正していない本まで巻き込んだ",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+
+        # Assert - 外すのは正当な訂正であって、拒否ではない
+        self.assertEqual(
+            [],
+            job["result"]["refused"],
+            f"巻数を外す訂正を拒否として扱っている: {job['result']}",
+        )
+
+
+class ImageFolderOverrideTest(VolumeOverrideApiTestBase):
+    """C14. 画像を直接置いたフォルダにも訂正は効く。目次は読みに行かない。
+
+    ``_archive_plan`` は ``archive.is_dir()`` を ``locate_books`` より**先に**
+    見る。裸の画像フォルダは目次を読む経路（``_reader_for`` が名前の拡張子で
+    ``None`` を返す）を通らないためで、**この分岐を消しても既存のテストは
+    1 本も落ちない**（どれも ZIP しか使わない）。消すとフォルダに載った訂正が
+    丸ごと落ちる。
+
+    呼ばれないことまで見るのは、分岐を消して「フォルダも ``locate_books`` に
+    渡す」形にした実装を落とすため。それは訂正が効いているように見えて、
+    フォルダ 1 つごとに無駄な読みが増える。spy の張り方は C8 に合わせる。
+    """
+
+    def test_a_folder_is_corrected_without_going_through_the_toc(self):
+        # Arrange - フォルダと ZIP を同じ実行に混ぜる。ZIP の側が「spy が
+        # そもそも刺さっている」ことの対照になる。刺さっていない spy は
+        # 呼び出し 0 回で「フォルダを読んでいない」を満たしてしまう
+        library = self.work_dir / "蔵書C14"
+        folder = image_folder(library)
+        plain = self.plain(library)
+        output = self.work_dir / "出力C14"
+
+        # Act
+        original = organize_job.locate_books
+        with mock.patch.object(organize_job, "locate_books", wraps=original) as spy:
+            job = self.organize(
+                [folder, plain],
+                output,
+                books=[
+                    {"source": str(folder), "entry": "", "volume": {"number": FIXED}},
+                    {
+                        "source": str(plain),
+                        "entry": "",
+                        "volume": {"number": OTHER_FIXED},
+                    },
+                ],
+            )
+
+        # Assert - フォルダの訂正が名前になる。ZIP の側も一緒に見るのは、
+        # 訂正の仕組みそのものが動いていることの対照
+        self.assertEqual(
+            {
+                REQUEST_DIR: sorted(
+                    [
+                        volume_name(REQUEST_AUTHOR, REQUEST_TITLE, FIXED),
+                        volume_name(REQUEST_AUTHOR, REQUEST_TITLE, OTHER_FIXED),
+                    ]
+                )
+            },
+            self.produced_map(output),
+            "フォルダに載せた訂正が出来上がりの名前になっていない",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+        self.assertEqual([], job["result"]["refused"], job["result"])
+
+        # Assert - そのフォルダについて目次は読みに行かない。ZIP の側では
+        # 1 回読む（spy が刺さっている証拠）
+        read = [str(call.args[0]) for call in spy.call_args_list]
+        self.assertEqual(
+            [str(plain)],
+            read,
+            f"フォルダの目次を読みに行っている、または spy が刺さっていない: {read}",
+        )
+
+    def test_a_folder_without_a_correction_keeps_its_detected_number(self):
+        # Arrange / Act - 対照。訂正を載せないと自動判定の 8 のまま
+        library = self.work_dir / "蔵書C14b"
+        folder = image_folder(library)
+        output = self.work_dir / "出力C14b"
+        job = self.organize(
+            [folder], output, books=[{"source": str(folder), "entry": ""}]
+        )
+
+        # Assert - これが無いと、上の 第007巻 が「訂正が効いた」のか
+        # 「もともとその番号だった」のか言えない
+        self.assertEqual(
+            {REQUEST_DIR: [volume_name(REQUEST_AUTHOR, REQUEST_TITLE, FOLDER_VOLUME)]},
+            self.produced_map(output),
+            "フォルダの自動判定が想定と違う。訂正の値と揃っていたら何も確かめられない",
+        )
+        self.assertEqual([], job["result"]["failed"], job["result"])
+
+
+class RefusalWordingTest(VolumeOverrideApiTestBase):
+    """C15. 断り方の文言そのものを固定する。
+
+    3 つとも、既存の 11 本が**言葉の中身を見ていない**ところ。
+
+    1. 門 1 の 422 に「整理済み」と書かない。**この時点でサイドカーは整理済みか
+       どうかを知らない**（知るにはアーカイブを開くしかない）。書くと、名前だけ
+       載せた未整理の本にも嘘が出る。ここで使う素材は ``raw_09.zip`` で、
+       整理済みではない
+    2. ``refused`` の ``reason`` **そのもの**にファイル名が入る。既存は
+       ``archive`` 欄でしか見ていないので、理由を「巻数の訂正を断りました」の
+       ような本の分からない一文にする変更が通ってしまう。理由は画面にそのまま
+       1 行として出るので、そこにどの本か書いていないと問い合わせに答えられない
+    3. 同じ理由が **1 行まるごと** ログに現れる。既存は部分一致なので、理由を
+       切り詰めた行を出す実装が通る
+    """
+
+    def test_the_refusal_at_the_gate_does_not_claim_the_book_is_organized(self):
+        # Arrange - 整理済みでない本。ここで「整理済みなので」と言えば嘘になる
+        library = self.work_dir / "蔵書C15a"
+        plain = self.plain(library)
+        output = self.work_dir / "出力C15a"
+
+        # Act - 名前と訂正を同じ行に載せる。門 1 が断る
+        refused = self.submit(
+            [plain],
+            output,
+            books=[
+                {
+                    "source": str(plain),
+                    "entry": "",
+                    "title": TITLE,
+                    "author": AUTHOR,
+                    "volume": {"number": FIXED},
+                }
+            ],
+        )
+        self.assertEqual(422, refused.status_code, refused.text)
+
+        # Assert - 知らないことを理由にしない
+        detail = str(refused.json()["detail"])
+        self.assertNotIn(
+            "整理済み",
+            detail,
+            f"投入の時点では整理済みかどうか分からないのに、そう書いている: {detail}",
+        )
+
+        # Assert - 黙って断ってもいない。どの本の話かは読める
+        self.assertIn(plain.name, detail, f"どの本の話か読めない: {detail}")
+
+    def test_the_refusal_reason_itself_names_the_book_and_reaches_the_log(self):
+        # Arrange - 門 2 が断る形（名前欄を落として訂正だけ送る）
+        library = self.work_dir / "蔵書C15b"
+        built = self.shelve(library, "C15b")
+        output = self.work_dir / "出力C15b"
+
+        # Act
+        job = self.organize(
+            [built],
+            output,
+            books=[{"source": str(built), "entry": "", "volume": {"number": FIXED}}],
+        )
+
+        # Assert - 断ってはいる（形は C6 が固定済み。ここは文言だけを見る）
+        refused = job["result"]["refused"]
+        self.assertEqual(1, len(refused), f"拒否が 1 件でない: {job['result']}")
+        reason = refused[0]["reason"]
+
+        # Assert - 理由**そのもの**にファイル名が入る。``archive`` 欄に在ること
+        # では代えられない。画面に出るのはこの 1 行
+        self.assertIn(built.name, reason, f"理由からどの本か読めない: {reason}")
+
+        # Assert - 同じ理由が 1 行まるごとログに出る。切り詰めた行を出す実装は
+        # ここで落ちる
+        self.assertIn(
+            reason,
+            job["log"],
+            f"断った理由が 1 行まるごとログに出ていない: {job['log']}",
+        )
+
+        # Assert - 断られた本そのものは今までどおり作られる（``failed`` には
+        # 混ぜない）。行き先が依頼の対になるのは、この依頼が名前欄を載せて
+        # いないから（C6 の ``expected_map`` と同じ既存の契約）。変わっては
+        # いけないのは**巻数**で、第007巻 はどこにも現れない
+        self.assertEqual([], job["result"]["failed"], job["result"])
+        self.assertEqual(
+            {
+                REQUEST_DIR: [
+                    volume_name(REQUEST_AUTHOR, REQUEST_TITLE, ORGANIZED_VOLUME)
+                ]
+            },
+            self.produced_map(output),
+            "訂正を断った本が作られていない、または訂正が通った",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
