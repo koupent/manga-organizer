@@ -35,17 +35,16 @@ import {
   type Decisions,
   type PlanRow,
 } from "../lib/plan";
-import { DirectoryPicker } from "./DirectoryPicker";
 import { FailedList, type OrganizeFailure } from "./FailedList";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
+import { OptionsSection } from "./organize/OptionsSection";
 import { SeriesInfoSection } from "./organize/SeriesInfoSection";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
 import { PlanList } from "./PlanList";
 import { ProducedList, type HandoffMode } from "./ProducedList";
 import { Button } from "./ui/button";
-import { Checkbox } from "./ui/checkbox";
 import {
   Dialog,
   DialogClose,
@@ -53,7 +52,6 @@ import {
   DialogDescription,
   DialogTitle,
 } from "./ui/dialog";
-import { SectionTitle } from "./ui/section-title";
 
 /** 対を突き合わせるための鍵。作品名と著者の両方が同じものを 1 つと見る */
 function pairKey(entry: Entry): string {
@@ -602,22 +600,13 @@ export function OrganizePanel({
           onOpenLibrary={() => changeLibraryOpen(true)}
         />
 
-        <section className="flex flex-col gap-2">
-          <SectionTitle>オプション</SectionTitle>
-          <DirectoryPicker
-            client={client}
-            value={outputDirectory}
-            onChange={onOutputDirectoryChange}
-          />
-          <label className="flex w-fit cursor-pointer items-center gap-2 text-[12.5px] text-ink-muted">
-            <Checkbox
-              data-testid="keep-originals"
-              checked={keepOriginals}
-              onCheckedChange={(checked) => setKeepOriginals(checked === true)}
-            />
-            元のファイルを残す
-          </label>
-        </section>
+        <OptionsSection
+          client={client}
+          outputDirectory={outputDirectory}
+          onOutputDirectoryChange={onOutputDirectoryChange}
+          keepOriginals={keepOriginals}
+          onKeepOriginalsChange={setKeepOriginals}
+        />
       </aside>
 
       {/*
