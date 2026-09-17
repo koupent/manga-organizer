@@ -98,7 +98,13 @@ gh workflow run release.yml \
 
 ## バージョンアップ手順
 
-1. `services/core/pyproject.toml` と `apps/desktop/src-tauri/Cargo.toml` の version を更新
+1. 次の 4 箇所の version を同じ値に更新する（`release.yml` が一致を検証し、食い違うと公開が止まります）
+
+   - `apps/desktop/src-tauri/tauri.conf.json` — exe に刻まれる正本
+   - `apps/desktop/src-tauri/Cargo.toml`
+   - `apps/desktop/package.json`
+   - `services/core/pyproject.toml`
+
 2. PR 経由で main へ squash merge（Local Merge Gate 必須）
 3. Windows ホストでビルド・公開し、`release.yml` を起動する（[ビルドとリリース](#ビルドとリリース)）
 
