@@ -4,27 +4,12 @@
 
 ## 目次
 
-- [開発基盤](#開発基盤)
 - [開発環境のセットアップ](#開発環境のセットアップ)
 - [Local Merge Gate](#local-merge-gate)
 - [ビルドとリリース](#ビルドとリリース)
 - [バージョンアップ手順](#バージョンアップ手順)
 - [プロジェクト構造](#プロジェクト構造)
 - [コーディング規約](#コーディング規約)
-
-## 開発基盤
-
-正本は次の2つです。
-
-- Engineering Dev Foundation v0.8.0（`.dev-foundation/`）
-- Engineering Workflow Plugin v0.15.0 + 公式 ECC v2.2.0（`.engineering-workflow/`）
-
-固定 SHA:
-
-- Foundation: `.dev-foundation/foundation.lock.json`
-- Plugin / ECC: `.engineering-workflow/workflow-plugin.lock.json`
-
-Dev Container は Foundation が生成します。製品固有設定の正本は `.devcontainer/devcontainer.project.json` と `.devcontainer/Dockerfile.project` です。
 
 ## 開発環境のセットアップ
 
@@ -44,13 +29,7 @@ cd manga-organizer
 ```
 
 1. Cursor / VS Code で Dev Container を再作成する
-2. コンテナ内で Plugin を導入する
-
-```bash
-bash scripts/install_workflow.sh
-```
-
-3. アプリ依存を同期する（`postCreateCommand` でも実行されます）
+2. アプリ依存を同期する（`postCreateCommand` でも実行されます）
 
 ```bash
 cd services/core
@@ -75,12 +54,6 @@ bash scripts/run_merge_gate.sh --publish-status
 
 `--publish-status` は GitHub の `Local Merge Gate` commit status を更新します。
 
-Repository policy のローカル検証:
-
-```bash
-node <plugin-root>/scripts/repository-policy.mjs verify --local-only --project-dir .
-```
-
 ## ビルドとリリース
 
 タグ push では何も起動しません。Actions は `workflow_dispatch` 専用の照合・公開だけを行います。
@@ -98,14 +71,28 @@ Tkinter アプリの PyInstaller 経路は #28 で撤去済みで、Tauri シェ
 サイドカーを 1 つのインストーラへまとめる処理はまだありません。サイドカー
 単体の梱包は `scripts/build_sidecar.sh` にあります。
 
-公開と CD 起動は Plugin の local-delivery 境界を使います。
+### 公開と CD 起動
+
+`scripts/publish_release_artifact.mjs` が成果物を不変 prerelease として公開し、`artifactRef` を stdout へ JSON で返します。
 
 ```bash
-node <plugin-root>/scripts/local-delivery.mjs prepare --project-dir .
-node <plugin-root>/scripts/local-delivery.mjs dispatch --project-dir .
+ENGINEERING_DELIVERY_ARTIFACT_PATH=.artifacts/MangaOrganizer.exe \
+ENGINEERING_DELIVERY_ARTIFACT_SHA256=<sha256> \
+ENGINEERING_DELIVERY_ARTIFACT_SIZE=<bytes> \
+ENGINEERING_DELIVERY_SOURCE_COMMIT=<40桁 commit> \
+ENGINEERING_DELIVERY_SOURCE_TREE=<40桁 tree> \
+  node scripts/publish_release_artifact.mjs
 ```
 
-`prepare` は Local Merge Gate → Windows ビルド → 不変 prerelease 公開までを行います。`dispatch` は `.github/workflows/release.yml` を一度だけ起動し、digest 照合後に製品向け GitHub Release へ exe を添付します。
+続けて `.github/workflows/release.yml` を一度だけ起動します。digest 照合後、製品向け GitHub Release へ exe が添付されます。
+
+```bash
+gh workflow run release.yml \
+  -f artifact_ref=<上の artifactRef> \
+  -f artifact_sha256=<sha256> \
+  -f source_commit=<commit> \
+  -f source_tree=<tree>
+```
 
 非 Windows では `scripts/build_release_artifact.sh` は失敗します。
 
@@ -113,7 +100,7 @@ node <plugin-root>/scripts/local-delivery.mjs dispatch --project-dir .
 
 1. `services/core/pyproject.toml` と `apps/desktop/src-tauri/Cargo.toml` の version を更新
 2. PR 経由で main へ squash merge（Local Merge Gate 必須）
-3. Windows ホストで local-delivery の prepare / dispatch を実行
+3. Windows ホストでビルド・公開し、`release.yml` を起動する（[ビルドとリリース](#ビルドとリリース)）
 
 ## プロジェクト構造
 
@@ -134,11 +121,8 @@ manga-organizer/                 # リポジトリルート
 │   ├── run_merge_gate.sh
 │   ├── build_sidecar.sh
 │   ├── build_release_artifact.sh
-│   ├── publish_release_artifact.mjs
-│   └── install_workflow.sh
-├── .devcontainer/               # Foundation 生成層 + Project Layer
-├── .dev-foundation/
-├── .engineering-workflow/
+│   └── publish_release_artifact.mjs
+├── .devcontainer/               # Dev Container 定義（devcontainer.json / Dockerfile.project）
 ├── .github/workflows/release.yml
 ├── CLAUDE.md
 └── DEVELOPMENT.md
@@ -157,16 +141,4 @@ manga-organizer/                 # リポジトリルート
 
 ```bash
 sudo apt-get install python3-tk
-```
-
-### Foundation doctor
-
-```bash
-node <foundation-root>/bin/dev-foundation.mjs doctor --project-dir .
-```
-
-### Plugin の再導入
-
-```bash
-bash scripts/install_workflow.sh
 ```

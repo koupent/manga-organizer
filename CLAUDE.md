@@ -1,21 +1,6 @@
-# Manga Organizer — 開発ハーネス
+# Manga Organizer
 
 Windows 向け漫画アーカイブ整理アプリです。Tauri シェル + React フロントエンド + Python サイドカーで構成します。
-
-## 開発基盤
-
-- Engineering Dev Foundation v0.8.0（`.dev-foundation/`）
-- Engineering Workflow Plugin v0.15.0 + 公式 ECC v2.2.0（`.engineering-workflow/`）
-
-固定 SHA は `.engineering-workflow/workflow-plugin.lock.json` と `.dev-foundation/foundation.lock.json` を正本とします。
-
-Dev Container 再作成後、コンテナ内で Plugin を導入します。これを忘れると marketplace が `cache-miss` になり、Claude Code ハーネス（Agent ルーティング）が動きません。
-
-```bash
-bash scripts/install_workflow.sh
-```
-
-導入後は Claude Code を再起動してください。SessionStart で provenance 検証が通れば、`workflow-coordinator` 経由の Agent / Task が使えます。
 
 ## 品質ゲート
 
@@ -28,17 +13,33 @@ bash scripts/run_merge_gate.sh --publish-status
 
 対象は `services/core/` の `uv lock --check`・`ruff`・`compileall`・`unittest`、`apps/desktop/` の型検査・ビルド・Playwright、Tauri シェルの `cargo fmt`・`clippy`・`test` です。
 
+`--publish-status` は GitHub の `Local Merge Gate` commit status を HEAD へ publish します。
+
 ## 成果物配信
 
 Windows ホストで exe をビルドし、公開済み成果物の照合だけを Actions が行います。
 
 ```bash
-# Windows ホスト（Git Bash）
-node <plugin-root>/scripts/local-delivery.mjs prepare --project-dir .
-node <plugin-root>/scripts/local-delivery.mjs dispatch --project-dir .
+# Windows ホスト（Git Bash）: 成果物をビルド
+bash scripts/build_release_artifact.sh
+
+# 不変 prerelease として公開（artifactRef が stdout に JSON で返る）
+ENGINEERING_DELIVERY_ARTIFACT_PATH=.artifacts/MangaOrganizer.exe \
+ENGINEERING_DELIVERY_ARTIFACT_SHA256=<sha256> \
+ENGINEERING_DELIVERY_ARTIFACT_SIZE=<bytes> \
+ENGINEERING_DELIVERY_SOURCE_COMMIT=<40桁 commit> \
+ENGINEERING_DELIVERY_SOURCE_TREE=<40桁 tree> \
+  node scripts/publish_release_artifact.mjs
+
+# CD を 1 回だけ起動
+gh workflow run release.yml \
+  -f artifact_ref=<上の artifactRef> \
+  -f artifact_sha256=<sha256> \
+  -f source_commit=<commit> \
+  -f source_tree=<tree>
 ```
 
-または Plugin 導入後の同等コマンド。`scripts/build_release_artifact.sh` は非 Windows では失敗します。
+`scripts/build_release_artifact.sh` は非 Windows では失敗します。現時点では Tauri シェルと Python サイドカーを 1 つのインストーラへまとめる処理が未実装のため、Windows でも失敗します。
 
 ## 主な場所
 
@@ -46,4 +47,4 @@ node <plugin-root>/scripts/local-delivery.mjs dispatch --project-dir .
 - `apps/desktop/` — React + TypeScript のフロントエンド（Playwright で検証）
 - `apps/desktop/src-tauri/` — Tauri シェル（Rust）
 - `scripts/run_merge_gate.sh` — Local Merge Gate
-- `.engineering-workflow/config.json` — localCi / delivery 契約
+- `scripts/publish_release_artifact.mjs` — 不変 prerelease の公開
