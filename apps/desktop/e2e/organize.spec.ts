@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
 
 const CORE_DIR = fileURLToPath(
@@ -14,6 +14,12 @@ const SAVE_DELAY_MS = 2_000;
 
 /** 外部検索の応答を遅らせる幅。入力中に届く状況を作る */
 const LATE_SEARCH_MS = 1_500;
+
+/** 焦点が落ち着くのを待つ上限。テスト全体の期限より十分手前で諦める */
+const FOCUS_SETTLE_MS = 15_000;
+
+/** 焦点を奪われたことを見切る幅。残っているなら即座に通る */
+const FOCUS_CHECK_MS = 1_000;
 
 let sidecar: Sidecar;
 
@@ -65,6 +71,37 @@ function producedNames(root: string): string[] {
  */
 function droppedRows(page: Page) {
   return page.locator('[data-testid="plan-row"][data-level="0"]');
+}
+
+/**
+ * 焦点を当て、遅れて奪われないことまで見届ける。
+ *
+ * ファイルブラウザは非モーダルの Radix ダイアログで、閉じたあとの後始末を
+ * setTimeout(0) に積み、そこでトリガー（ファイルを選ぶボタン）へ焦点を戻す。
+ * その後始末が走る前に行へ焦点を当てると、遅れて焦点を奪われ、続くキー操作は
+ * 行ではなくトリガーに入る。行は繋がったままなので見た目には分からず、
+ * 計算機が混んでいるほど当たりやすい。実際に「Delete キーで処理対象から
+ * 外せる」が時々落ちていた原因がこれ。
+ *
+ * 奪うのは積まれた 1 回だけなので、タイマー 1 巡を越えて焦点が残れば、
+ * この閉じ処理によってはもう動かない。残らなければ奪われた後なので、
+ * 当て直せば落ち着く。
+ *
+ * 期限を明示する。省くと Playwright は待ち続け、テスト全体の期限まで
+ * 粘ってしまう。いつか焦点を奪う別の欠陥が入ったとき、静かな瞬間を
+ * 引き当てるまで繰り返して覆い隠してしまうため。
+ *
+ * 内側も短く切る。残っているかどうかは待たずに分かるので、既定の待ちを
+ * そのまま使うと、奪われた 1 回目で外側の持ち時間を食い潰す。
+ */
+async function focusStable(page: Page, target: Locator) {
+  await expect(async () => {
+    await target.focus();
+    await page.evaluate(
+      () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+    );
+    await expect(target).toBeFocused({ timeout: FOCUS_CHECK_MS });
+  }).toPass({ timeout: FOCUS_SETTLE_MS });
 }
 
 /** ファイルブラウザから対象を選ぶ。実パスはサーバー側が返す */
@@ -428,7 +465,7 @@ test.describe("整理画面", () => {
     await selectArchives(page, paths);
 
     // Act - 落としたものの行に焦点を当てて外す
-    await droppedRows(page).nth(0).focus();
+    await focusStable(page, droppedRows(page).nth(0));
     await page.keyboard.press("Delete");
 
     // Assert

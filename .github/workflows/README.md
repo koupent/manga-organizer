@@ -17,6 +17,6 @@
 
 1. Linux Dev Container で `bash scripts/run_merge_gate.sh --publish-status`
 2. Windows ホストで成果物をビルド・公開（`scripts/build_release_artifact.sh` と `scripts/publish_release_artifact.mjs`）
-3. Plugin の `local-delivery.mjs dispatch` で `release.yml` を一度だけ起動
+3. `gh workflow run release.yml` で `release.yml` を一度だけ起動（入力は 2 で得た `artifactRef` と測定値）
 
 詳細はリポジトリ直下の `DEVELOPMENT.md` を参照してください。

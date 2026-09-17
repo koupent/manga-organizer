@@ -13,17 +13,6 @@
     "ghcr.io/devcontainers/features/rust:1": {
       "version": "latest",
       "profile": "default"
-    },
-    "ghcr.io/koupent/engineering-dev-foundation/core:0.3.1": {
-      "installClaude": true,
-      "installCodex": true,
-      "claudeVersion": "latest",
-      "codexVersion": "latest"
-    },
-    "ghcr.io/koupent/engineering-dev-foundation/zsh:0.2.1": {},
-    "ghcr.io/koupent/engineering-dev-foundation/voice:0.2.0": {
-      "voiceMode": "docker-desktop",
-      "rancherPort": "24713"
     }
   },
   "customizations": {
@@ -48,23 +37,7 @@
     }
   },
   "postCreateCommand": "bash -lc 'cd services/core && uv sync --group dev && cd ../../apps/desktop && npm ci && npx playwright install --with-deps chromium'",
-  "mounts": [
-    "source=manga-organizer-foundation-claude,target=/home/vscode/.claude,type=volume",
-    "source=manga-organizer-foundation-codex,target=/home/vscode/.codex,type=volume",
-    "source=manga-organizer-foundation-gh,target=/home/vscode/.config/gh,type=volume",
-    "source=manga-organizer-foundation-azure,target=/home/vscode/.azure,type=volume",
-    "source=manga-organizer-foundation-worktrees,target=/workspaces/manga-organizer/.worktrees,type=volume",
-    "source=manga-organizer-foundation-shell-history,target=/commandhistory,type=volume",
-    "source=\\\\wsl.localhost\\Ubuntu\\mnt\\wslg,target=/run/dev-foundation-host/wslg,type=bind,readonly"
-  ],
-  "containerEnv": {
-    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
-    "CODEX_HOME": "/home/vscode/.codex",
-    "PULSE_SERVER": "unix:/run/dev-foundation/pulse-native",
-    "AUDIODRIVER": "pulseaudio"
-  },
   "runArgs": [
-    "--security-opt=seccomp=${localWorkspaceFolder}/.devcontainer/foundation/codex-bwrap.json",
     "--log-opt=max-size=10m",
     "--log-opt=max-file=3"
   ]

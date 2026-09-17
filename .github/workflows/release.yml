@@ -80,10 +80,29 @@ jobs:
                 and .state == "uploaded"
               )] | length) == 1' <<< "$release_json"
 
-          version=$(gh api \
-            "repos/$GITHUB_REPOSITORY/contents/manga-organizer/src/__version__.py?ref=$SOURCE_COMMIT" \
-            --jq .content | base64 -d | sed -n 's/^__version__ = "\([^"]*\)"/\1/p')
-          [[ -n "$version" ]]
+          fetch_file() {
+            gh api \
+              "repos/$GITHUB_REPOSITORY/contents/$1?ref=$SOURCE_COMMIT" \
+              --jq .content | base64 -d
+          }
+
+          # 製品版は exe に刻まれる tauri.conf.json を正本とし、他の宣言と
+          # 食い違ったまま公開しないよう突き合わせる。中身と名前が違う exe を
+          # 出さないための検証で、release.yml の他の照合と同じ立て付け。
+          tauri_conf=$(fetch_file apps/desktop/src-tauri/tauri.conf.json)
+          cargo_toml=$(fetch_file apps/desktop/src-tauri/Cargo.toml)
+          desktop_pkg=$(fetch_file apps/desktop/package.json)
+          core_pyproject=$(fetch_file services/core/pyproject.toml)
+
+          version=$(jq -r .version <<< "$tauri_conf")
+          desktop_version=$(jq -r .version <<< "$desktop_pkg")
+          cargo_version=$(sed -n '/^\[package\]/,/^\[/{s/^version = "\([^"]*\)"$/\1/p}' <<< "$cargo_toml")
+          core_version=$(sed -n '/^\[project\]/,/^\[/{s/^version = "\([^"]*\)"$/\1/p}' <<< "$core_pyproject")
+
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$cargo_version" == "$version" ]]
+          [[ "$desktop_version" == "$version" ]]
+          [[ "$core_version" == "$version" ]]
           printf 'tag=%s\nasset=%s\nversion=%s\n' "$tag" "$asset" "$version" >> "$GITHUB_OUTPUT"
 
       - name: 公開済み成果物を取得
