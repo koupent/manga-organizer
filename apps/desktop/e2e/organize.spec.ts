@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
 
 const CORE_DIR = fileURLToPath(
@@ -65,6 +65,29 @@ function producedNames(root: string): string[] {
  */
 function droppedRows(page: Page) {
   return page.locator('[data-testid="plan-row"][data-level="0"]');
+}
+
+/**
+ * 焦点を当て、遅れて奪われないことまで見届ける。
+ *
+ * ファイルブラウザは非モーダルの Radix ダイアログで、閉じたあとの後始末を
+ * setTimeout(0) に積み、そこでトリガー（ファイルを選ぶボタン）へ焦点を戻す。
+ * その後始末が走る前に行へ焦点を当てると、遅れて焦点を奪われ、続くキー操作は
+ * 行ではなくトリガーに入る。行は繋がったままなので見た目には分からず、
+ * 計算機が混んでいるほど当たりやすい。実際に「Delete キーで処理対象から
+ * 外せる」が時々落ちていた原因がこれ。
+ *
+ * 奪うのは積まれた 1 回だけなので、タイマー 1 巡を越えて焦点が残れば、
+ * そのあとは動かない。残らなければ奪われた後なので、当て直せば落ち着く。
+ */
+async function focusStable(page: Page, target: Locator) {
+  await expect(async () => {
+    await target.focus();
+    await page.evaluate(
+      () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+    );
+    await expect(target).toBeFocused();
+  }).toPass();
 }
 
 /** ファイルブラウザから対象を選ぶ。実パスはサーバー側が返す */
@@ -428,7 +451,7 @@ test.describe("整理画面", () => {
     await selectArchives(page, paths);
 
     // Act - 落としたものの行に焦点を当てて外す
-    await droppedRows(page).nth(0).focus();
+    await focusStable(page, droppedRows(page).nth(0));
     await page.keyboard.press("Delete");
 
     // Assert
