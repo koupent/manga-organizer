@@ -1,0 +1,16 @@
+name: manga-organizer
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: manga-organizer-dev:local
+    ports:
+      - "127.0.0.1:2223:22"
+    volumes:
+      - ..:/workspace
+      - ./authorized_keys:/etc/ssh/authorized_keys.host:ro
+    working_dir: /workspace
+    # SSH 経由のエージェントが長く動く想定。停止は手動。
+    restart: unless-stopped
