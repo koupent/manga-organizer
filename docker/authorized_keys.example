@@ -1,0 +1,9 @@
+# このファイルを docker/authorized_keys にコピーし、Orca 用公開鍵を1行で書く。
+# docker/authorized_keys は git に含めない。
+#
+#   cp docker/authorized_keys.example docker/authorized_keys
+#   cat ~/.ssh/id_manga_organaizer_orca.pub >> docker/authorized_keys
+#
+# 接続先: ssh -p 2223 -i ~/.ssh/id_manga_organaizer_orca node@127.0.0.1
+#
+# ssh-ed25519 AAAA... comment

@@ -29,8 +29,8 @@ export default defineConfig({
     host: "0.0.0.0",
     port: 5173,
     strictPort: true,
-    // Dev Container のワークスペースは 9p のバインドマウントで inotify が
-    // 届かない。ポーリングにしないとファイルの変更を検知できない
+    // Docker のワークスペース bind mount では inotify が届かないことがある。
+    // ポーリングにしないとファイルの変更を検知できない
     watch: { usePolling: true, interval: 300 },
     proxy,
   },

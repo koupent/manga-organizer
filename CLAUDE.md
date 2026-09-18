@@ -2,9 +2,25 @@
 
 Windows 向け漫画アーカイブ整理アプリです。Tauri シェル + React フロントエンド + Python サイドカーで構成します。
 
+## 開発基盤
+
+常駐 Docker（`docker/`）の中で開発し、[Orca ADE](https://www.onorca.dev/) から SSH（`127.0.0.1:2223` / user `node`）で接続します。
+
+```bash
+# Windows ホスト
+cp docker/authorized_keys.example docker/authorized_keys
+cat ~/.ssh/id_manga_organaizer_orca.pub >> docker/authorized_keys
+bash scripts/dev-up.sh
+
+# SSH 先（初回）
+bash scripts/dev-setup.sh
+```
+
+詳細は `DEVELOPMENT.md` を参照してください。
+
 ## 品質ゲート
 
-コード品質は GitHub Actions ではなくローカル必須です。
+コード品質は GitHub Actions ではなくローカル必須です（開発コンテナ内）。
 
 ```bash
 bash scripts/run_merge_gate.sh
@@ -46,5 +62,6 @@ gh workflow run release.yml \
 - `services/core/` — GUI 非依存のコアロジック（`manga_core`）とサイドカー API（`manga_api`）
 - `apps/desktop/` — React + TypeScript のフロントエンド（Playwright で検証）
 - `apps/desktop/src-tauri/` — Tauri シェル（Rust）
+- `docker/` — Orca SSH 用の常駐開発コンテナ
 - `scripts/run_merge_gate.sh` — Local Merge Gate
 - `scripts/publish_release_artifact.mjs` — 不変 prerelease の公開

@@ -197,7 +197,7 @@ run_shell_checks() {
   # 飛ばさない。検査していないものを合格として公開しないため、cargo が
   # 無ければ環境の不備として落とす
   command_available cargo || {
-    echo "cargo が必要です。Dev Container を再作成してください" >&2
+    echo "cargo が必要です。開発コンテナ内で実行してください（bash scripts/dev-up.sh）" >&2
     return 1
   }
   ( cd "$repo_root/apps/desktop/src-tauri" \

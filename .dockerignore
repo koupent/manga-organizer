@@ -4,3 +4,17 @@
 **/.dart_tool
 **/build
 **/.git
+
+# Rust / Python / フロントエンドのビルド成果物とキャッシュ。Dockerfile が
+# context から読むのは docker/entrypoint.sh だけなので、全部落として良い。
+**/target
+**/dist
+**/.mypy_cache
+**/.ruff_cache
+**/__pycache__
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+.sandbox
+logs
+.artifacts

@@ -1,0 +1,36 @@
+name: manga-organizer
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: manga-organizer-dev:local
+    ports:
+      - "127.0.0.1:2223:22"
+    volumes:
+      - ..:/workspace/manga-organizer
+      - ./authorized_keys:/etc/ssh/authorized_keys.host:ro
+      # **イメージを作り直しても消えては困るもの。**イメージ側に置くと、リビルドの
+      # たびに SSH ホスト鍵が変わって Orca が繋がらなくなり、各 CLI の認証と
+      # Claude Code のセッション履歴まで失う。作業の引き継ぎが壊れる。
+      - ssh-host-keys:/etc/ssh/host_keys
+      - claude-home:/home/node/.claude
+      - codex-home:/home/node/.codex
+      - gh-config:/home/node/.config/gh
+      - git-config:/home/node/.config/git
+      # Playwright のブラウザ。イメージ側に置くとリビルドで消え、マージゲートが
+      # まるごと落ちる。バージョン別のディレクトリなので置きっぱなしで陳腐化しない。
+      - playwright-cache:/home/node/.cache/ms-playwright
+    working_dir: /workspace/manga-organizer
+    # SSH 経由のエージェントが長く動く想定。停止は手動。
+    restart: unless-stopped
+
+# 中身を捨てたいときだけ `docker volume rm` する。`docker compose down` では消えない。
+volumes:
+  ssh-host-keys:
+  claude-home:
+  codex-home:
+  gh-config:
+  git-config:
+  playwright-cache:
