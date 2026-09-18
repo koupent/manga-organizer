@@ -49,7 +49,7 @@ RUN if id -u ubuntu >/dev/null 2>&1; then \
     fi \
     && echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node \
     && chmod 0440 /etc/sudoers.d/node \
-    && mkdir -p /home/node/.ssh /workspace \
+    && mkdir -p /home/node/.ssh /workspace/manga-organizer \
     && chown -R node:node /home/node /workspace
 
 USER node
@@ -62,10 +62,16 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile default
 
+# Claude Code CLI（公式ネイティブインストーラ → ~/.local/bin）
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
 ENV PATH="/home/node/.local/bin:/home/node/.cargo/bin:${PATH}"
 
-# 非対話 SSH（ssh host 'cmd'）でも uv / cargo が使えるようにする
+# Codex CLI（npm グローバル。システム Node へ入れる）
 USER root
+RUN npm install -g @openai/codex
+
+# 非対話 SSH（ssh host 'cmd'）でも uv / cargo / claude が使えるようにする
 RUN echo 'PATH="/home/node/.local/bin:/home/node/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' \
       > /etc/environment \
     && printf '%s\n' \
@@ -82,6 +88,6 @@ RUN git config --system --add safe.directory /workspace/manga-organizer \
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-WORKDIR /workspace
+WORKDIR /workspace/manga-organizer
 EXPOSE 22
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

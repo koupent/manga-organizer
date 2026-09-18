@@ -26,7 +26,7 @@ if ! grep -qF "$marker" "$profile" 2>/dev/null; then
 
 $marker
 export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"
-cd /workspace 2>/dev/null || true
+cd /workspace/manga-organizer 2>/dev/null || true
 EOF
   chown node:node "$profile"
 fi

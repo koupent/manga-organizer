@@ -17,8 +17,8 @@
 
 正本:
 
-- `docker/Dockerfile` — ツールチェーン（Python / uv / Node 20 / Rust / gh / Tauri 依存）
-- `docker/compose.yaml` — ポート `127.0.0.1:2223`、リポジトリを `/workspace` に bind
+- `docker/Dockerfile` — ツールチェーン（Python / uv / Node 20 / Rust / gh / Tauri 依存 / Claude Code / Codex）
+- `docker/compose.yaml` — ポート `127.0.0.1:2223`、リポジトリを `/workspace/manga-organizer` に bind
 - `scripts/run_merge_gate.sh` — Local Merge Gate
 
 VS Code / Cursor の Dev Container と Engineering Dev Foundation / Workflow Plugin は使いません。
@@ -198,4 +198,4 @@ sudo apt-get install python3-tk
 
 ### cargo / uv が見つからない
 
-開発コンテナ外で動いています。`bash scripts/dev-up.sh` のあと、SSH 先（`/workspace`）で作業してください。
+開発コンテナ外で動いています。`bash scripts/dev-up.sh` のあと、SSH 先（`/workspace/manga-organizer`）で作業してください。
