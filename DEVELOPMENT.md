@@ -65,6 +65,24 @@ bash scripts/dev-up.sh
 bash scripts/dev-setup.sh
 ```
 
+5. コンテナの中で、名乗りと各 CLI の認証を通す（初回だけ）
+
+ホストの `~/.gitconfig` も資格情報もコンテナへは渡していないので、ここで一度入れます。
+
+```bash
+git config --global user.name "あなたの名前"
+git config --global user.email "you@example.com"
+
+gh auth login      # PR・run_merge_gate.sh --publish-status に要る
+gh auth setup-git  # git push が gh の資格情報を使うようにする
+claude             # Claude Code
+codex              # Codex
+```
+
+`gh auth login` だけでは `git push` は通りません。credential helper を入れる `gh auth setup-git` まで実行してください。
+
+いずれもコンテナの `/home/node` に入るため、イメージを作り直すと消えます。消えたら通し直してください。
+
 接続確認（ホストから）:
 
 ```bash
@@ -199,3 +217,13 @@ sudo apt-get install python3-tk
 ### cargo / uv が見つからない
 
 開発コンテナ外で動いています。`bash scripts/dev-up.sh` のあと、SSH 先（`/workspace/manga-organizer`）で作業してください。
+
+### git commit で「Author identity unknown」／git push が Username を訊いてくる
+
+コンテナに名乗りと GitHub の認証が入っていません。[開発環境のセットアップ](#開発環境のセットアップ)の手順 5 を通してください。イメージを作り直したあとも同じです。
+
+```bash
+git config --global --get user.email
+gh auth status
+git config --get-regexp '^credential\.' # gh auth setup-git を通していれば出る
+```
