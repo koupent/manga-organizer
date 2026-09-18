@@ -18,7 +18,8 @@
 正本:
 
 - `docker/Dockerfile` — ツールチェーン（Python / uv / Node 20 / Rust / gh / Tauri 依存 / Claude Code / Codex）
-- `docker/compose.yaml` — ポート `127.0.0.1:2223`、リポジトリを `/workspace/manga-organizer` に bind
+- `docker/compose.yaml` — ポート `127.0.0.1:2223`、リポジトリを `/workspace/manga-organizer` に bind、SSH ホスト鍵と各 CLI の認証を named volume で永続化
+- `docker/entrypoint.sh` — ホスト鍵の生成、volume の所有調整、公開鍵の配置、sshd の起動
 - `scripts/run_merge_gate.sh` — Local Merge Gate
 
 VS Code / Cursor の Dev Container と Engineering Dev Foundation / Workflow Plugin は使いません。
@@ -81,7 +82,17 @@ codex              # Codex
 
 `gh auth login` だけでは `git push` は通りません。credential helper を入れる `gh auth setup-git` まで実行してください。
 
-いずれもコンテナの `/home/node` に入るため、イメージを作り直すと消えます。消えたら通し直してください。
+通した認証は named volume に入るので、**イメージを作り直しても消えません。**Claude Code のセッション履歴（`sessions` / `projects`）も残るため、リビルドを挟んでも作業を続けられます。
+
+| 対象 | 置き場（volume） |
+|---|---|
+| Claude Code の認証・履歴・セッション | `claude-home` → `/home/node/.claude` |
+| Codex | `codex-home` → `/home/node/.codex` |
+| gh | `gh-config` → `/home/node/.config/gh` |
+| git の名乗り | `git-config` → `/home/node/.config/git` |
+| SSH ホスト鍵 | `ssh-host-keys` → `/etc/ssh/host_keys` |
+
+`docker compose down` では消えません。捨てるときだけ `docker volume rm manga-organizer_claude-home` のように明示します。
 
 接続確認（ホストから）:
 
@@ -214,13 +225,26 @@ sudo apt-get install python3-tk
 - Orca / ssh が `~/.ssh/id_manga_organaizer_orca` を使っているか確認
 - コンテナを再起動: `bash scripts/dev-up.sh`
 
+### リビルド後に Orca が繋がらない／ホスト鍵が違うと言われる
+
+ホスト鍵は `ssh-host-keys` volume にあり、通常はリビルドしても変わりません。`docker volume rm` で消した場合だけ作り直されるので、そのときはピン留めを更新します。
+
+現在の鍵を確認する:
+
+```bash
+docker exec manga-organizer-dev-1 ssh-keygen -lf /etc/ssh/host_keys/ssh_host_ed25519_key.pub
+```
+
+- ホストの `ssh`: `ssh-keygen -R '[127.0.0.1]:2223'` で古い項目を消してから接続し直す
+- Orca: `%APPDATA%Orcaprofileslocal-defaultssh-host-keys.json` の port 2223 の項目を消して接続し直す
+
 ### cargo / uv が見つからない
 
 開発コンテナ外で動いています。`bash scripts/dev-up.sh` のあと、SSH 先（`/workspace/manga-organizer`）で作業してください。
 
 ### git commit で「Author identity unknown」／git push が Username を訊いてくる
 
-コンテナに名乗りと GitHub の認証が入っていません。[開発環境のセットアップ](#開発環境のセットアップ)の手順 5 を通してください。イメージを作り直したあとも同じです。
+コンテナに名乗りと GitHub の認証が入っていません。[開発環境のセットアップ](#開発環境のセットアップ)の手順 5 を通してください。一度通せば volume に残るので、リビルドのあとに通し直す必要はありません。
 
 ```bash
 git config --global --get user.email
