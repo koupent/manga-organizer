@@ -73,6 +73,12 @@ RUN echo 'PATH="/home/node/.local/bin:/home/node/.cargo/bin:/usr/local/sbin:/usr
       > /etc/profile.d/dev-tools-path.sh \
     && chmod 644 /etc/profile.d/dev-tools-path.sh
 
+# **bind mount した repo を、worktree と gitdir の両方で信頼する。**repo はホストから
+# bind mount しているので、container の中では root 所有に見える。実行するのは node なので、
+# 例外にしないと git は "dubious ownership" で止まり、**この container では git が何も
+# できない。**clone のように gitdir の path で所有を見る操作があるため、.git の側も要る。
+RUN git config --system --add safe.directory /workspace/manga-organizer \
+    && git config --system --add safe.directory /workspace/manga-organizer/.git
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
