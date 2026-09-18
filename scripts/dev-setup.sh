@@ -18,6 +18,8 @@ echo "== Python (uv sync)"
 ( cd "$repo_root/services/core" && uv sync --group dev )
 
 echo "== Frontend (npm ci + Playwright Chromium)"
-( cd "$repo_root/apps/desktop" && npm ci && npx playwright install --with-deps chromium )
+# --with-deps は付けない。apt の依存は docker/Dockerfile で入れてあり、実行時に
+# 入れるとコンテナを作り直すたびに消える。ブラウザ本体は playwright-cache volume に残る。
+( cd "$repo_root/apps/desktop" && npm ci && npx playwright install chromium )
 
 echo "依存の同期が完了しました。"

@@ -23,7 +23,8 @@ for dir in \
   /home/node/.claude \
   /home/node/.codex \
   /home/node/.config/gh \
-  /home/node/.config/git; do
+  /home/node/.config/git \
+  /home/node/.cache/ms-playwright; do
   mkdir -p "$dir"
   chown -R node:node "$dir"
 done

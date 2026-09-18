@@ -2,6 +2,10 @@ FROM ubuntu:24.04
 
 # libwebkit2gtk 以下は Tauri シェルのビルドに要る。これが無いと
 # cargo clippy / cargo test すら通らない
+#
+# fonts-* / libasound2t64 / libnspr4 / libnss3 / xfonts-* / xvfb は Playwright の
+# chromium が要る分（`playwright install-deps chromium` 相当）。**イメージへ焼く。**
+# 実行時に --with-deps で入れるとコンテナを作り直すたびに消え、マージゲートが落ちる。
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -9,9 +13,19 @@ RUN apt-get update \
       ca-certificates \
       curl \
       file \
+      fonts-freefont-ttf \
+      fonts-ipafont-gothic \
+      fonts-liberation \
+      fonts-noto-color-emoji \
+      fonts-tlwg-loma-otf \
+      fonts-unifont \
+      fonts-wqy-zenhei \
       git \
       jq \
+      libasound2t64 \
       libayatana-appindicator3-dev \
+      libnspr4 \
+      libnss3 \
       librsvg2-dev \
       libssl-dev \
       libwebkit2gtk-4.1-dev \
@@ -23,6 +37,9 @@ RUN apt-get update \
       sudo \
       unzip \
       wget \
+      xfonts-cyrillic \
+      xfonts-scalable \
+      xvfb \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -92,7 +109,8 @@ RUN mkdir -p \
       /home/node/.claude \
       /home/node/.codex \
       /home/node/.config/gh \
-      /home/node/.config/git
+      /home/node/.config/git \
+      /home/node/.cache/ms-playwright
 
 # Codex CLI（npm グローバル。システム Node へ入れる）
 USER root

@@ -91,6 +91,7 @@ codex              # Codex
 | gh | `gh-config` → `/home/node/.config/gh` |
 | git の名乗り | `git-config` → `/home/node/.config/git` |
 | SSH ホスト鍵 | `ssh-host-keys` → `/etc/ssh/host_keys` |
+| Playwright のブラウザ | `playwright-cache` → `/home/node/.cache/ms-playwright` |
 
 `docker compose down` では消えません。捨てるときだけ `docker volume rm manga-organizer_claude-home` のように明示します。
 

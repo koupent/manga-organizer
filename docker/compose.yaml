@@ -19,6 +19,9 @@ services:
       - codex-home:/home/node/.codex
       - gh-config:/home/node/.config/gh
       - git-config:/home/node/.config/git
+      # Playwright のブラウザ。イメージ側に置くとリビルドで消え、マージゲートが
+      # まるごと落ちる。バージョン別のディレクトリなので置きっぱなしで陳腐化しない。
+      - playwright-cache:/home/node/.cache/ms-playwright
     working_dir: /workspace/manga-organizer
     # SSH 経由のエージェントが長く動く想定。停止は手動。
     restart: unless-stopped
@@ -30,3 +33,4 @@ volumes:
   codex-home:
   gh-config:
   git-config:
+  playwright-cache:
