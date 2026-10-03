@@ -136,9 +136,9 @@ class WalkSpy:
 
 class ResolveScanTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
     def build_app(self, roots: list[Path]):
         self.app = create_app(

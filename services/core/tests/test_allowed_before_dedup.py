@@ -80,10 +80,10 @@ class LinkOrderTestBase(VolumeOverrideApiTestBase):
 
     def setUp(self):
         super().setUp()
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
         # 許可された場所は work_dir だけ。その外に本物を置く
-        self.outside = Path(outside_temp.name)
+        self.outside = Path(outside_temp.name).resolve()
 
     # --- 素材 -------------------------------------------------------------
 

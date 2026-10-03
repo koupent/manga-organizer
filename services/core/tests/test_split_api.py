@@ -193,7 +193,7 @@ class SplitApiTestBase(unittest.TestCase):
     """走査と確定の 2 経路を、画面と同じようにトークン付きで叩く土台"""
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
         self.work_dir = Path(self._temp.name).resolve()
 
@@ -637,7 +637,7 @@ class SplitScanSecurityTest(SplitApiTestBase):
 
     def test_refuses_an_archive_outside_the_allowed_roots(self):
         # Arrange - 許可の外と中に、同じ形の本を用意する
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
         outside = self.build_book(Path(outside_temp.name).resolve() / "許可の外.zip")
 
@@ -680,7 +680,7 @@ class SplitConfirmSecurityTest(SplitApiTestBase):
     def test_refuses_an_archive_outside_the_allowed_roots(self):
         # Arrange - 許可の外に本を置く。走査すら断られる場所なので、行と印は
         # 許可の中の本のものを使う。パスの検証が先に立つことを見る
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
         outside = self.build_book(Path(outside_temp.name).resolve() / "許可の外.zip")
         scanned = self.scan(self.archive)

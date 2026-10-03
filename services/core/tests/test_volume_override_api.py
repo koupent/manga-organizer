@@ -145,9 +145,9 @@ class VolumeOverrideApiTestBase(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         # 出来上がりの表を丸ごと比べる。切り詰められると、どの本で食い違ったのかが
         # 失敗の出力から読めない
         self.maxDiff = None

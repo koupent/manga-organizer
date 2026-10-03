@@ -164,9 +164,9 @@ class OrganizeFixture(unittest.TestCase):
     """整理を実際に走らせる土台。作り物の経路では防げているのに本物で落ちる"""
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive = self.work_dir / "book.zip"
         self.output_dir = self.work_dir / "out"
         self.output_dir.mkdir()

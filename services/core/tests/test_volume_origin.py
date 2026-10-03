@@ -97,9 +97,9 @@ NESTED_EXTRACTED = "_extracted_内_05_zip"
 
 class VolumeOriginTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
     def build_library(self, with_nested: bool = False) -> Path:
         """4 通りの根拠が同時に出る蔵書を作る。

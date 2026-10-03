@@ -8,7 +8,7 @@ Windows 向け漫画アーカイブ整理アプリです。Tauri シェル + Rea
 
 ## 品質ゲート（CI）
 
-PR ごとに GitHub Actions（`.github/workflows/ci.yml`）が `Merge Gate` を回し、main への合流はその合格が条件です。中身は `scripts/run_merge_gate.sh` が正本で、セッション内でも同じものを回せます。
+PR ごとに GitHub Actions（`.github/workflows/ci.yml`）が `Merge Gate`（ubuntu）と `Core (Windows)`（コアのテストを Windows で）を回し、main への合流は `Merge Gate` の合格が条件です。中身は `scripts/run_merge_gate.sh` が正本で、セッション内でも同じものを回せます。
 
 ```bash
 bash scripts/run_merge_gate.sh
@@ -30,7 +30,7 @@ cd apps/desktop && npx tauri dev
 
 ## 成果物配信
 
-インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。配布物の作り方に関わるファイルを変えた PR では自動で走り、インストーラを Artifacts に残します（実機での確認用）。手動実行も Artifacts に残すだけです。
+インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。配布物の作り方に関わるファイルを変えた PR では自動で走り、インストーラを Artifacts に残します（実機での確認用）。手動実行も Artifacts に残すだけです。タグでは、配布用の公開リポジトリ `koupent/manga-organizer-releases` にインストーラと自動更新の案内（`latest.json`）を載せます。署名鍵と公開リポジトリへのトークンは Secrets にあります（`DEVELOPMENT.md` の「自動更新」）。署名鍵とパスワードの控えは、利用者の Google Drive（マイドライブ > GitHub > manga-orgaizer）にあります。
 
 ```bash
 # 4 か所の version（tauri.conf.json / Cargo.toml / package.json / pyproject.toml）を揃えて main へマージした後、利用者が手元で

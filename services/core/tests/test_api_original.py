@@ -65,9 +65,9 @@ class OriginalApiTestBase(unittest.TestCase):
     """加工済みの本と、一度も加工していない本を 1 冊ずつ用意する"""
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
         self.edited = self.write_archive("加工済み.zip")
         self.untouched = self.write_archive("未加工.zip")

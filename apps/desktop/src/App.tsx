@@ -14,6 +14,7 @@ import {
   onFilesDropped,
   resolveConnection,
 } from "./connection";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { Alert } from "./components/ui/alert";
 import { Segmented } from "./components/ui/segmented";
 
@@ -350,6 +351,7 @@ export function App() {
           その間ずっと入力欄や一覧は狭いまま使うことになる。
           溢れたときにスクロールするのはこの中であって、窓ではない */}
       <div className="flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-3">
+        <UpdateNotice />
         {error ? (
           <Alert tone="danger" data-testid="error">
             <TriangleAlert />

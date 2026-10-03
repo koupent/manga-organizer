@@ -22,9 +22,9 @@ def write_image(path: Path, fmt: str = "JPEG") -> None:
 
 class CreateArchiveTest(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.source = self.work_dir / "src"
         self.source.mkdir()
         self.output = self.work_dir / "out.zip"
@@ -128,9 +128,9 @@ class CreateArchiveTest(unittest.TestCase):
 
 class ImageDirectoryDiscoveryTest(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.root = Path(self._temp.name)
+        self.root = Path(self._temp.name).resolve()
         self.handler = ArchiveHandler()
 
     def test_does_not_treat_macos_metadata_as_an_image_directory(self):

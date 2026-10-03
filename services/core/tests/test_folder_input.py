@@ -41,9 +41,9 @@ def make_page(color: str = "navy") -> bytes:
 
 class FolderInputTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
         # 許可された場所を実際に絞る。絞らないと第 4 の検証が意味を持たない
         self.app = create_app(
@@ -200,9 +200,9 @@ class FolderAllowedRootsTest(FolderInputTestBase):
 
     def test_rejects_a_folder_outside_the_allowed_roots(self):
         # Arrange - 許可の外にも、中と同じ形のフォルダを用意する
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
-        outside = Path(outside_temp.name) / "許可の外"
+        outside = Path(outside_temp.name).resolve() / "許可の外"
         self.write_archive(outside / "サブ" / "raw_01.zip")
 
         inside = self.work_dir / "許可の中"

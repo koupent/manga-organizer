@@ -78,9 +78,9 @@ def conflicts_of(payload: dict) -> dict[str, tuple[str | None, tuple[str, ...]]]
 
 class LibraryImportTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.app = create_app(
             state_dir=self.work_dir / "state",
             allowed_roots=[self.work_dir],

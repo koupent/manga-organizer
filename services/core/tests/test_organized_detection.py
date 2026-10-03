@@ -93,9 +93,9 @@ FOLDER_MISMATCH = "folder-mismatch"
 
 class OrganizedTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
     def build_organized(self, output: Path) -> Path:
         """整理そのものに「整理済みの本」を作らせる。

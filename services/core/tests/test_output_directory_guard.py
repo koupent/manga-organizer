@@ -55,15 +55,15 @@ class OutputDirectoryTestBase(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.state_dir = self.work_dir / "state"
         self.archive = self.make_archive(self.work_dir / "volume_01.zip")
 
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
-        self.outside = Path(outside_temp.name)
+        self.outside = Path(outside_temp.name).resolve()
 
         self.app = create_app(
             state_dir=self.state_dir,

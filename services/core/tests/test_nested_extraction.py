@@ -36,9 +36,9 @@ def zip_with(path: Path, entries: dict[str, bytes]) -> Path:
 
 class NestedExtractionTest(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.handler = ArchiveHandler()
         self.addCleanup(self.handler.cleanup)
 

@@ -403,5 +403,7 @@ def _verify(
     if damaged is not None:
         raise CoverEditError(f"書き出した ZIP の内容が壊れています: {damaged}")
 
-    with open(temp_path, "rb") as stream:
+    # 書き込みできる口で開く。Windows では読み取り専用の口に fsync すると
+    # EBADF（[Errno 9] Bad file descriptor）で落ち、保存そのものが止まる
+    with open(temp_path, "r+b") as stream:
         os.fsync(stream.fileno())

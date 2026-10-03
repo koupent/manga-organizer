@@ -59,3 +59,24 @@ jobs:
 
       - name: Merge Gate
         run: bash scripts/run_merge_gate.sh
+
+  # ファイルの扱いは OS で振る舞いが違う（読み取り専用で開いたものへの
+  # fsync が Windows だけ EBADF になる、など）。配る先は Windows なので、
+  # コアのテストは Windows でも回す
+  core-windows:
+    name: Core (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: services/core
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: コアのテスト
+        run: uv run python -m unittest discover -s tests

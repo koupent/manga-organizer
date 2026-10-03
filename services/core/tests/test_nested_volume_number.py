@@ -96,9 +96,9 @@ def zip_with(path: Path, entries: dict[str, bytes]) -> Path:
 
 class NestedVolumeTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
     def nested_zip(self, name: str, page_count: int) -> bytes:
         """入れ子に入れる ZIP のバイト列。

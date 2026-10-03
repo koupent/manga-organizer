@@ -416,9 +416,9 @@ class ArchiveFixture(unittest.TestCase):
     """4 ページのアーカイブを 1 つ用意する"""
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive = build_archive(
             self.work_dir / "volume.zip",
             tuple((name, page_bytes(color)) for name, color in PAGES),
@@ -690,9 +690,9 @@ class DuplicateOriginalTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.twin = page_bytes("blue")
         self.archive = build_archive(
             self.work_dir / "twins.zip",

@@ -82,6 +82,16 @@ async fn sidecar_connection(app: tauri::AppHandle) -> Result<ConnectionView, Str
         .map_err(|error| error.to_string())?
 }
 
+/// サイドカーを止める。更新のインストーラを走らせる直前に画面が呼ぶ。
+///
+/// Windows の更新はインストーラを起こして `process::exit` で抜けるので、
+/// `RunEvent::Exit` の後始末を通らない。サイドカーが残ったままだと、
+/// インストーラが `manga-api.exe` と同梱物を上書きできない
+#[tauri::command]
+fn stop_sidecar(state: tauri::State<'_, SidecarState>) {
+    state.stop();
+}
+
 /// サイドカーを立ち上げる
 fn launch_sidecar(app: &tauri::AppHandle) -> Result<Sidecar, String> {
     let state_dir = app
@@ -117,8 +127,9 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<Sidecar, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(SidecarState::default())
-        .invoke_handler(tauri::generate_handler![sidecar_connection])
+        .invoke_handler(tauri::generate_handler![sidecar_connection, stop_sidecar])
         .setup(|app| {
             // 起動を待つ間も窓を動かしておく。起動できなくても窓は出し、
             // 理由は接続情報を取りに来た画面へ返す
