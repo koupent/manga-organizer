@@ -14,12 +14,10 @@ Windows ランナーは分数が 2 倍に数えられるため、`release.yml` �
 ## リリース手順
 
 1. 4 か所の版を上げた PR を main へマージする
-2. main の先頭にタグを打って push する
+2. main の先頭にタグを打って push する（利用者が手元の Git から。クラウドのセッションからはタグを push できない）
 
    ```bash
-   git switch main && git pull
-   git tag v4.0.0
-   git push origin v4.0.0
+   git fetch origin && git tag v4.0.0 origin/main && git push origin v4.0.0
    ```
 
 3. Actions の「Windows インストーラ」が緑になると、Releases に `MangaOrganizer-v4.0.0-setup.exe` が載る

@@ -96,12 +96,10 @@ Windows ランナーは分数が 2 倍に数えられるため、画面だけの
    - `services/core/pyproject.toml`（`uv.lock` は `uv lock`）
 
 2. PR 経由で main へ squash merge（Merge Gate 必須）
-3. main の先頭にタグを打って push する
+3. main の先頭にタグを打って push する。**タグは利用者が手元の Git から打ちます。** クラウドのセッションからは作業ブランチ以外へ push できず、タグは HTTP 403 で弾かれます
 
    ```bash
-   git switch main && git pull
-   git tag v4.0.0
-   git push origin v4.0.0
+   git fetch origin && git tag v4.0.0 origin/main && git push origin v4.0.0
    ```
 
 4. Actions の「Windows インストーラ」が緑になると、Releases に `MangaOrganizer-v4.0.0-setup.exe` が載る
