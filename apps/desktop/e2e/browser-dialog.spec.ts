@@ -40,6 +40,12 @@ const DROPPED = 3;
 /** 投入する素材を置く場所。ここまで辿ってから選ぶ */
 const ARCHIVE_DIR = "窓の素材";
 
+/** アーカイブもフォルダも無い場所（段階 4） */
+const EMPTY_DIR = "何も無い場所";
+
+/** 3 段の入れ子。パンくずで飛べることを見る */
+const NESTED = ["一段目", "二段目", "三段目"];
+
 /** 1 冊だけ選ぶ画面で使うアーカイブのページ数 */
 const REORDER_PAGES = 2;
 
@@ -58,6 +64,8 @@ test.beforeAll(async () => {
       { name: "001.jpg", color: "#ff0000" },
     ]);
   }
+  mkdirSync(join(sidecar.workDir, EMPTY_DIR), { recursive: true });
+  mkdirSync(join(sidecar.workDir, ...NESTED), { recursive: true });
 });
 
 test.afterAll(() => sidecar?.stop());
@@ -183,9 +191,8 @@ test.describe("ファイルブラウザを別窓で出す", () => {
     // Assert - 中身は今のまま。窓へ移すついでに操作を落とさない
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByTestId("browse-up")).toBeVisible();
-    await expect(dialog.getByTestId("add-all-here")).toBeVisible();
-    await expect(dialog.getByTestId("add-all-here")).toHaveText(
-      "ここのアーカイブを全部追加",
+    await expect(dialog.getByTestId("add-here")).toHaveText(
+      "ここをフォルダごと追加",
     );
   });
 
@@ -276,5 +283,198 @@ test.describe("ファイルブラウザを別窓で出す", () => {
       page.getByTestId("file-browser"),
       "同じボタンをもう一度押しても閉じない",
     ).toBeHidden();
+  });
+
+  test("窓の見出しと底の行が見え、「閉じる」で閉じても投入はそのまま", async ({
+    page,
+  }) => {
+    // Arrange
+    await openOrganize(page, "out-dialog-frame");
+    await stubNoSuggestions(page);
+    await fillSelection(page);
+
+    // Act
+    await page.getByTestId("open-browser").click();
+
+    // Assert - 何をする窓なのかを見出しで言う
+    const dialog = page.getByTestId("file-browser");
+    await expect(dialog.getByText("投入するものを選ぶ")).toBeVisible();
+    await expect(
+      dialog.getByText("フォルダは下の階層まで辿って入れます"),
+    ).toBeVisible();
+    await expect(dialog.getByTestId("browse-footer")).toContainText(
+      `投入したもの: ${DROPPED} 件`,
+    );
+    await expect(dialog.getByTestId("browse-footer")).toContainText(
+      "追加しても閉じません",
+    );
+
+    // Act
+    await dialog.getByTestId("browse-close").click();
+
+    // Assert
+    await expect(page.getByTestId("file-browser")).toBeHidden();
+    await expect(page.getByTestId("selected-count")).toHaveText(
+      `${DROPPED} 件`,
+    );
+  });
+
+  test("アーカイブの無い場所でも「ここをフォルダごと追加」は 0 件にならない", async ({
+    page,
+  }) => {
+    // Arrange
+    await openOrganize(page, "out-dialog-add-here");
+    await page.getByTestId("open-browser").click();
+    await page
+      .locator(
+        `[data-testid="browse-entry"][data-name="${EMPTY_DIR}"] .browser-name`,
+      )
+      .click();
+
+    // Assert - 中身が無いことを黙らずに言う。「全部追加」は無い
+    const dialog = page.getByTestId("file-browser");
+    await expect(dialog.getByTestId("browse-empty")).toHaveText(
+      "この中にフォルダもアーカイブもありません",
+    );
+    await expect(dialog.getByTestId("add-all-here")).toHaveCount(0);
+
+    // Act
+    await dialog.getByTestId("add-here").click();
+
+    // Assert - この場所そのものが入る。印に替わり、もう押せない
+    await expect(page.getByTestId("selected-count")).toHaveText("1 件");
+    await expect(
+      page.locator(
+        `[data-testid="source-row"][data-path="${join(sidecar.workDir, EMPTY_DIR)}"]`,
+      ),
+    ).toBeVisible();
+    await expect(dialog.getByTestId("add-here")).toHaveCount(0);
+    await expect(dialog.getByTestId("browse-here-state")).toHaveText(
+      "この場所は追加済み",
+    );
+  });
+
+  test("フォルダごと入れたら、その中では追加のボタンを出さない", async ({
+    page,
+  }) => {
+    // Arrange
+    await openOrganize(page, "out-dialog-inside");
+    await page.getByTestId("open-browser").click();
+    const dialog = page.getByTestId("file-browser");
+    const folderRow = dialog.locator(
+      `[data-testid="browse-entry"][data-name="${ARCHIVE_DIR}"]`,
+    );
+
+    // Act
+    await folderRow.getByRole("button", { name: "フォルダごと追加" }).click();
+
+    // Assert - 入れたフォルダの行は印に替わる。隣のフォルダはまだ入れられる
+    await expect(folderRow.getByTestId("browse-added")).toHaveText("追加済み");
+    await expect(
+      folderRow.getByRole("button", { name: "フォルダごと追加" }),
+    ).toHaveCount(0);
+    await expect(
+      dialog
+        .locator(`[data-testid="browse-entry"][data-name="${EMPTY_DIR}"]`)
+        .getByRole("button", { name: "フォルダごと追加" }),
+    ).toBeVisible();
+
+    // Act - 入れたフォルダの中へ入る
+    await folderRow.locator(".browser-name").click();
+
+    // Assert - 中の行は「上のフォルダごと追加済み」で、ボタンも二重の追加も無い
+    const inside = dialog.locator('[data-testid="browse-entry"]');
+    await expect(inside).toHaveCount(DROPPED);
+    // 名前そのものも押せる要素なので、追加のボタンだけを名前で数える
+    await expect(inside.getByRole("button", { name: /追加/ })).toHaveCount(0);
+    await expect(inside.first()).toContainText("上のフォルダごと追加済み");
+    // 入れたフォルダそのものの中なので、この場所が追加済み
+    await expect(dialog.getByTestId("browse-here-state")).toHaveText(
+      "この場所は追加済み",
+    );
+    await inside.first().locator(".browser-name").click();
+    await expect(page.getByTestId("selected-count")).toHaveText("1 件");
+  });
+
+  test("アーカイブの行は「追加」で入れ、追加済みの印に替わる", async ({
+    page,
+  }) => {
+    // Arrange
+    await openOrganize(page, "out-dialog-add-one");
+    await enterArchiveDirectory(page);
+    const row = page.locator(
+      `[data-testid="browse-entry"][data-name="${archiveNames[0]}"]`,
+    );
+
+    // Act
+    await row.getByRole("button", { name: "追加" }).click();
+
+    // Assert
+    await expect(page.getByTestId("selected-count")).toHaveText("1 件");
+    await expect(row.getByTestId("browse-added")).toHaveText("追加済み");
+    await expect(
+      row.getByRole("button", { name: "追加", exact: true }),
+    ).toHaveCount(0);
+  });
+
+  test("パンくずの 1 段を押すと、その階層へ飛べる", async ({ page }) => {
+    // Arrange - 3 段潜る
+    await openOrganize(page, "out-dialog-crumbs");
+    await page.getByTestId("open-browser").click();
+    const dialog = page.getByTestId("file-browser");
+    for (const name of NESTED) {
+      await dialog
+        .locator(
+          `[data-testid="browse-entry"][data-name="${name}"] .browser-name`,
+        )
+        .click();
+      await expect(dialog.getByTestId("browse-crumb").last()).toHaveText(name);
+    }
+
+    // Act - 一番上（許された場所の根）へ飛ぶ
+    await dialog.getByTestId("browse-crumb").first().click();
+
+    // Assert - 根にしか無い名前が見える
+    await expect(
+      dialog.locator(
+        `[data-testid="browse-entry"][data-name="${ARCHIVE_DIR}"]`,
+      ),
+    ).toBeVisible();
+    await expect(dialog.getByTestId("browse-crumb")).toHaveCount(1);
+  });
+
+  test("1 冊だけ選ぶ画面では、アーカイブの行に「開く」があり、押すと読み込む", async ({
+    page,
+  }) => {
+    // Arrange
+    writeArchive(sidecar.workDir, "開いて選ぶ.zip", [
+      { name: "001.jpg", color: "#ff0000" },
+      { name: "002.jpg", color: "#00ff00" },
+    ]);
+    await openReorder(page);
+    await page.getByTestId("open-browser").click();
+    const dialog = page.getByTestId("file-browser");
+
+    // Assert - 底の行が振る舞いを言う。フォルダの行には追加のボタンが無い
+    await expect(dialog.getByTestId("browse-footer")).toContainText(
+      "選ぶとすぐに開きます",
+    );
+    await expect(
+      dialog
+        .locator(`[data-testid="browse-entry"][data-name="${ARCHIVE_DIR}"]`)
+        .getByRole("button", { name: /開く|追加/ }),
+    ).toHaveCount(0);
+
+    // Act
+    await dialog
+      .locator('[data-testid="browse-entry"][data-name="開いて選ぶ.zip"]')
+      .getByRole("button", { name: "開く" })
+      .click();
+
+    // Assert
+    await expect(page.getByTestId("file-browser")).toBeHidden();
+    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
+      "開いて選ぶ.zip",
+    );
   });
 });

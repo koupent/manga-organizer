@@ -128,10 +128,16 @@ async function closeBrowser(page: Page, count: number) {
   ).toHaveCount(count);
 }
 
-/** 置き場所ごとまとめて処理対象にする */
+/** 置き場所のアーカイブを全部、1 件ずつ処理対象にする */
 async function addAll(page: Page) {
   await enterArchiveDirectory(page);
-  await page.getByTestId("add-all-here").click();
+  for (const name of archiveNames) {
+    await page
+      .locator(
+        `[data-testid="browse-entry"][data-name="${name}"] .browser-name`,
+      )
+      .click();
+  }
   await expect(page.getByTestId("selected-count")).toHaveText(`${MANY} 件`);
   await closeBrowser(page, MANY);
 }

@@ -85,6 +85,8 @@ export function FilePicker({
     path: "",
     parent: null,
   });
+  // 辿れる一番上。最初に根を読んだときに覚え、パンくずの起点にする
+  const [root, setRoot] = useState("");
   const [entries, setEntries] = useState<BrowseEntry[]>([]);
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -103,6 +105,7 @@ export function FilePicker({
       client
         .browse(path)
         .then((result) => {
+          if (!path) setRoot(result.path);
           setLocation({ path: result.path, parent: result.parent ?? null });
           setEntries(result.entries as BrowseEntry[]);
           setError("");
@@ -285,6 +288,7 @@ export function FilePicker({
 
       <FileBrowserDialog
         location={location}
+        root={root}
         entries={entries}
         selected={selected}
         single={single}
@@ -293,7 +297,7 @@ export function FilePicker({
         description={
           single
             ? "フォルダを辿って、対象にするアーカイブを 1 つ選びます。選ぶとこの窓は閉じます。"
-            : "フォルダやアーカイブを辿って、処理対象の一覧へ足します。足してもこの窓は開いたままです。"
+            : "フォルダは下の階層まで辿って入れます"
         }
         onOpen={load}
         onAdd={add}
