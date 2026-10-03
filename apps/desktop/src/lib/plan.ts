@@ -15,6 +15,13 @@ export type PlannedBook = {
   entry: string;
   output_name: string;
   volume: number | null;
+  /**
+   * 巻数をどこから読んだか（#114）。pattern / last-number / position / none。
+   * 古いサイドカーや台本の応答には無いことがある
+   */
+  volume_origin?: string;
+  /** 巻数を読み取った名前。position のときは空 */
+  volume_source_name?: string;
   issues: string[];
   /** この本が既に整理の出力そのものか（#73 第 1・2 段階の判定） */
   organized: boolean;
@@ -35,6 +42,20 @@ export type PlannedBook = {
  */
 export const TOC_UNREADABLE = "toc-unreadable";
 
+/** 巻数が名前から読めなかった */
+export const VOLUME_UNKNOWN = "volume-unknown";
+
+/** 巻数を読んだ根拠が弱く、誤読しうる */
+export const VOLUME_UNCERTAIN = "volume-uncertain";
+
+/**
+ * 作る本どうしで同じ名前になる（サイドバー案 段階 5）。
+ *
+ * サイドカーは返さない。名前は画面が作品名・著者・巻数から毎回組み立てる
+ * ので、重なりも画面が見つける。後ろの本には ``_1`` が付いて黙って出来る。
+ */
+export const VOLUME_DUPLICATE = "volume-duplicate";
+
 /** 行の種類。folder と archive は入れ物、book が生成の単位 */
 export type PlanKind = "folder" | "archive" | "book";
 
@@ -54,8 +75,14 @@ export type PlanRow = {
   source: string;
   /** 本の行の、アーカイブ内での位置。全体で 1 冊なら空 */
   entry: string;
-  /** 巻数。読めなかったものは null */
+  /** 巻数。読めなかったものは null。利用者が直したらその値（``applyVolumes``） */
   volume: number | null;
+  /** 解析が決めた巻数。直しても変わらない。読んだ数字を塗るのに使う */
+  autoVolume: number | null;
+  /** 巻数をどこから読んだか。入れ物の行では空 */
+  volumeOrigin: string;
+  /** 巻数を読み取った名前。入れ物の行と position では空 */
+  volumeSourceName: string;
   /** 実行前に見せる印 */
   issues: string[];
   /**
@@ -153,6 +180,9 @@ function containerRow(
     source: "",
     entry: "",
     volume: null,
+    autoVolume: null,
+    volumeOrigin: "",
+    volumeSourceName: "",
     issues,
     // 判定は本 1 冊ごとに下すもので、入れ物そのものは対象にならない
     organized: false,
@@ -179,6 +209,9 @@ function bookRow(
     source: book.source,
     entry: book.entry,
     volume: book.volume,
+    autoVolume: book.volume,
+    volumeOrigin: book.volume_origin ?? "",
+    volumeSourceName: book.volume_source_name ?? "",
     issues: book.issues,
     organized: book.organized,
     // サイドカーは理由なしを null で返す。そのまま行の属性へ渡すと
@@ -527,26 +560,34 @@ export function needsSeriesName(
  * 左の列の対で作り直され、一覧の予告と出来上がりが食い違う。持たない本は
  * ``null`` を載せる。空文字は「名前が無い」ではなく「著者名が空の本」として
  * 通ってしまい、``[] `` で始まる本が出来る。
+ *
+ * 巻数は**直した本だけ**に包んで載せる（段階 5）。直していない本に
+ * ``volume`` を載せると、サイドカーはそれを訂正として読み、既定の依頼が
+ * 「全冊の巻数を書き換える」依頼になる。整理済みの本は直せない。
  */
 export function selectedBooks(
   rows: PlanRow[],
   off: ReadonlySet<string>,
+  volumes: ReadonlyMap<string, number | null> = new Map(),
 ): {
   source: string;
   entry: string;
   title: string | null;
   author: string | null;
+  volume?: { number: number | null };
 }[] {
-  return keptLeafRows(rows, off).map((row) =>
-    row.kind === "book"
-      ? {
-          source: row.source,
-          entry: row.entry,
-          title: carriesOwnName(row) ? row.title : null,
-          author: carriesOwnName(row) ? row.author : null,
-        }
-      : { source: row.path, entry: "", title: null, author: null },
-  );
+  return keptLeafRows(rows, off).map((row) => {
+    if (row.kind !== "book")
+      return { source: row.path, entry: "", title: null, author: null };
+    const book = {
+      source: row.source,
+      entry: row.entry,
+      title: carriesOwnName(row) ? row.title : null,
+      author: carriesOwnName(row) ? row.author : null,
+    };
+    if (row.organized || !volumes.has(row.id)) return book;
+    return { ...book, volume: { number: volumes.get(row.id) ?? null } };
+  });
 }
 
 /**
@@ -581,20 +622,27 @@ export function formatVolumeName(
  * 予告が並ぶ。サイドカーが返した ``output_name`` をそのまま使わないのは、
  * 左の列を変えたときに一覧が往復なしで追従する必要があるのと、あちらの
  * ``_1`` が別の帳簿（解析に投入した全件）で決まっているため。
+ *
+ * 外した本は名前を取らない（段階 5）。作られない本が名前を取ると、後ろの本に
+ * 付くはずのない ``_1`` を予告することになる。外した本の行には、取らないまま
+ * 組み立てた名前を出す。
  */
 export function outputNames(
   rows: PlanRow[],
   author: string,
   title: string,
+  off: ReadonlySet<string> = new Set(),
 ): Map<string, string> {
   const taken = new Set<string>();
   const names = new Map<string, string>();
   for (const row of rows) {
     if (row.kind !== "book") continue;
-    const base = carriesOwnName(row)
-      ? formatVolumeName(row.author, row.title, row.volume)
-      : formatVolumeName(author, title, row.volume);
+    const base = baseNameOf(row, author, title);
     let name = `${base}.zip`;
+    if (off.has(row.id)) {
+      names.set(row.id, name);
+      continue;
+    }
     for (let counter = 1; taken.has(name); counter += 1) {
       name = `${base}_${counter}.zip`;
     }
@@ -602,4 +650,33 @@ export function outputNames(
     names.set(row.id, name);
   }
   return names;
+}
+
+/** 本の行の、``_1`` を足す前の名前 */
+function baseNameOf(row: PlanRow, author: string, title: string): string {
+  return carriesOwnName(row)
+    ? formatVolumeName(row.author, row.title, row.volume)
+    : formatVolumeName(author, title, row.volume);
+}
+
+/**
+ * 作る本どうしで同じ名前になる本（段階 5）。重なった全部の行を返す。
+ *
+ * 後ろの本だけでなく前の本にも印を付ける。どちらの巻数が誤りかは画面には
+ * 分からず、片方だけに付けると「印の無い方が正しい」と読まれる。巻数の
+ * 読めない本（Unknown）は数えない。そちらは「巻数が読めません」が既に言う。
+ */
+export function collidingBooks(
+  rows: PlanRow[],
+  off: ReadonlySet<string>,
+  author: string,
+  title: string,
+): ReadonlySet<string> {
+  const holders = new Map<string, string[]>();
+  for (const row of keptBooks(rows, off)) {
+    if (row.volume === null) continue;
+    const base = baseNameOf(row, author, title);
+    holders.set(base, [...(holders.get(base) ?? []), row.id]);
+  }
+  return new Set([...holders.values()].filter((ids) => ids.length > 1).flat());
 }

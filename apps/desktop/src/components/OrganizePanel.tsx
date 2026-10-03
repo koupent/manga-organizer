@@ -22,6 +22,7 @@ import {
 } from "../lib/organize-text";
 import {
   buildPlanRows,
+  collidingBooks,
   droppedBookCount,
   effectiveOff,
   keptBooks,
@@ -36,8 +37,14 @@ import {
   toggleTargets,
   type Decisions,
   type PlanRow,
+  VOLUME_DUPLICATE,
 } from "../lib/plan";
 import { cn } from "../lib/utils";
+import {
+  applyVolumes,
+  numberFollowing,
+  type VolumeCorrections,
+} from "../lib/volumes";
 import { FailedList, type OrganizeFailure } from "./FailedList";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
@@ -110,6 +117,8 @@ export function OrganizePanel({
   flashing = new Set<string>(),
 }: OrganizePanelProps) {
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // 利用者が直した巻数。本の鍵で覚え、解析をやり直しても消さない（段階 5）
+  const [volumes, setVolumes] = useState<VolumeCorrections>(new Map());
   // 窓の上をブラウザのドラッグが通っているか（Tauri のドラッグは App から届く）
   const [browserDragging, setBrowserDragging] = useState(false);
   const dragging = nativeDragging || browserDragging;
@@ -348,7 +357,7 @@ export function OrganizePanel({
     };
   }, [active]);
 
-  const rows = useMemo(
+  const analyzedRows = useMemo(
     () =>
       buildPlanRows(
         sources,
@@ -358,18 +367,41 @@ export function OrganizePanel({
       ),
     [sources, analysis],
   );
-  const names = useMemo(
-    () => outputNames(rows, author, title),
-    [rows, author, title],
+  // 直した巻数を当てた行。名前・印・依頼・冊数は全部こちらから作る
+  const rows = useMemo(
+    () => applyVolumes(analyzedRows, volumes),
+    [analyzedRows, volumes],
   );
   // いま外れている葉。触った覚えと既定から毎回導き直すので、解析中に外した
   // 入れ物へ後から本が生えても、その本は外れたまま出る。1 度だけ導いて、
   // 読む所すべてで同じものを使う
   const off = useMemo(() => effectiveOff(rows, decisions), [rows, decisions]);
+  const names = useMemo(
+    () => outputNames(rows, author, title, off),
+    [rows, author, title, off],
+  );
+  // 作る本どうしで名前が重なる本。後ろの本は黙って _1 で出来てしまう
+  const collided = useMemo(
+    () => collidingBooks(rows, off, author, title),
+    [rows, off, author, title],
+  );
+  // 直した巻数のうち、実際に作られる本のもの。状態の行で数える
+  const correctedCount = rows.filter(
+    (row) =>
+      row.kind === "book" &&
+      !row.organized &&
+      volumes.has(row.id) &&
+      !off.has(row.id),
+  ).length;
   const keptCount = keptBooks(rows, off).length;
   const droppedCount = droppedBookCount(rows, off);
   const organizedCount = organizedSkippedCount(rows, off);
-  const issues = keptIssueCounts(rows, off);
+  const issues = [
+    ...keptIssueCounts(rows, off),
+    ...(collided.size > 0
+      ? [{ issue: VOLUME_DUPLICATE, count: collided.size }]
+      : []),
+  ];
   // 実際に何かが作られる単位。作る本が 1 つも無いことと、左の列が要るかを
   // どちらもここから決める
   const keptLeafCount = keptLeafRows(rows, off).length;
@@ -481,6 +513,33 @@ export function OrganizePanel({
     setDecisions((current) =>
       toggleLeaves(current, rows.flatMap(toggleTargets), keep),
     );
+  };
+
+  /**
+   * 巻数を直す。自動で読んだ値と同じにしたら、直していないことに戻す。
+   * 戻す手を別に置かなくても、元の数字を打ち直せば戻る。
+   */
+  const correctVolume = (row: PlanRow, volume: number | null) => {
+    setVolumes((current) => {
+      const next = new Map(current);
+      if (volume === row.autoVolume) next.delete(row.id);
+      else next.set(row.id, volume);
+      return next;
+    });
+  };
+
+  /** 直したうえで、同じ入れ物の下の本に続き番号を振る */
+  const fillVolumes = (row: PlanRow, volume: number) => {
+    const following = numberFollowing(analyzedRows, row.id, volume);
+    setVolumes((current) => {
+      const next = new Map(current);
+      for (const [id, value] of new Map([[row.id, volume], ...following])) {
+        const auto = analyzedRows.find((item) => item.id === id)?.autoVolume;
+        if (value === auto) next.delete(id);
+        else next.set(id, value);
+      }
+      return next;
+    });
   };
 
   /** 投入したものを外す。実行中は中身を変えさせない */
@@ -596,7 +655,7 @@ export function OrganizePanel({
         keep_originals: keepOriginals,
         // 一覧で残した本だけを作る。空の配列は「1 冊も作らない」であって
         // 「指定なし」ではないので、省かずに必ず載せる
-        books: selectedBooks(rows, off),
+        books: selectedBooks(rows, off, volumes),
       });
       jobId.current = accepted.id;
 
@@ -655,7 +714,8 @@ export function OrganizePanel({
     status ||
     (blockedBy
       ? blockedBy
-      : planSummary(keptCount, droppedCount, organizedCount));
+      : planSummary(keptCount, droppedCount, organizedCount) +
+        (correctedCount > 0 ? ` · ${correctedCount} 冊の巻数を直した` : ""));
 
   return (
     /*
@@ -815,6 +875,10 @@ export function OrganizePanel({
                 // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
                 // 通る。行が渡すのは、いまディスク上に在る元のファイル
                 onOpenArchive={onOpenProduced}
+                corrected={new Set(volumes.keys())}
+                collided={collided}
+                onCorrect={correctVolume}
+                onFill={fillVolumes}
               />
             )}
           </div>

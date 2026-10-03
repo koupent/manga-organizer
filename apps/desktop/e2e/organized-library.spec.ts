@@ -1377,15 +1377,20 @@ test.describe("整理済みの行の仕上げ", () => {
     await expect(where, "外し直したのに行き先のまま").toHaveText(ORIGIN_WHOLE);
 
     // Assert - 対照。整理済みでない本は、入っていても元を指したまま。
-    // その本はまだディスク上に無く、行き先だけを出すと、既に在るかのように読める
+    // その本はまだディスク上に無く、行き先だけを出すと、既に在るかのように読める。
+    // 元は「元の名前 → 出来上がる名前」の元の欄に出る（段階 5）
     await expect(
       checkOf(bookRow(page, library.nameMismatch)),
       "整理済みでない本が入っていない（前提が崩れている）",
     ).toHaveAttribute("aria-checked", "true");
+    const messyWhere = pathOf(bookRow(page, library.nameMismatch));
+    await expect(messyWhere, "整理済みでない本の元が出ていない").toContainText(
+      library.nameMismatch.split("/").pop()!,
+    );
     await expect(
-      pathOf(bookRow(page, library.nameMismatch)),
+      messyWhere,
       "整理済みでない本まで行き先を出している",
-    ).toHaveText(ORIGIN_WHOLE);
+    ).not.toContainText(output);
   });
 
   test("整理済みの行にだけ、次の作業への近道が出る", async ({ page }) => {
