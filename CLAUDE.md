@@ -45,7 +45,7 @@ cd apps/desktop && npx tauri dev
 
 ## 成果物配信
 
-インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。PR では配布物の作り方に関わる変更のときだけ走り、インストーラを Artifacts に残します。
+CD だけを GitHub Actions で行います（`.github/workflows/release.yml`、Windows ランナー）。PR や branch の push では起動しません。手動実行（`gh workflow run release.yml --ref <branch>`）はインストーラを Artifacts に残すだけです。
 
 ```bash
 # 4 か所の version（tauri.conf.json / Cargo.toml / package.json / pyproject.toml）を揃えて main へマージした後

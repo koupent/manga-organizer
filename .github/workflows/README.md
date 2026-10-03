@@ -1,6 +1,6 @@
 # GitHub Actions Workflows
 
-コードの品質ゲートは Actions ではなく開発コンテナ内の Local Merge Gate（`scripts/run_merge_gate.sh`）です。Actions は Windows インストーラを作って配るためだけに使います。
+CI（lint・テスト）は Actions ではなく開発コンテナ内の Local Merge Gate（`scripts/run_merge_gate.sh`）で行います。Actions は CD（Windows インストーラを作って配る）だけに使い、PR や branch の push では起動しません。
 
 ## release.yml
 
@@ -8,9 +8,8 @@ Windows ランナーでインストーラ（NSIS）を作り、黙ってイン�
 
 | 起動 | すること |
 |---|---|
-| PR（配布物の作り方に関わるファイルを変えたときだけ） | 作って確かめ、インストーラを Artifacts に残す |
-| `workflow_dispatch` | 同上（任意のブランチで試すとき） |
-| `v*` タグの push | 同上に加えて、タグと同じ名前の GitHub Release を作りインストーラを添付する |
+| `v*` タグの push | 作って確かめ、タグと同じ名前の GitHub Release を作ってインストーラを添付する |
+| `workflow_dispatch`（手動） | 作って確かめ、インストーラを Artifacts に残すだけ（タグを打つ前に試すとき） |
 
 タグは `tauri.conf.json`・`Cargo.toml`・`package.json`・`pyproject.toml` の版と一致している必要があります（`v4.0.0` なら全部 `4.0.0`）。
 

@@ -155,15 +155,22 @@ npx tauri dev
 
 ### 配る物そのものを試す
 
-`.github/workflows/release.yml` が走った PR では、Actions の実行結果の Artifacts にインストーラ（`MangaOrganizer-vX.X.X-setup.exe`）が残ります。タグを打つ前に実機へ入れて確かめられます。
+タグを打つ前に、`.github/workflows/release.yml` を手動で走らせるとインストーラだけを作れます（Release は作りません）。
+
+```bash
+gh workflow run release.yml --ref <ブランチ名>   # または Actions の画面の「Run workflow」
+```
+
+終わったら実行結果の Artifacts から `MangaOrganizer-vX.X.X-setup.exe` を落とし、実機へ入れて確かめます。
 
 ## ビルドとリリース
 
 インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。作ったインストーラを黙って入れ、同梱のサイドカーが応答するところまで確かめます。
 
-- PR: 配布物の作り方に関わるファイル（`src-tauri/`・依存の宣言・`manga_api.spec`・`build_sidecar.sh` など）を変えたときだけ走り、インストーラを Artifacts に残す
-- `v*` タグの push: 同じことをしたうえで、タグ名の GitHub Release を作ってインストーラを添付する
-- 手動（`workflow_dispatch`）: 任意のブランチで試す
+Actions は CD だけに使います。CI（lint・テスト）は [Local Merge Gate](#local-merge-gate) で行い、PR や branch の push では Actions を起動しません。
+
+- `v*` タグの push: 作って確かめたうえで、タグ名の GitHub Release を作ってインストーラを添付する
+- 手動（`workflow_dispatch`）: 作って確かめ、インストーラを Artifacts に残すだけ
 
 リポジトリが private なので、Release をダウンロードできるのはコラボレーターとして招待した人だけです。
 
