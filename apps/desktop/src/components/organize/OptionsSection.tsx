@@ -20,7 +20,10 @@ export function OptionsSection({
   onKeepOriginalsChange,
 }: OptionsSectionProps) {
   return (
-    <section className="flex flex-col gap-2">
+    <section
+      className="flex shrink-0 flex-col gap-2"
+      data-testid="organize-options"
+    >
       <SectionTitle>オプション</SectionTitle>
       <DirectoryPicker
         client={client}

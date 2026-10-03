@@ -45,8 +45,8 @@ export function SeriesInfoSection({
   onOpenLibrary,
 }: SeriesInfoSectionProps) {
   return (
-    <section className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
+    <section className="flex shrink-0 flex-col gap-2" data-testid="series-info">
+      <div className="flex h-7 items-center gap-2">
         <SectionTitle>作品情報</SectionTitle>
         {/* 整理済みの行があるときだけ、左の列が何に使われるかを添える */}
         {hasOrganized ? (

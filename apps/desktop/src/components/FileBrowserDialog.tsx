@@ -52,7 +52,18 @@ export function FileBrowserDialog({
   onAdd,
 }: FileBrowserDialogProps) {
   return (
-    <DialogContent data-testid="file-browser">
+    <DialogContent
+      data-testid="file-browser"
+      // ファイル整理では、左の列（投入したもの）を塞がず右の作業面の上に
+      // 重ねる。入れたものが左に増えていくのを見ながら次を選べ、開閉の
+      // ボタン（左の列の見出し行）もそのまま押せる。右の作業面の中心は
+      // 左の列 360px + 余白 12px×2 の半分だけ窓の中心より右にある
+      className={
+        single
+          ? undefined
+          : "left-[calc(50%+186px)] w-[min(52rem,calc(100vw-412px))]"
+      }
+    >
       {/* 見出しは窓の中では読み上げにだけ出す。いま見ている場所を出す
           code が実質の見出しで、文字の見出しを重ねると二段になる */}
       <DialogTitle className="sr-only">{title}</DialogTitle>

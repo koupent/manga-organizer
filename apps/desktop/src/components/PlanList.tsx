@@ -7,9 +7,7 @@ import {
   ListOrdered,
   Package,
   TriangleAlert,
-  X,
 } from "lucide-react";
-import type { KeyboardEvent } from "react";
 import {
   checkStateOf,
   TOC_UNREADABLE,
@@ -101,7 +99,7 @@ const DIMMED =
   "opacity-45 group-hover:opacity-100 group-focus-within:opacity-100";
 
 /**
- * 行に乗せている間だけ見せる操作（削除ボタンと近道）の見え方。
+ * 行に乗せている間だけ見せる操作（近道）の見え方。
  *
  * 席は常に空けておき、見え方だけを切り替える。乗せてから初めて置くと行の
  * 中身が押し出され、狙って押せなくなる。Tab で辿り着いたときにも見えないと
@@ -121,8 +119,6 @@ type PlanListProps = {
   /** 実行中は選び直せない。再実行で `_1` が二重に付くのを防ぐ */
   locked: boolean;
   onToggle: (row: PlanRow, keep: boolean) => void;
-  /** 放り込んだもの（level 0）を一覧から落とす */
-  onRemove: (path: string) => void;
   /** 整理済みの本を、そのまま次の画面へ読み込ませる */
   onOpenArchive: (path: string, mode: HandoffMode) => void;
 };
@@ -142,6 +138,9 @@ function RowIcon({ kind, dim }: { kind: PlanRow["kind"]; dim?: string }) {
  *
  * 行は消さない。外したものが消えると、何を外したのかが後から分からなくなる。
  * 薄くして残し、チェックの状態だけで「作る / 作らない」を示す。
+ *
+ * 入れたものごと外す操作はここに置かない（左の「投入したもの」の ×）。
+ * ここで外せると、同じものを外す場所が 2 か所になる。
  */
 export function PlanList({
   rows,
@@ -150,7 +149,6 @@ export function PlanList({
   outputDirectory,
   locked,
   onToggle,
-  onRemove,
   onOpenArchive,
 }: PlanListProps) {
   return (
@@ -167,7 +165,6 @@ export function PlanList({
           outputDirectory={outputDirectory}
           locked={locked}
           onToggle={onToggle}
-          onRemove={onRemove}
           onOpenArchive={onOpenArchive}
         />
       ))}
@@ -182,7 +179,6 @@ type PlanListRowProps = {
   outputDirectory: string;
   locked: boolean;
   onToggle: (row: PlanRow, keep: boolean) => void;
-  onRemove: (path: string) => void;
   onOpenArchive: (path: string, mode: HandoffMode) => void;
 };
 
@@ -193,24 +189,14 @@ function PlanListRow({
   outputDirectory,
   locked,
   onToggle,
-  onRemove,
   onOpenArchive,
 }: PlanListRowProps) {
-  const removable = row.level === 0;
   const off = state === false;
   const dim = off ? DIMMED : undefined;
   // 整理済みの本は、既にディスク上に最終形で在る。整理を待たずにそのまま
   // 開けるので、行から次の作業へ渡せる（作る・作らないとは関わりが無い）
   const finished = row.kind === "book" && row.organized;
   const showsDestination = finished && state === true;
-
-  /** Delete で、放り込んだものを一覧から落とす */
-  const handleKey = (event: KeyboardEvent) => {
-    if (locked || !removable) return;
-    if (event.key !== "Delete" && event.key !== "Backspace") return;
-    event.preventDefault();
-    onRemove(row.path);
-  };
 
   return (
     <li
@@ -230,13 +216,12 @@ function PlanListRow({
       tabIndex={0}
       style={{ paddingLeft: 8 + row.level * INDENT_PX }}
       className={cn(
-        // 行の高さは中で一番背の高いもの（削除ボタン 24px）で決まる。
-        // 余白を 2px に絞り、1 行 28px に収める
-        "group flex items-center gap-2 rounded-control pr-2 py-0.5 outline-none",
+        // 1 行 28px。中身の背丈（印・近道）で行ごとに高さが揺れないよう
+        // 下限で揃える
+        "group flex min-h-7 items-center gap-2 rounded-control pr-2 py-0.5 outline-none",
         "hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2",
         "focus-visible:ring-brand/40",
       )}
-      onKeyDown={handleKey}
     >
       <Checkbox
         data-testid="plan-check"
@@ -281,20 +266,6 @@ function PlanListRow({
           source={row.source}
           onOpen={onOpenArchive}
         />
-      ) : null}
-      {removable ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          title="一覧から外す"
-          aria-label="一覧から外す"
-          data-testid="plan-remove"
-          disabled={locked}
-          className={REVEAL_ON_ROW}
-          onClick={() => onRemove(row.path)}
-        >
-          <X />
-        </Button>
       ) : null}
     </li>
   );

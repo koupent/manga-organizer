@@ -174,10 +174,16 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     await dropFiles(page, dropped);
     await expect(page.getByTestId("selected-count")).toHaveText("2 件");
 
-    // Act - 行にはチェックもあるので、外すボタンを直接指す
-    await droppedRows(page).first().getByTestId("plan-remove").click();
+    // Act - 外すのは左の「投入したもの」の ×。右の行にはチェックしか無い
+    await page
+      .getByTestId("source-row")
+      .first()
+      .getByTestId("source-remove")
+      .click();
 
     // Assert
     await expect(page.getByTestId("selected-count")).toHaveText("1 件");
+    await expect(droppedRows(page)).toHaveCount(1);
+    await expect(droppedRows(page).getByTestId("plan-remove")).toHaveCount(0);
   });
 });

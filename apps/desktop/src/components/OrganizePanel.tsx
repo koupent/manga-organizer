@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { BookMarked, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   sidecarReason,
@@ -40,11 +40,14 @@ import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
 import { OptionsSection } from "./organize/OptionsSection";
 import { SeriesInfoSection } from "./organize/SeriesInfoSection";
+import { SourceList } from "./organize/SourceList";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
 import { PlanList } from "./PlanList";
 import { ProducedList, type HandoffMode } from "./ProducedList";
 import { Button } from "./ui/button";
+import { Empty } from "./ui/empty";
+import { SectionTitle } from "./ui/section-title";
 import {
   Dialog,
   DialogClose,
@@ -273,6 +276,8 @@ export function OrganizePanel({
   const keptLeafCount = keptLeafRows(rows, off).length;
   const namelessCount = namelessKeptRows(rows, off).length;
   const needsName = needsSeriesName(rows, off);
+  // 右の見出しに出す冊数。外した本も整理済みの本も、一覧に並ぶ本は全部数える
+  const bookCount = rows.filter((row) => row.kind === "book").length;
   // 整理済みの行が 1 つも無いなら、整理済みにまつわる但し書きは出さない。
   // 一度も整理していない利用者に無用の説明を増やさない
   const hasOrganized = rows.some((row) => row.organized);
@@ -379,7 +384,7 @@ export function OrganizePanel({
     );
   };
 
-  /** 落としたものを一覧から外す。実行中は中身を変えさせない */
+  /** 投入したものを外す。実行中は中身を変えさせない */
   const removeSource = (path: string) => {
     if (running) return;
     onSourcesChange(sources.filter((item) => item !== path));
@@ -555,9 +560,9 @@ export function OrganizePanel({
 
   return (
     /*
-      ワークベンチ型。設定は幅の決まった左の列に置き、残りは全部
-      処理対象の一覧へ渡す。設定は一度決めれば見るだけのもので、
-      画面の高さを分け合う相手ではない。
+      ワークベンチ型。入れるもの（作品情報・投入・出力先）は幅の決まった
+      左の列に、出来上がるものは残り全部を使う右の一覧に置く。投入と結果を
+      同じ面に置くと、何を入れたのかと何が出来るのかが混ざって見える。
     */
     <div className="flex min-h-0 flex-1 gap-3">
       {/* 入力欄の候補。辞書に記録済みの作品と著者を出す */}
@@ -580,11 +585,15 @@ export function OrganizePanel({
       </datalist>
 
       {/*
-        設定の列。幅を 360px に固定するのは、入力欄が窓幅まで伸びても
-        読みやすさが上がらないため。中身が溢れたらこの列だけがスクロールし、
-        右の作業面は巻き添えにしない。
+        左の列。上から 作品情報 / 投入したもの / オプション の 3 段。作品名と
+        著者は大前提なので先頭に置き、出力先は底に置く。この 2 段は高さを
+        変えず、何件入れるか分からない投入の箱だけが窓の高さに追従する。
+        列そのものはスクロールさせない。溢れるのは投入の箱の中だけ。
       */}
-      <aside className="flex w-[360px] shrink-0 flex-col gap-4 overflow-y-auto pr-1">
+      <aside
+        className="flex min-h-0 w-[360px] shrink-0 flex-col gap-4"
+        data-testid="organize-sidebar"
+      >
         <SeriesInfoSection
           title={title}
           author={author}
@@ -600,6 +609,21 @@ export function OrganizePanel({
           onOpenLibrary={() => changeLibraryOpen(true)}
         />
 
+        <FilePicker
+          client={client}
+          selected={sources}
+          onChange={onSourcesChange}
+          disabled={running}
+          fill
+          list={
+            <SourceList
+              sources={sources}
+              disabled={running}
+              onRemove={removeSource}
+            />
+          }
+        />
+
         <OptionsSection
           client={client}
           outputDirectory={outputDirectory}
@@ -610,48 +634,71 @@ export function OrganizePanel({
       </aside>
 
       {/*
-        作業面。処理対象の一覧が高さいっぱいを取り、実行の結果だけが
+        作業面。出来上がる本の一覧が高さいっぱいを取り、実行の結果だけが
         下に居場所を持つ。失敗と出来たファイルは処理ログの真上に置く。
         どれも「実行して何が起きたか」を見る所で、離すと目が往復する。
       */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-        <FilePicker
-          client={client}
-          selected={sources}
-          onChange={onSourcesChange}
-          disabled={running}
-          fill
-          hint="チェックを外すと作りません · Delete で落としたものを外す"
-          actions={
-            <PlanActions
-              rows={rows}
-              excluded={off}
-              status={statusText}
-              statusTitle={hasOrganized ? ORGANIZED_STATUS_TIP : undefined}
-              issues={issues}
-              progress={progress}
-              running={running}
-              blocked={blocked}
-              onToggleAll={toggleAll}
-              onRun={run}
-              onCancel={cancel}
-            />
-          }
-          list={
-            <PlanList
-              rows={rows}
-              excluded={off}
-              names={names}
-              outputDirectory={outputDirectory}
-              locked={running}
-              onToggle={toggleRow}
-              onRemove={removeSource}
-              // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
-              // 通る。行が渡すのは、いまディスク上に在る元のファイル
-              onOpenArchive={onOpenProduced}
-            />
-          }
-        />
+        <section className="flex min-h-0 flex-1 flex-col gap-2">
+          <div className="flex h-7 shrink-0 items-center gap-2">
+            <SectionTitle>出来上がる本</SectionTitle>
+            <span
+              className="tabular text-[12px] text-ink-faint"
+              data-testid="plan-count"
+            >
+              {bookCount} 冊
+            </span>
+            {sources.length > 0 ? (
+              <span className="min-w-0 truncate text-[11.5px] text-ink-faint">
+                チェックを外すと作りません · 入れたものごと外すのは左の ×
+              </span>
+            ) : null}
+          </div>
+          {/* 主操作は一覧の直上。押したら何が起きるかを一覧のすぐ上で読む（#68・#70） */}
+          <PlanActions
+            rows={rows}
+            excluded={off}
+            status={statusText}
+            statusTitle={hasOrganized ? ORGANIZED_STATUS_TIP : undefined}
+            issues={issues}
+            progress={progress}
+            running={running}
+            blocked={blocked}
+            onToggleAll={toggleAll}
+            onRun={run}
+            onCancel={cancel}
+          />
+          {/* 何も入れていないときは落とす先ではなく出来上がりの予告。点線は
+              左の落とす箱だけの印なので、ここは空でも実線にする */}
+          <div
+            className="flex min-h-0 flex-1 flex-col rounded-card border border-line bg-surface/50"
+            data-testid="plan-box"
+          >
+            {sources.length === 0 ? (
+              <Empty
+                className="m-auto"
+                icon={<BookMarked />}
+                title="出来上がる本がここに並びます"
+              >
+                左の「投入したもの」にフォルダかアーカイブを入れると、出来上がる本を
+                1
+                冊ずつ確かめてから整理できます。この窓のどこに落としても左に入ります。
+              </Empty>
+            ) : (
+              <PlanList
+                rows={rows}
+                excluded={off}
+                names={names}
+                outputDirectory={outputDirectory}
+                locked={running}
+                onToggle={toggleRow}
+                // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
+                // 通る。行が渡すのは、いまディスク上に在る元のファイル
+                onOpenArchive={onOpenProduced}
+              />
+            )}
+          </div>
+        </section>
         {/*
           失敗は出来たファイルより先に置く。放っておけないのはこちらで、
           出来たぶんの一覧に押し下げられて見落とすと元も子もない。
