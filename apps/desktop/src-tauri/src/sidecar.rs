@@ -87,10 +87,14 @@ impl Sidecar {
         // サイドカーごと固まる。ファイルへ流し、不具合の手掛かりにもする
         let log = File::create(state_dir.join("sidecar.log"))
             .map_err(|error| SidecarError::Spawn(error.to_string()))?;
+        // stdin は書き込み側をこちらが持ったまま何も書かない。アプリがどう
+        // 終わっても OS がこの口を閉じ、サイドカーはそれを見て自分で終わる
+        // （--exit-with-parent）。READY を受け取る前に閉じられて、止める相手を
+        // まだ持っていないときの取り残しを防ぐ
         command
             .stdout(Stdio::piped())
             .stderr(Stdio::from(log))
-            .stdin(Stdio::null());
+            .stdin(Stdio::piped());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

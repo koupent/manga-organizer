@@ -109,7 +109,8 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<Sidecar, String> {
             "manga-api"
         });
 
-    Sidecar::start(&program, &[], &state_dir, &[]).map_err(|error| error.to_string())
+    let args = ["--exit-with-parent".to_string()];
+    Sidecar::start(&program, &args, &state_dir, &[]).map_err(|error| error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
