@@ -27,6 +27,14 @@ export function organizeResult(result: unknown): {
  */
 export type Analysis = {
   running: boolean;
+  /**
+   * 解析が最後まで済んだか。
+   *
+   * 走っていないことと、済んだことは別。解析が断られたり止まったりした
+   * ときに「中に何もありません」と言うと嘘になるので、何も見つからな
+   * かったと言えるのは済んだときだけにする。
+   */
+  settled: boolean;
   /** 走査で見つかった入れ物。処理する順 */
   containers: string[];
   /** 目次を読めた入れ物から出来る本 */
@@ -37,6 +45,7 @@ export type Analysis = {
 
 export const IDLE_ANALYSIS: Analysis = {
   running: false,
+  settled: false,
   containers: [],
   books: [],
   unreadable: [],
@@ -48,7 +57,9 @@ export const IDLE_ANALYSIS: Analysis = {
  * 走り始めた直後の結果は空なので、受け取る側が毎回それを気にしなくて済むよう
  * ここで形を揃える。
  */
-export function analysisResult(result: unknown): Omit<Analysis, "running"> {
+export function analysisResult(
+  result: unknown,
+): Omit<Analysis, "running" | "settled"> {
   const value = result as {
     containers?: string[];
     books?: PlannedBook[];

@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
@@ -37,6 +37,22 @@ const MANY = 24;
 
 const ARCHIVE_DIR = "未整理";
 
+/** 冊数を見るフォルダ。合本（2 冊）+ 単体（1 冊）+ 目次を読めない 1 件 */
+const COUNT_DIR = "冊数";
+
+/** 整理済みの本だけが入った作品フォルダ */
+const SHELF_DIR = "[冊数の著者] 冊数の作品";
+
+/** 中に何も無いフォルダ */
+const EMPTY_DIR = "空っぽ";
+
+/** 左の行の高さ（2 行組）と、右の行の高さの上限 */
+const SOURCE_ROW_HEIGHT = 40;
+const PLAN_ROW_MAX_HEIGHT = 30;
+
+/** 解析の投入を遅らせる時間。「解析中」を目で捉えられる長さにする */
+const ANALYZE_DELAY_MS = 1500;
+
 let sidecar: Sidecar;
 let names: string[];
 
@@ -52,6 +68,32 @@ test.beforeAll(async () => {
       { name: "001.jpg", color: "#ff0000" },
     ]);
   }
+
+  mkdirSync(join(sidecar.workDir, COUNT_DIR), { recursive: true });
+  writeArchive(sidecar.workDir, `${COUNT_DIR}/合本.zip`, [
+    { name: "第01巻/001.jpg", color: "#ff0000" },
+    { name: "第02巻/001.jpg", color: "#00ff00" },
+  ]);
+  writeArchive(sidecar.workDir, `${COUNT_DIR}/単体_03.zip`, [
+    { name: "001.jpg", color: "#0000ff" },
+  ]);
+  writeFileSync(
+    join(sidecar.workDir, COUNT_DIR, "壊れ_04.zip"),
+    "これは ZIP ではありません",
+  );
+  writeArchive(sidecar.workDir, "単品_05.zip", [
+    { name: "001.jpg", color: "#ffff00" },
+  ]);
+  writeFileSync(
+    join(sidecar.workDir, "壊れ単品_06.zip"),
+    "これも ZIP ではありません",
+  );
+  mkdirSync(join(sidecar.workDir, SHELF_DIR), { recursive: true });
+  writeArchive(sidecar.workDir, `${SHELF_DIR}/${SHELF_DIR} 第001巻.zip`, [
+    { name: "001.jpg", color: "#ff00ff" },
+    { name: "002.jpg", color: "#00ffff" },
+  ]);
+  mkdirSync(join(sidecar.workDir, EMPTY_DIR), { recursive: true });
 });
 
 test.afterAll(() => sidecar?.stop());
@@ -100,6 +142,39 @@ async function addArchives(page: Page, picked: string[]) {
   await expect(
     page.locator('[data-testid="plan-row"][data-kind="book"]'),
   ).toHaveCount(picked.length);
+}
+
+/** 作業ディレクトリの直下にあるものを、ファイルブラウザから 1 つずつ入れる */
+async function addTopLevel(
+  page: Page,
+  entries: { name: string; folder?: boolean }[],
+) {
+  await page.getByTestId("open-browser").click();
+  await expect(page.getByTestId("file-browser")).toBeVisible();
+  for (const entry of entries) {
+    const row = page.locator(
+      `[data-testid="browse-entry"][data-name="${entry.name}"]`,
+    );
+    if (entry.folder) {
+      await row.getByRole("button", { name: "フォルダごと追加" }).click();
+    } else {
+      await row.locator(".browser-name").click();
+    }
+  }
+  await expect(page.getByTestId("selected-count")).toHaveText(
+    `${entries.length} 件`,
+  );
+  await page.getByTestId("open-browser").click();
+  await expect(page.getByTestId("file-browser")).toBeHidden();
+}
+
+/** 左の行の 2 行目に出る、そこから出来る冊数 */
+function countOf(page: Page, name: string) {
+  return page
+    .locator(
+      `[data-testid="source-row"][data-path="${join(sidecar.workDir, name)}"]`,
+    )
+    .getByTestId("source-count");
 }
 
 /** 左の列の行。右の一覧の行（plan-row）とは別の名前を名乗る */
@@ -342,5 +417,113 @@ test.describe("ファイル整理: 投入は左、出来上がりは右", () => 
     // Assert - 点線は「落とす先」の印。左の箱ちょうど 1 つだけが持つ。
     // 「1 つ以上」で縛ると右の箱まで点線のままでも通ってしまう
     expect(await dashedFrames(page)).toEqual(["dropzone"]);
+  });
+
+  test("フォルダの行に、そこから出来る冊数と実行時に判定する件数が出る", async ({
+    page,
+  }) => {
+    // Arrange - 投入 1 件に対して本が 3 冊出るフォルダ。件数（1 件）と冊数が
+    // わざと食い違う素材にする。1 件 = 1 冊だと件数を出すだけの実装でも通る
+    await openOrganize(page);
+
+    // Act
+    await addTopLevel(page, [
+      { name: COUNT_DIR, folder: true },
+      { name: "単品_05.zip" },
+      { name: "壊れ単品_06.zip" },
+    ]);
+
+    // Assert
+    await expect(countOf(page, COUNT_DIR)).toHaveText(
+      "3 冊 · 1 件は実行時に判定",
+      { timeout: 30_000 },
+    );
+    await expect(countOf(page, "単品_05.zip")).toHaveText("1 冊");
+    // 目次を読めない単品は 0 冊と書かない。中身は実行時に展開して分かる
+    await expect(countOf(page, "壊れ単品_06.zip")).toHaveText("実行時に判定");
+    await expect(countOf(page, "壊れ単品_06.zip")).toHaveAttribute(
+      "title",
+      /目次を読めない/,
+    );
+    // フォルダの行はフォルダの印、単品はアーカイブの印
+    await expect(
+      page.locator(
+        `[data-testid="source-row"][data-path="${join(sidecar.workDir, COUNT_DIR)}"]`,
+      ),
+    ).toHaveAttribute("data-kind", "folder");
+    await expect(
+      page.locator(
+        `[data-testid="source-row"][data-path="${join(sidecar.workDir, "単品_05.zip")}"]`,
+      ),
+    ).toHaveAttribute("data-kind", "archive");
+  });
+
+  test("整理済みの本だけのフォルダは、冊数に整理済みを添える", async ({
+    page,
+  }) => {
+    // Arrange
+    await openOrganize(page);
+
+    // Act
+    await addTopLevel(page, [{ name: SHELF_DIR, folder: true }]);
+
+    // Assert
+    await expect(countOf(page, SHELF_DIR)).toHaveText("1 冊 · 整理済み", {
+      timeout: 30_000,
+    });
+  });
+
+  test("解析中は「解析中」、何も無いフォルダは「アーカイブがありません」", async ({
+    page,
+  }) => {
+    // Arrange - 解析の投入だけを遅らせ、解析中の間を捉えられるようにする
+    await openOrganize(page);
+    await page.route("**/api/jobs/analyze*", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, ANALYZE_DELAY_MS));
+      await route.continue();
+    });
+
+    // Act
+    await addTopLevel(page, [{ name: EMPTY_DIR, folder: true }]);
+
+    // Assert - 解析が終わるまでは「無い」と言わない
+    await expect(countOf(page, EMPTY_DIR)).toHaveText("解析中");
+    // Assert - 解析が終われば、黙らずに何も無いことを言う
+    await expect(countOf(page, EMPTY_DIR)).toHaveText(
+      "アーカイブがありません",
+      { timeout: 30_000 },
+    );
+    await expect(countOf(page, EMPTY_DIR)).toHaveAttribute("data-tone", "warn");
+  });
+
+  test("左の行は 40px の 2 行組、右の行は 1 行のまま", async ({ page }) => {
+    // Arrange
+    await openOrganize(page);
+
+    // Act
+    await addArchives(page, names.slice(0, 3));
+
+    // Assert - 左右とも実際に測る。片方だけ測ると、高さを揃えただけの
+    // 実装（左も 28px）を見逃す
+    const left = await Promise.all(
+      (await sourceRows(page).all()).map(
+        async (row) => (await row.boundingBox())!.height,
+      ),
+    );
+    const right = await Promise.all(
+      (await page.getByTestId("plan-row").all()).map(
+        async (row) => (await row.boundingBox())!.height,
+      ),
+    );
+    expect(left).toHaveLength(3);
+    expect(right.length).toBeGreaterThanOrEqual(6);
+    for (const height of left) {
+      expect(Math.abs(height - SOURCE_ROW_HEIGHT)).toBeLessThanOrEqual(SLACK);
+    }
+    for (const height of right) {
+      expect(height).toBeLessThanOrEqual(PLAN_ROW_MAX_HEIGHT);
+    }
+    // 左の行は右の行の名前を名乗らない。名乗ると右の行の検査が左まで拾う
+    await expect(sourceRows(page).getByTestId("plan-row")).toHaveCount(0);
   });
 });

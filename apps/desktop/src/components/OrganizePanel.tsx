@@ -221,6 +221,7 @@ export function OrganizePanel({
             setAnalysis({
               running:
                 snapshot.state === "queued" || snapshot.state === "running",
+              settled: snapshot.state === "succeeded",
               ...analysisResult(snapshot.result),
             });
             setProgress({ current: snapshot.current, total: snapshot.total });
@@ -228,7 +229,11 @@ export function OrganizePanel({
           { signal: controller.signal },
         );
         if (!controller.signal.aborted) {
-          setAnalysis({ running: false, ...analysisResult(job.result) });
+          setAnalysis({
+            running: false,
+            settled: job.state === "succeeded",
+            ...analysisResult(job.result),
+          });
         }
       })
       .catch(() => {
@@ -618,6 +623,8 @@ export function OrganizePanel({
           list={
             <SourceList
               sources={sources}
+              rows={rows}
+              analysis={analysis}
               disabled={running}
               onRemove={removeSource}
             />
