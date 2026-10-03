@@ -33,10 +33,11 @@ cd apps/desktop && npx tauri dev
 インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。配布物の作り方に関わるファイルを変えた PR では自動で走り、インストーラを Artifacts に残します（実機での確認用）。手動実行も Artifacts に残すだけです。
 
 ```bash
-# 4 か所の version（tauri.conf.json / Cargo.toml / package.json / pyproject.toml）を揃えて main へマージした後
-git tag v4.0.0
-git push origin v4.0.0   # Release が作られ MangaOrganizer-v4.0.0-setup.exe が添付される
+# 4 か所の version（tauri.conf.json / Cargo.toml / package.json / pyproject.toml）を揃えて main へマージした後、利用者が手元で
+git fetch origin && git tag v4.0.0 origin/main && git push origin v4.0.0   # Release が作られ MangaOrganizer-v4.0.0-setup.exe が添付される
 ```
+
+クラウドのセッションからはタグを push できません（作業ブランチ以外への push は 403）。タグは打とうとせず、上の 1 行を利用者に頼んでください。
 
 ## 主な場所
 
