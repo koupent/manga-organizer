@@ -1,22 +1,27 @@
 # GitHub Actions Workflows
 
-このリポジトリの Actions はローカル成果物 CD 専用です。PR や branch / tag push では起動しません。
+| ワークフロー | いつ | すること |
+|---|---|---|
+| `ci.yml`（CI） | 毎回の PR | `Merge Gate` ジョブで `scripts/run_merge_gate.sh` を回す。main への合流の必須チェック |
+| `release.yml`（Windows インストーラ） | 配布物の作り方に関わる変更の PR | インストーラを作り、黙って入れて同梱のサイドカーが応答するか、アプリを閉じるとサイドカーも止まるかまで確かめ、Artifacts に残す |
+| | `workflow_dispatch`（手動） | 同上（Release は作らない） |
+| | `v*` タグの push | 同上に加えて、タグと同じ名前の GitHub Release を作りインストーラを添付する |
 
-## release.yml
+タグは `tauri.conf.json`・`Cargo.toml`・`package.json`・`pyproject.toml` の版と一致している必要があります（`v4.0.0` なら全部 `4.0.0`）。
 
-`workflow_dispatch` のみ。必須入力:
+Windows ランナーは分数が 2 倍に数えられるため、`release.yml` は PR では paths で絞っています。`ci.yml` は必須チェックが「待ち」のまま残らないよう絞りません。
 
-- `artifact_ref`
-- `artifact_sha256`
-- `source_commit`
-- `source_tree`
+## リリース手順
 
-ジョブは公開済みの不変成果物を取得し、digest を照合したうえで製品向け GitHub Release に exe を添付します。ビルドは行いません。
+1. 4 か所の版を上げた PR を main へマージする
+2. main の先頭にタグを打って push する
 
-## ローカル手順
+   ```bash
+   git switch main && git pull
+   git tag v4.0.0
+   git push origin v4.0.0
+   ```
 
-1. 開発コンテナ内で `bash scripts/run_merge_gate.sh --publish-status`
-2. Windows ホストで成果物をビルド・公開（`scripts/build_release_artifact.sh` と `scripts/publish_release_artifact.mjs`）
-3. `gh workflow run release.yml` で `release.yml` を一度だけ起動（入力は 2 で得た `artifactRef` と測定値）
+3. Actions の「Windows インストーラ」が緑になると、Releases に `MangaOrganizer-v4.0.0-setup.exe` が載る
 
 詳細はリポジトリ直下の `DEVELOPMENT.md` を参照してください。

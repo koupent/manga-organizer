@@ -104,3 +104,21 @@ export async function onFilesDropped(
   });
   return unlisten;
 }
+
+/**
+ * エクスプローラーからのドラッグが窓の上に来た・離れたを受ける（#106）。
+ *
+ * Tauri がドロップを受ける設定（dragDropEnabled）では、WebView2 に HTML の
+ * ドラッグイベントが届かない。落とせる所を離す前に示すには、ネイティブ側
+ * から来る・離れたを転送してもらうしかない。ブラウザでは何もしない。
+ */
+export async function onFilesDragging(
+  handler: (dragging: boolean) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => undefined;
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<unknown>("files-dragging", (event) => {
+    // 真偽値でなければ捨てる。受け渡しの形が食い違っても画面を壊さない
+    if (typeof event.payload === "boolean") handler(event.payload);
+  });
+}

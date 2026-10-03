@@ -99,7 +99,7 @@ export function DirectoryPicker({
           </span>
           <Input
             data-testid="output-directory"
-            placeholder="/path/to/整理後"
+            placeholder="最初に入れたものの場所が入ります"
             value={value}
             onChange={(event) => {
               const path = event.target.value;

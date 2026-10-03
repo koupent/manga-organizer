@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+# Merge Gate。PR ごとに GitHub Actions（.github/workflows/ci.yml）が回し、
+# main への合流はこれの合格が条件になる。手元やクラウドのセッションでも
+# 同じものを回せる（uv・npm・cargo と Tauri のビルドに要るライブラリが要る）。
 set -Eeuo pipefail
 
-publish_status=false
-gh_bin=${GH_BIN:-gh}
 project_git_dir=${CI_GATE_GIT_DIR:-${GIT_DIR:-}}
 project_work_tree=${CI_GATE_WORK_TREE:-${GIT_WORK_TREE:-}}
 unset GIT_DIR GIT_WORK_TREE
@@ -15,14 +16,10 @@ project_git() {
   fi
 }
 
-case "${1:-}" in
-  "") ;;
-  --publish-status) publish_status=true ;;
-  *)
-    echo "Usage: $0 [--publish-status]" >&2
-    exit 2
-    ;;
-esac
+if [[ $# -ne 0 ]]; then
+  echo "Usage: $0" >&2
+  exit 2
+fi
 
 if [[ -n "$project_work_tree" ]]; then
   repo_root=$project_work_tree
@@ -41,59 +38,6 @@ if [[ ! -f "$core_dir/pyproject.toml" ]]; then
 fi
 
 head_sha=$(project_git rev-parse HEAD)
-status_context="Local Merge Gate"
-status_pending=false
-repo_slug=""
-
-resolve_repo_slug() {
-  if [[ -n "${CI_GATE_REPO_SLUG:-}" ]]; then
-    repo_slug=$CI_GATE_REPO_SLUG
-  else
-    local remote_url
-    remote_url=$(project_git remote get-url origin)
-    case "$remote_url" in
-      https://github.com/*) repo_slug=${remote_url#https://github.com/} ;;
-      git@github.com:*) repo_slug=${remote_url#git@github.com:} ;;
-      ssh://git@github.com/*) repo_slug=${remote_url#ssh://git@github.com/} ;;
-      *)
-        echo "GitHubリポジトリを特定できません。CI_GATE_REPO_SLUGを指定してください" >&2
-        return 1
-        ;;
-    esac
-    repo_slug=${repo_slug%.git}
-  fi
-  if [[ ! "$repo_slug" =~ ^[^/]+/[^/]+$ ]]; then
-    echo "CI_GATE_REPO_SLUGは owner/repository 形式にしてください" >&2
-    return 1
-  fi
-}
-
-post_status() {
-  local state=$1
-  local description=$2
-  "$gh_bin" api --method POST "repos/$repo_slug/statuses/$head_sha" \
-    -f "state=$state" \
-    -f "context=$status_context" \
-    -f "description=$description" >/dev/null
-}
-
-command_available() {
-  local candidate=$1
-  if [[ "$candidate" == */* ]]; then
-    [[ -x "$candidate" ]]
-  else
-    command -v "$candidate" >/dev/null
-  fi
-}
-
-finish_status() {
-  local exit_code=$?
-  if [[ "$publish_status" == true && "$status_pending" == true && $exit_code -ne 0 ]]; then
-    post_status failure "ローカルマージゲートに失敗しました" || true
-  fi
-  exit "$exit_code"
-}
-trap finish_status EXIT
 
 if [[ -n "$(project_git status --porcelain --untracked-files=normal)" ]]; then
   echo "作業ツリーをクリーンにしてから実行してください" >&2
@@ -128,22 +72,6 @@ if [[ -n "$ignored_sources" ]]; then
     printf '  %s\n' "$(project_git check-ignore -v "$path" 2>/dev/null || echo "$path")" >&2
   done <<< "$ignored_sources"
   exit 1
-fi
-
-if [[ "$publish_status" == true ]]; then
-  command_available "$gh_bin" || {
-    echo "ghコマンドが必要です" >&2
-    exit 1
-  }
-  "$gh_bin" auth status >/dev/null
-  project_git fetch origin main:refs/remotes/origin/main --no-tags
-  if ! project_git merge-base --is-ancestor origin/main "$head_sha"; then
-    echo "最新のorigin/mainを取り込んでから再実行してください" >&2
-    exit 1
-  fi
-  resolve_repo_slug
-  post_status pending "ローカルマージゲートを実行中です"
-  status_pending=true
 fi
 
 command -v uv >/dev/null || {
@@ -194,10 +122,10 @@ run_schema_check
 
 run_shell_checks() {
   echo "== Tauri シェル"
-  # 飛ばさない。検査していないものを合格として公開しないため、cargo が
-  # 無ければ環境の不備として落とす
-  command_available cargo || {
-    echo "cargo が必要です。開発コンテナ内で実行してください（bash scripts/dev-up.sh）" >&2
+  # 飛ばさない。検査していないものを合格にしないため、cargo が無ければ
+  # 環境の不備として落とす
+  command -v cargo >/dev/null || {
+    echo "cargo が必要です" >&2
     return 1
   }
   ( cd "$repo_root/apps/desktop/src-tauri" \
@@ -220,9 +148,4 @@ if [[ -n "$(project_git status --porcelain --untracked-files=normal)" ]]; then
   exit 1
 fi
 
-if [[ "$publish_status" == true ]]; then
-  post_status success "ローカルマージゲートに合格しました"
-  status_pending=false
-fi
-
-echo "Local Merge Gate passed: $head_sha"
+echo "Merge Gate passed: $head_sha"

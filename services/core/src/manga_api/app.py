@@ -13,7 +13,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from PIL import Image
 from pydantic import BaseModel, Field
 
@@ -698,7 +698,7 @@ def create_app(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=JobAccepted,
     )
-    def submit_analysis(request: AnalyzeRequest) -> JobAccepted:
+    def submit_analysis(request: AnalyzeRequest) -> JobAccepted | JSONResponse:
         """展開せずに目次を読み、出来上がる本を実行前に並べる（#70）。
 
         利用者はチェックを外す前に「何が出来るのか」を見る必要がある。
@@ -710,7 +710,22 @@ def create_app(
         失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
         残らず、画面は投入できたと思ってしまう。
         """
-        targets = [path_guard.resolve_organize_target(raw) for raw in request.archives]
+        # 断るパスは全部集めて名指しで返す。1 件でも断ると投入全体が通らない
+        # ので、画面はどれを外せば残りを解析できるのかを知る必要がある（#107）。
+        # detail は今までどおり文字列（最初の理由）のままにして、読む側の
+        # 互換を崩さない
+        targets: list[Path] = []
+        refused: list[dict[str, str]] = []
+        for raw in request.archives:
+            try:
+                targets.append(path_guard.resolve_organize_target(raw))
+            except HTTPException as error:
+                refused.append({"path": raw, "reason": str(error.detail)})
+        if refused:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": refused[0]["reason"], "refused": refused},
+            )
         # 前回までの解析は用済み。1 件ずつ入れ物と本の一覧を抱えるうえ、
         # 投入を編集するたびに増える。履歴を読む画面も無い
         app.state.jobs.prune_finished("analyze")

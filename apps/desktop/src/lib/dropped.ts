@@ -3,8 +3,20 @@ import type { SidecarClient } from "../api/client";
 /** サイドカーが返す照合の結果 */
 type Resolution = Awaited<ReturnType<SidecarClient["resolveDropped"]>>;
 
-/** ドロップから引き当てた実パスと、引き当てられなかった理由 */
-export type DroppedPaths = { paths: string[]; error: string };
+/** 引き当てられなかったもの 1 件。名前と、利用者が次の手を打てる理由 */
+export type DropProblem = { name: string; reason: string };
+
+/**
+ * ドロップから引き当てた実パスと、引き当てられなかったもの。
+ *
+ * ``error`` は全体を 1 文にまとめた理由（一覧を持たない画面が出す）。
+ * ``problems`` は 1 件ずつの理由（一覧を持つ画面が行として残す）。
+ */
+export type DroppedPaths = {
+  paths: string[];
+  error: string;
+  problems: DropProblem[];
+};
 
 /**
  * ドロップに載っている実パスを取り出す。
@@ -52,6 +64,21 @@ function describeProblems(result: Resolution): string {
   return problems.join(" / ");
 }
 
+/** 引き当てられなかったものを 1 件ずつの理由にする。一覧の行に残す用 */
+function listProblems(result: Resolution): DropProblem[] {
+  const roots = (result.searched_roots ?? []).join(" / ") || "(制限なし)";
+  return [
+    ...result.unresolved.map((name) => ({
+      name,
+      reason: `場所を特定できません · 探した場所: ${roots}`,
+    })),
+    ...result.ambiguous.map((name) => ({
+      name,
+      reason: "同名が複数あり、どれか決められません",
+    })),
+  ];
+}
+
 /**
  * ドロップされた内容を実パスに結びつける。
  *
@@ -67,25 +94,36 @@ export async function resolveDroppedPaths(
   transfer: DataTransfer,
 ): Promise<DroppedPaths> {
   const direct = pathsFromTransfer(transfer);
-  if (direct.length > 0) return { paths: direct, error: "" };
+  if (direct.length > 0) return { paths: direct, error: "", problems: [] };
 
   const dropped = Array.from(transfer.files).map((file) => ({
     name: file.name,
     size: file.size,
   }));
   if (dropped.length === 0) {
+    const error =
+      "ドロップされた内容からファイルを取り出せませんでした。" +
+      "「ファイルを選ぶ」から辿ってください";
     return {
       paths: [],
-      error:
-        "ドロップされた内容からファイルを取り出せませんでした。" +
-        "「ファイルを選ぶ」から辿ってください",
+      error,
+      problems: [{ name: "落としたもの", reason: error }],
     };
   }
 
   try {
     const result = await client.resolveDropped(dropped);
-    return { paths: result.resolved, error: describeProblems(result) };
+    return {
+      paths: result.resolved,
+      error: describeProblems(result),
+      problems: listProblems(result),
+    };
   } catch (reason) {
-    return { paths: [], error: String((reason as Error).message ?? reason) };
+    const error = String((reason as Error).message ?? reason);
+    return {
+      paths: [],
+      error,
+      problems: dropped.map(({ name }) => ({ name, reason: error })),
+    };
   }
 }

@@ -27,6 +27,14 @@ export function organizeResult(result: unknown): {
  */
 export type Analysis = {
   running: boolean;
+  /**
+   * 解析が最後まで済んだか。
+   *
+   * 走っていないことと、済んだことは別。解析が断られたり止まったりした
+   * ときに「中に何もありません」と言うと嘘になるので、何も見つからな
+   * かったと言えるのは済んだときだけにする。
+   */
+  settled: boolean;
   /** 走査で見つかった入れ物。処理する順 */
   containers: string[];
   /** 目次を読めた入れ物から出来る本 */
@@ -37,6 +45,7 @@ export type Analysis = {
 
 export const IDLE_ANALYSIS: Analysis = {
   running: false,
+  settled: false,
   containers: [],
   books: [],
   unreadable: [],
@@ -48,7 +57,9 @@ export const IDLE_ANALYSIS: Analysis = {
  * 走り始めた直後の結果は空なので、受け取る側が毎回それを気にしなくて済むよう
  * ここで形を揃える。
  */
-export function analysisResult(result: unknown): Omit<Analysis, "running"> {
+export function analysisResult(
+  result: unknown,
+): Omit<Analysis, "running" | "settled"> {
   const value = result as {
     containers?: string[];
     books?: PlannedBook[];
@@ -75,4 +86,26 @@ export function snapshotMark(job: {
   total: number;
 }): string {
   return [job.updated_at, job.state, job.current, job.total].join("/");
+}
+
+/**
+ * 解析の投入を断られたパスと理由を、断りの応答から取り出す（#107）。
+ *
+ * サイドカーは 1 件でも断ると投入全体を通さず、断ったパスを ``refused`` に
+ * 名指しして返す。名指しが無い失敗（通信の失敗など）は空を返す。
+ */
+export function refusedPaths(
+  error: unknown,
+): { path: string; reason: string }[] {
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed = JSON.parse(raw) as { refused?: unknown };
+    if (!Array.isArray(parsed.refused)) return [];
+    return parsed.refused.filter(
+      (item): item is { path: string; reason: string } =>
+        typeof item?.path === "string" && typeof item?.reason === "string",
+    );
+  } catch {
+    return [];
+  }
 }

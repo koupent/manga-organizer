@@ -368,6 +368,34 @@ class AnalysisJobSecurityTest(AnalysisJobTestBase):
             job["result"],
         )
 
+    def test_names_each_refused_path(self):
+        # Arrange - 許可の中・許可の外・存在しないパスを 1 度に投げる。
+        # 1 件でも断ると投入全体が通らないので、画面はどれを外せばよいかを
+        # 知る必要がある（#107）
+        outside_temp = TemporaryDirectory()
+        self.addCleanup(outside_temp.cleanup)
+        outside = Path(outside_temp.name) / "許可の外"
+        self.write_archive(outside / "raw_01.zip")
+        inside = self.make_folder("許可の中")
+        missing = self.work_dir / "消えた.zip"
+
+        # Act
+        refused = self.submit_analysis([inside, outside, missing])
+
+        # Assert - 断ったパスだけを、理由と一緒に名指しする
+        self.assertEqual(400, refused.status_code, refused.text)
+        body = refused.json()
+        self.assertEqual(
+            [str(outside), str(missing)],
+            [item["path"] for item in body.get("refused", [])],
+            refused.text,
+        )
+        reasons = [item["reason"] for item in body["refused"]]
+        self.assertIn("対象外", reasons[0])
+        self.assertIn("見つかりません", reasons[1])
+        # detail は従来どおり文字列。読む側の互換を崩さない
+        self.assertIsInstance(body.get("detail"), str, refused.text)
+
     def test_leaves_out_files_that_point_outside_through_a_link(self):
         # Arrange - 許可の中のフォルダに、外を指すリンクを置く。名前のままでは
         # 中に見えて、開くと外を読む

@@ -464,8 +464,8 @@ test.describe("整理画面", () => {
     await openOrganize(page, join(sidecar.workDir, "out-delete"));
     await selectArchives(page, paths);
 
-    // Act - 落としたものの行に焦点を当てて外す
-    await focusStable(page, droppedRows(page).nth(0));
+    // Act - 左の「投入したもの」の行に焦点を当てて外す。外すのは左だけ
+    await focusStable(page, page.getByTestId("source-row").nth(0));
     await page.keyboard.press("Delete");
 
     // Assert
@@ -608,7 +608,11 @@ test.describe("整理画面", () => {
 
     // Assert - 外す操作もチェックも固定される。実際に処理される内容と
     // 食い違わないため、そして再実行で `_1` が二重に付かないため
-    await expect(firstRow.getByTestId("plan-remove")).toBeDisabled();
+    await expect(
+      page.getByTestId("source-row").first().getByTestId("source-remove"),
+    ).toBeDisabled();
+    await expect(page.getByTestId("open-browser")).toBeDisabled();
+    await expect(page.getByTestId("clear-selection")).toBeDisabled();
     await expect(firstCheck).toBeDisabled();
     await firstCheck.click({ force: true });
     await expect(firstCheck).toHaveAttribute("aria-checked", "true");

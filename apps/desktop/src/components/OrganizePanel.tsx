@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { BookMarked, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   sidecarReason,
@@ -10,9 +10,11 @@ import {
   analysisResult,
   IDLE_ANALYSIS,
   organizeResult,
+  refusedPaths,
   snapshotMark,
   type Analysis,
 } from "../lib/analysis";
+import { resolveDroppedPaths } from "../lib/dropped";
 import {
   ORGANIZED_STATUS_TIP,
   organizeSummary,
@@ -20,6 +22,7 @@ import {
 } from "../lib/organize-text";
 import {
   buildPlanRows,
+  collidingBooks,
   droppedBookCount,
   effectiveOff,
   keptBooks,
@@ -34,17 +37,27 @@ import {
   toggleTargets,
   type Decisions,
   type PlanRow,
+  VOLUME_DUPLICATE,
 } from "../lib/plan";
+import { cn } from "../lib/utils";
+import {
+  applyVolumes,
+  numberFollowing,
+  type VolumeCorrections,
+} from "../lib/volumes";
 import { FailedList, type OrganizeFailure } from "./FailedList";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
 import { OptionsSection } from "./organize/OptionsSection";
 import { SeriesInfoSection } from "./organize/SeriesInfoSection";
+import { SourceList, type SourceProblem } from "./organize/SourceList";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
 import { PlanList } from "./PlanList";
 import { ProducedList, type HandoffMode } from "./ProducedList";
 import { Button } from "./ui/button";
+import { Empty } from "./ui/empty";
+import { SectionTitle } from "./ui/section-title";
 import {
   Dialog,
   DialogClose,
@@ -68,7 +81,22 @@ type OrganizePanelProps = {
   onOutputDirectoryChange: (path: string) => void;
   /** 出来たファイルを、指定した画面へ読み込んだ状態で開く */
   onOpenProduced: (path: string, mode: HandoffMode) => void;
+  /** 投入に足す。既に入っているものは増やさず光らせる（App が決める） */
+  onAddSources: (paths: string[]) => void;
+  /** エクスプローラーから窓の上へ持ってきている最中か（Tauri のドラッグ） */
+  nativeDragging?: boolean;
+  /** もう一度落とされて光らせている投入 */
+  flashing?: ReadonlySet<string>;
 };
+
+/** 赤い行を見分ける鍵。同じ名前が何度落とされても別の行にする */
+let problemSeq = 0;
+const problemKey = () => `problem-${++problemSeq}`;
+
+/** パスの末尾。赤い行には名前だけを出す */
+function baseName(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path;
+}
 
 /**
  * ファイル整理。
@@ -84,8 +112,18 @@ export function OrganizePanel({
   outputDirectory,
   onOutputDirectoryChange,
   onOpenProduced,
+  onAddSources,
+  nativeDragging = false,
+  flashing = new Set<string>(),
 }: OrganizePanelProps) {
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // 利用者が直した巻数。本の鍵で覚え、解析をやり直しても消さない（段階 5）
+  const [volumes, setVolumes] = useState<VolumeCorrections>(new Map());
+  // 窓の上をブラウザのドラッグが通っているか（Tauri のドラッグは App から届く）
+  const [browserDragging, setBrowserDragging] = useState(false);
+  const dragging = nativeDragging || browserDragging;
+  // 入れられなかったもの（赤い行）。投入の一覧には入れない
+  const [rejected, setRejected] = useState<SourceProblem[]>([]);
   // 辞書から返事をもらった作品名。もう一度は勧めない。断られた対は辞書に
   // 入らないままなので、これが無いと「押しても何も起きない操作」が画面に
   // 残り続ける
@@ -218,6 +256,7 @@ export function OrganizePanel({
             setAnalysis({
               running:
                 snapshot.state === "queued" || snapshot.state === "running",
+              settled: snapshot.state === "succeeded",
               ...analysisResult(snapshot.result),
             });
             setProgress({ current: snapshot.current, total: snapshot.total });
@@ -225,13 +264,36 @@ export function OrganizePanel({
           { signal: controller.signal },
         );
         if (!controller.signal.aborted) {
-          setAnalysis({ running: false, ...analysisResult(job.result) });
+          setAnalysis({
+            running: false,
+            settled: job.state === "succeeded",
+            ...analysisResult(job.result),
+          });
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        // 断られたパスは赤い行へ移し、残りで解析し直す（#107）。1 件でも
+        // 断られると投入全体が通らないので、黙っていると何も解析されない
+        const refused = refusedPaths(error);
+        const kept = sources.filter(
+          (path) => !refused.some((item) => item.path === path),
+        );
+        if (kept.length < sources.length) {
+          setRejected((current) => [
+            ...current,
+            ...refused.map((item) => ({
+              key: problemKey(),
+              name: baseName(item.path),
+              reason: item.reason,
+            })),
+          ]);
+          onSourcesChange(kept);
+          return;
+        }
         // 解析できなくても投入そのものは生きている。行はそのまま残し、
         // 実行時に展開してみて分かる結果に委ねる
-        if (!controller.signal.aborted) setAnalysis(IDLE_ANALYSIS);
+        setAnalysis(IDLE_ANALYSIS);
       });
 
     return () => {
@@ -246,7 +308,56 @@ export function OrganizePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sources]);
 
-  const rows = useMemo(
+  /**
+   * 窓のどこに落としても投入に入れる。
+   *
+   * 落とす先を 360px の箱に限ると、狙って落とす手間を利用者に払わせる。
+   * Tauri のドロップは窓に届くので、ブラウザの経路も窓で受けて揃える。
+   * 隠れている間は受けない（別の画面へのドロップを横取りしない）。
+   */
+  const dropInto = useRef<(transfer: DataTransfer) => void>(() => undefined);
+  dropInto.current = (transfer) => {
+    if (running) return;
+    void resolveDroppedPaths(client, transfer).then(
+      ({ paths, problems: failed }) => {
+        if (failed.length > 0) {
+          setRejected((current) => [
+            ...current,
+            ...failed.map((problem) => ({ key: problemKey(), ...problem })),
+          ]);
+        }
+        if (paths.length > 0) onAddSources(paths);
+      },
+    );
+  };
+
+  useEffect(() => {
+    if (!active) return;
+    const over = (event: DragEvent) => {
+      event.preventDefault();
+      setBrowserDragging(true);
+    };
+    // 要素の間を移るたびにも届く。窓の外へ出たときだけ（行き先が無い）消す
+    const leave = (event: DragEvent) => {
+      if (event.relatedTarget === null) setBrowserDragging(false);
+    };
+    const drop = (event: DragEvent) => {
+      event.preventDefault();
+      setBrowserDragging(false);
+      if (event.dataTransfer) dropInto.current(event.dataTransfer);
+    };
+    window.addEventListener("dragover", over);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
+      setBrowserDragging(false);
+    };
+  }, [active]);
+
+  const analyzedRows = useMemo(
     () =>
       buildPlanRows(
         sources,
@@ -256,23 +367,48 @@ export function OrganizePanel({
       ),
     [sources, analysis],
   );
-  const names = useMemo(
-    () => outputNames(rows, author, title),
-    [rows, author, title],
+  // 直した巻数を当てた行。名前・印・依頼・冊数は全部こちらから作る
+  const rows = useMemo(
+    () => applyVolumes(analyzedRows, volumes),
+    [analyzedRows, volumes],
   );
   // いま外れている葉。触った覚えと既定から毎回導き直すので、解析中に外した
   // 入れ物へ後から本が生えても、その本は外れたまま出る。1 度だけ導いて、
   // 読む所すべてで同じものを使う
   const off = useMemo(() => effectiveOff(rows, decisions), [rows, decisions]);
+  const names = useMemo(
+    () => outputNames(rows, author, title, off),
+    [rows, author, title, off],
+  );
+  // 作る本どうしで名前が重なる本。後ろの本は黙って _1 で出来てしまう
+  const collided = useMemo(
+    () => collidingBooks(rows, off, author, title),
+    [rows, off, author, title],
+  );
+  // 直した巻数のうち、実際に作られる本のもの。状態の行で数える
+  const correctedCount = rows.filter(
+    (row) =>
+      row.kind === "book" &&
+      !row.organized &&
+      volumes.has(row.id) &&
+      !off.has(row.id),
+  ).length;
   const keptCount = keptBooks(rows, off).length;
   const droppedCount = droppedBookCount(rows, off);
   const organizedCount = organizedSkippedCount(rows, off);
-  const issues = keptIssueCounts(rows, off);
+  const issues = [
+    ...keptIssueCounts(rows, off),
+    ...(collided.size > 0
+      ? [{ issue: VOLUME_DUPLICATE, count: collided.size }]
+      : []),
+  ];
   // 実際に何かが作られる単位。作る本が 1 つも無いことと、左の列が要るかを
   // どちらもここから決める
   const keptLeafCount = keptLeafRows(rows, off).length;
   const namelessCount = namelessKeptRows(rows, off).length;
   const needsName = needsSeriesName(rows, off);
+  // 右の見出しに出す冊数。外した本も整理済みの本も、一覧に並ぶ本は全部数える
+  const bookCount = rows.filter((row) => row.kind === "book").length;
   // 整理済みの行が 1 つも無いなら、整理済みにまつわる但し書きは出さない。
   // 一度も整理していない利用者に無用の説明を増やさない
   const hasOrganized = rows.some((row) => row.organized);
@@ -345,7 +481,8 @@ export function OrganizePanel({
    * ください」と言うことになり、その作品名はどこにも使われない。
    */
   const problems = useMemo(() => {
-    if (sources.length === 0) return ["処理対象のファイルを追加してください"];
+    if (sources.length === 0)
+      return ["左の「投入したもの」にフォルダかアーカイブを入れてください"];
     if (!outputDirectory.trim()) return ["出力先を選んでください"];
     // 作る本が無いことは、状態の行に出す 1 行がそのまま理由になる
     if (keptLeafCount === 0)
@@ -379,7 +516,34 @@ export function OrganizePanel({
     );
   };
 
-  /** 落としたものを一覧から外す。実行中は中身を変えさせない */
+  /**
+   * 巻数を直す。自動で読んだ値と同じにしたら、直していないことに戻す。
+   * 戻す手を別に置かなくても、元の数字を打ち直せば戻る。
+   */
+  const correctVolume = (row: PlanRow, volume: number | null) => {
+    setVolumes((current) => {
+      const next = new Map(current);
+      if (volume === row.autoVolume) next.delete(row.id);
+      else next.set(row.id, volume);
+      return next;
+    });
+  };
+
+  /** 直したうえで、同じ入れ物の下の本に続き番号を振る */
+  const fillVolumes = (row: PlanRow, volume: number) => {
+    const following = numberFollowing(analyzedRows, row.id, volume);
+    setVolumes((current) => {
+      const next = new Map(current);
+      for (const [id, value] of new Map([[row.id, volume], ...following])) {
+        const auto = analyzedRows.find((item) => item.id === id)?.autoVolume;
+        if (value === auto) next.delete(id);
+        else next.set(id, value);
+      }
+      return next;
+    });
+  };
+
+  /** 投入したものを外す。実行中は中身を変えさせない */
   const removeSource = (path: string) => {
     if (running) return;
     onSourcesChange(sources.filter((item) => item !== path));
@@ -492,7 +656,7 @@ export function OrganizePanel({
         keep_originals: keepOriginals,
         // 一覧で残した本だけを作る。空の配列は「1 冊も作らない」であって
         // 「指定なし」ではないので、省かずに必ず載せる
-        books: selectedBooks(rows, off),
+        books: selectedBooks(rows, off, volumes),
       });
       jobId.current = accepted.id;
 
@@ -551,13 +715,14 @@ export function OrganizePanel({
     status ||
     (blockedBy
       ? blockedBy
-      : planSummary(keptCount, droppedCount, organizedCount));
+      : planSummary(keptCount, droppedCount, organizedCount) +
+        (correctedCount > 0 ? ` · ${correctedCount} 冊の巻数を直した` : ""));
 
   return (
     /*
-      ワークベンチ型。設定は幅の決まった左の列に置き、残りは全部
-      処理対象の一覧へ渡す。設定は一度決めれば見るだけのもので、
-      画面の高さを分け合う相手ではない。
+      ワークベンチ型。入れるもの（作品情報・投入・出力先）は幅の決まった
+      左の列に、出来上がるものは残り全部を使う右の一覧に置く。投入と結果を
+      同じ面に置くと、何を入れたのかと何が出来るのかが混ざって見える。
     */
     <div className="flex min-h-0 flex-1 gap-3">
       {/* 入力欄の候補。辞書に記録済みの作品と著者を出す */}
@@ -580,24 +745,59 @@ export function OrganizePanel({
       </datalist>
 
       {/*
-        設定の列。幅を 360px に固定するのは、入力欄が窓幅まで伸びても
-        読みやすさが上がらないため。中身が溢れたらこの列だけがスクロールし、
-        右の作業面は巻き添えにしない。
+        左の列。上から 作品情報 / 投入したもの / オプション の 3 段。作品名と
+        著者は大前提なので先頭に置き、出力先は底に置く。この 2 段は高さを
+        変えず、何件入れるか分からない投入の箱だけが窓の高さに追従する。
+        列そのものはスクロールさせない。溢れるのは投入の箱の中だけ。
       */}
-      <aside className="flex w-[360px] shrink-0 flex-col gap-4 overflow-y-auto pr-1">
+      <aside
+        className="flex min-h-0 w-[360px] shrink-0 flex-col gap-4"
+        data-testid="organize-sidebar"
+      >
         <SeriesInfoSection
           title={title}
           author={author}
           authorSource={authorSource}
           candidates={candidates}
           searching={searching}
-          hasOrganized={hasOrganized}
+          sourceCount={sources.length}
           keptLeafCount={keptLeafCount}
           namelessCount={namelessCount}
           onChangeTitle={changeTitle}
           onTypeAuthor={typeAuthor}
           onChooseAuthor={chooseAuthor}
           onOpenLibrary={() => changeLibraryOpen(true)}
+        />
+
+        <FilePicker
+          client={client}
+          selected={sources}
+          onChange={(paths) => {
+            // 空にするのは「空にする」だけ。赤い行も一緒に片付ける
+            if (paths.length === 0) setRejected([]);
+            onSourcesChange(paths);
+          }}
+          disabled={running}
+          fill
+          dragging={dragging && !running}
+          list={
+            sources.length > 0 || rejected.length > 0 ? (
+              <SourceList
+                sources={sources}
+                rows={rows}
+                analysis={analysis}
+                problems={rejected}
+                flashing={flashing}
+                disabled={running}
+                onRemove={removeSource}
+                onDismissProblem={(key) =>
+                  setRejected((current) =>
+                    current.filter((problem) => problem.key !== key),
+                  )
+                }
+              />
+            ) : undefined
+          }
         />
 
         <OptionsSection
@@ -610,48 +810,80 @@ export function OrganizePanel({
       </aside>
 
       {/*
-        作業面。処理対象の一覧が高さいっぱいを取り、実行の結果だけが
+        作業面。出来上がる本の一覧が高さいっぱいを取り、実行の結果だけが
         下に居場所を持つ。失敗と出来たファイルは処理ログの真上に置く。
         どれも「実行して何が起きたか」を見る所で、離すと目が往復する。
       */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-        <FilePicker
-          client={client}
-          selected={sources}
-          onChange={onSourcesChange}
-          disabled={running}
-          fill
-          hint="チェックを外すと作りません · Delete で落としたものを外す"
-          actions={
-            <PlanActions
-              rows={rows}
-              excluded={off}
-              status={statusText}
-              statusTitle={hasOrganized ? ORGANIZED_STATUS_TIP : undefined}
-              issues={issues}
-              progress={progress}
-              running={running}
-              blocked={blocked}
-              onToggleAll={toggleAll}
-              onRun={run}
-              onCancel={cancel}
-            />
-          }
-          list={
-            <PlanList
-              rows={rows}
-              excluded={off}
-              names={names}
-              outputDirectory={outputDirectory}
-              locked={running}
-              onToggle={toggleRow}
-              onRemove={removeSource}
-              // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
-              // 通る。行が渡すのは、いまディスク上に在る元のファイル
-              onOpenArchive={onOpenProduced}
-            />
-          }
-        />
+        <section className="flex min-h-0 flex-1 flex-col gap-2">
+          <div className="flex h-7 shrink-0 items-center gap-2">
+            <SectionTitle>出来上がる本</SectionTitle>
+            <span
+              className="tabular text-[12px] text-ink-faint"
+              data-testid="plan-count"
+            >
+              {bookCount} 冊
+            </span>
+            {sources.length > 0 ? (
+              <span className="min-w-0 truncate text-[11.5px] text-ink-faint">
+                チェックを外すと作りません · 入れたものごと外すのは左の ×
+              </span>
+            ) : null}
+          </div>
+          {/* 主操作は一覧の直上。押したら何が起きるかを一覧のすぐ上で読む（#68・#70） */}
+          <PlanActions
+            rows={rows}
+            excluded={off}
+            status={statusText}
+            statusTitle={hasOrganized ? ORGANIZED_STATUS_TIP : undefined}
+            issues={issues}
+            progress={progress}
+            running={running}
+            blocked={blocked}
+            onToggleAll={toggleAll}
+            onRun={run}
+            onCancel={cancel}
+          />
+          {/* 何も入れていないときは落とす先ではなく出来上がりの予告。点線は
+              左の落とす箱だけの印なので、ここは空でも実線にする */}
+          <div
+            className={cn(
+              "flex min-h-0 flex-1 flex-col rounded-card border bg-surface/50 transition-colors",
+              // ドラッグ中は枠だけ変える。中身は隠さない（落とせば左に入る）
+              dragging && !running ? "border-brand" : "border-line",
+            )}
+            data-testid="plan-box"
+            data-dragging={String(dragging && !running)}
+          >
+            {sources.length === 0 ? (
+              <Empty
+                className="m-auto"
+                icon={<BookMarked />}
+                title="出来上がる本がここに並びます"
+              >
+                左の「投入したもの」にフォルダかアーカイブを入れると、出来上がる本を
+                1
+                冊ずつ確かめてから整理できます。この窓のどこに落としても左に入ります。
+              </Empty>
+            ) : (
+              <PlanList
+                rows={rows}
+                excluded={off}
+                names={names}
+                outputDirectory={outputDirectory}
+                locked={running}
+                onToggle={toggleRow}
+                // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
+                // 通る。行が渡すのは、いまディスク上に在る元のファイル
+                onOpenArchive={onOpenProduced}
+                corrected={new Set(volumes.keys())}
+                collided={collided}
+                onCorrect={correctVolume}
+                onFill={fillVolumes}
+              />
+            )}
+          </div>
+        </section>
         {/*
           失敗は出来たファイルより先に置く。放っておけないのはこちらで、
           出来たぶんの一覧に押し下げられて見落とすと元も子もない。

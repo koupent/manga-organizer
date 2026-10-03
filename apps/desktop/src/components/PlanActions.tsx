@@ -89,7 +89,7 @@ export function PlanActions({
             ))}
         <div className="flex-1" />
         {progress.total > 0 ? (
-          <span className="tabular text-[12px] text-ink-faint">
+          <span className="tabular shrink-0 whitespace-nowrap text-[12px] text-ink-faint">
             {progress.current} / {progress.total}
           </span>
         ) : null}

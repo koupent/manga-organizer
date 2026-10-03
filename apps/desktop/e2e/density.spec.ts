@@ -188,18 +188,17 @@ test.describe("UI の密度", () => {
     await page.setViewportSize({ width: 1280, height: 860 });
     await openOrganizeWithArchives(page, "density-row");
 
-    // Act - 一覧に並ぶ全部の行の高さと、落としたものの行に載っている
-    // 外すボタンの高さを集める。外すボタンが付くのは落としたものの行だけ
+    // Act - 一覧に並ぶ全部の行の高さと、投入したものの行に載っている
+    // 外すボタンの高さを集める。外すボタンは左の列の「投入したもの」にだけ
+    // ある（右の出来上がる本の一覧からは外せない）
     const rows = await page.getByTestId("plan-row").all();
     const heights = await Promise.all(
       rows.map(async (row) => (await row.boundingBox())!.height),
     );
     const removeHeights = await Promise.all(
-      (
-        await page.locator('[data-testid="plan-row"][data-level="0"]').all()
-      ).map(
+      (await page.getByTestId("source-row").all()).map(
         async (row) =>
-          (await row.getByTestId("plan-remove").boundingBox())!.height,
+          (await row.getByTestId("source-remove").boundingBox())!.height,
       ),
     );
 

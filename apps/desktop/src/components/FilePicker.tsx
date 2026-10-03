@@ -1,12 +1,12 @@
-import { FolderOpen, Package, TriangleAlert, Upload } from "lucide-react";
+import { FolderOpen, FolderPlus, TriangleAlert, Upload } from "lucide-react";
 import {
   useCallback,
   useEffect,
   useRef,
   useState,
+  type DragEvent,
   type ReactNode,
 } from "react";
-import { parentDirectory } from "../path";
 import { resolveDroppedPaths } from "../lib/dropped";
 import { cn } from "../lib/utils";
 import {
@@ -33,52 +33,26 @@ type FilePickerProps = {
   /**
    * 与えられた高さいっぱいまで一覧を伸ばす。
    *
-   * ファイル整理では処理対象が画面の主役なので作業面を全部渡す。
-   * 対象が 1 冊だけの画面では一覧そのものが無く、伸ばす意味も無い。
+   * ファイル整理では左の列の真ん中が投入の箱で、窓の高さに追従して伸び縮み
+   * する。対象が 1 冊だけの画面では一覧そのものが無く、伸ばす意味も無い。
    */
   fill?: boolean;
-  /** 件数の隣に出す操作の案内。何ができる一覧なのかは呼び出し側が決める */
-  hint?: string;
   /**
-   * 見出しと一覧のあいだに置く行。
+   * 投入したものの一覧。何を出すかは呼び出し側の機能が決める。
    *
-   * ファイル整理は主操作をここへ入れる。一覧の直上に置くのは、押したら
-   * 何が起きるかを一覧のすぐ上で読めるようにするため（#68・#70）。
-   * ファイルを選ぶ側へ入れ替わっても位置が動かないよう、外側に置く。
-   */
-  actions?: ReactNode;
-  /**
-   * 一覧の中身。
-   *
-   * 渡すと、落としたものを平らに並べる既定の一覧の代わりに使う。
-   * ファイル整理は解析した 3 階層の一覧をここへ入れる。
+   * ファイル整理は左の列に、入れたものごと外す × 付きの行を並べる。
+   * 単一選択の画面は一覧を持たない。渡さなければ「まだ何も無い」の箱になる。
    */
   list?: ReactNode;
+  /**
+   * ドラッグ中かどうかを呼び出し側が決める。
+   *
+   * ファイル整理は窓のどこに落としても受ける（Tauri のドロップは窓に届き、
+   * 360px の箱を狙わせる理由が無い）。そのときは受け取りも呼び出し側が
+   * 窓で行い、ここは見た目だけを出す。渡さなければ箱そのものが受ける。
+   */
+  dragging?: boolean;
 };
-
-/** 単一選択で選んだ 1 件を出す行。落としたものが何だったかを確かめる用 */
-function SelectedItem({ path }: { path: string }) {
-  return (
-    <li
-      data-testid="selected-item"
-      data-path={path}
-      className="flex items-center gap-2 rounded-control px-2 py-0.5"
-    >
-      <Package className="size-3.5 shrink-0 text-ink-faint" />
-      {/* 名前と場所は一組の情報。名前の幅は中身で決め、余った幅は場所へ渡す。
-          名前を伸ばして場所を右端へ飛ばすと、目が行の端から端まで往復する */}
-      <span className="min-w-0 truncate text-[12.5px] font-medium">
-        {path.split("/").pop()}
-      </span>
-      <span
-        className="min-w-0 flex-1 truncate text-[11px] text-ink-faint"
-        title={path}
-      >
-        {parentDirectory(path)}
-      </span>
-    </li>
-  );
-}
 
 /**
  * 処理対象の選択。
@@ -103,18 +77,22 @@ export function FilePicker({
   single = false,
   title,
   fill = false,
-  hint,
-  actions,
   list,
+  dragging,
 }: FilePickerProps) {
   const [browsing, setBrowsing] = useState(false);
   const [location, setLocation] = useState<BrowseLocation>({
     path: "",
     parent: null,
   });
+  // 辿れる一番上。最初に根を読んだときに覚え、パンくずの起点にする
+  const [root, setRoot] = useState("");
   const [entries, setEntries] = useState<BrowseEntry[]>([]);
   const [error, setError] = useState("");
-  const [dragging, setDragging] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const external = dragging !== undefined;
+  const shownDragging = external ? dragging : dragOver;
+  const empty = !list;
 
   // 通信の結果は実行が始まった後に届くことがある。そのときの状態で判断する
   const locked = useRef(disabled);
@@ -127,6 +105,7 @@ export function FilePicker({
       client
         .browse(path)
         .then((result) => {
+          if (!path) setRoot(result.path);
           setLocation({ path: result.path, parent: result.parent ?? null });
           setEntries(result.entries as BrowseEntry[]);
           setError("");
@@ -175,68 +154,75 @@ export function FilePicker({
     setError(reason);
   };
 
-  const defaultList = (
-    <ul
-      className={cn(
-        "divide-y divide-line/60 overflow-y-auto p-1",
-        // 溢れた行はこの箱の中でスクロールする。利用者が一覧として
-        // 見ている面と、実際にスクロールする面を一致させる
-        fill ? "min-h-0 flex-1" : "max-h-64",
-      )}
-      data-testid="selected-list"
-    >
-      {selected.map((path) => (
-        <SelectedItem key={path} path={path} />
-      ))}
-    </ul>
-  );
-
   const dropzone = (
     <div
       className={cn(
-        "flex flex-col rounded-card border transition-colors",
+        "relative flex flex-col rounded-card border transition-colors",
         // 点線は「まだ何も入っていない」の合図。中身が入った後も囲い続けると、
         // 置いた物を包む箱がもう 1 枚増えるだけで、何も伝えていない
-        selected.length === 0 && "border-dashed",
-        dragging
+        empty && "border-dashed",
+        shownDragging
           ? "border-brand bg-brand/8"
-          : selected.length === 0
+          : empty
             ? "border-line-strong bg-surface/50"
             : "border-line bg-surface/50",
-        fill && "min-h-0 flex-1",
+        fill && "min-h-[88px] flex-1",
       )}
       data-testid="dropzone"
-      onDragOver={(event) => {
-        event.preventDefault();
-        // 受け取れないときに受け取れそうな見た目にしない
-        setDragging(!disabled);
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(event) => {
-        event.preventDefault();
-        setDragging(false);
-        void handleDrop(event.dataTransfer);
-      }}
+      data-dragging={String(shownDragging)}
+      {...(external
+        ? {}
+        : {
+            onDragOver: (event: DragEvent) => {
+              event.preventDefault();
+              // 受け取れないときに受け取れそうな見た目にしない
+              setDragOver(!disabled);
+            },
+            onDragLeave: () => setDragOver(false),
+            onDrop: (event: DragEvent) => {
+              event.preventDefault();
+              setDragOver(false);
+              void handleDrop(event.dataTransfer);
+            },
+          })}
     >
-      {selected.length === 0 ? (
+      {empty ? (
         <Empty
           className="m-auto"
           icon={<Upload />}
-          title="ここにフォルダかアーカイブをドラッグ&ドロップ"
+          title={
+            shownDragging
+              ? "離すと追加します"
+              : single
+                ? "ここにアーカイブをドラッグ&ドロップ"
+                : "ここにフォルダかアーカイブをドラッグ&ドロップ"
+          }
         >
-          または「ファイルを選ぶ」から辿ってください。フォルダは下の階層まで
-          辿り、ZIP は中を読んで、画像のある所を 1 冊として並べます。zip / cbz /
-          rar / 7z を扱えます。
-          {single ? "まとめて落としたときは先頭の 1 件を対象にします。" : null}
+          {shownDragging
+            ? "フォルダとアーカイブをまとめて落とせます"
+            : single
+              ? "または「ファイルを選ぶ」から辿ってください。zip / cbz を扱えます。まとめて落としたときは先頭の 1 件を対象にします。"
+              : "または上の「選んで追加」から辿ります。フォルダは下の階層まで、ZIP は中まで読んで、画像のある所を 1 冊として右に並べます。zip / cbz / rar / 7z"}
         </Empty>
       ) : (
-        (list ?? defaultList)
+        list
       )}
+      {/* 中身がある箱では、行の上に幕を重ねて「離すと追加します」と言う。
+          行を消さないので、何が入っているかは透けて見えたまま */}
+      {!empty && shownDragging ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-card bg-canvas/80 text-center">
+          <Upload className="size-7 text-brand" />
+          <p className="text-[13px] font-medium text-brand">離すと追加します</p>
+          <p className="text-[12px] text-ink-faint">
+            フォルダとアーカイブをまとめて落とせます
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 
   const sectionTitle =
-    title ?? (single ? "並べ替えるアーカイブ" : "処理対象ファイル");
+    title ?? (single ? "並べ替えるアーカイブ" : "投入したもの");
 
   return (
     /*
@@ -250,21 +236,16 @@ export function FilePicker({
     */
     <Dialog modal={false} open={browsing} onOpenChange={setBrowsing}>
       <section className={cn("flex flex-col gap-2", fill && "min-h-0 flex-1")}>
-        <div className="flex items-center gap-2">
+        <div className="flex h-7 shrink-0 items-center gap-2">
           <SectionTitle>{sectionTitle}</SectionTitle>
           {/* 単一選択は一覧を持たない。件数も一括操作も指すものが無い */}
           {single ? null : (
-            <>
-              <span
-                className="tabular text-[12px] text-ink-faint"
-                data-testid="selected-count"
-              >
-                {selected.length} 件
-              </span>
-              {hint && selected.length > 0 ? (
-                <span className="text-[11.5px] text-ink-faint">{hint}</span>
-              ) : null}
-            </>
+            <span
+              className="tabular text-[12px] text-ink-faint"
+              data-testid="selected-count"
+            >
+              {selected.length} 件
+            </span>
           )}
           <div className="flex-1" />
           <DialogTrigger asChild>
@@ -273,25 +254,27 @@ export function FilePicker({
               data-testid="open-browser"
               disabled={disabled}
             >
-              <FolderOpen />
-              {browsing ? "選択を閉じる" : "ファイルを選ぶ"}
+              {single ? <FolderOpen /> : <FolderPlus />}
+              {/* 一覧を持つ画面は開いていても名前を変えない。開いていることは
+                  色で分かり、もう一度押せば閉じる */}
+              {single
+                ? browsing
+                  ? "選択を閉じる"
+                  : "ファイルを選ぶ"
+                : "選んで追加"}
             </Button>
           </DialogTrigger>
           {single ? null : (
             <Button
               variant="ghost"
               data-testid="clear-selection"
-              disabled={disabled || selected.length === 0}
+              disabled={disabled || empty}
               onClick={() => replace([])}
             >
-              一覧を空にする
+              空にする
             </Button>
           )}
         </div>
-
-        {/* 主操作は一覧の直上に置く。ファイルを選んでいる間も同じ場所にあり、
-            押しに行ける */}
-        {actions}
 
         {/* 落とす場所と投入した一覧は、辿っている間も居場所を明け渡さない。
             入れたものを見ながら次を選べるようにするのが窓へ移した理由 */}
@@ -307,15 +290,16 @@ export function FilePicker({
 
       <FileBrowserDialog
         location={location}
+        root={root}
         entries={entries}
         selected={selected}
         single={single}
         disabled={disabled}
-        title={`${sectionTitle}を選ぶ`}
+        title={single ? `${sectionTitle}を選ぶ` : "投入するものを選ぶ"}
         description={
           single
             ? "フォルダを辿って、対象にするアーカイブを 1 つ選びます。選ぶとこの窓は閉じます。"
-            : "フォルダやアーカイブを辿って、処理対象の一覧へ足します。足してもこの窓は開いたままです。"
+            : "フォルダは下の階層まで辿って入れます"
         }
         onOpen={load}
         onAdd={add}

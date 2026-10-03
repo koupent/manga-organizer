@@ -70,39 +70,38 @@ pub fn dropped_entries(paths: &[PathBuf]) -> Vec<DroppedEntry> {
     kept
 }
 
-/// フロントエンドが接続情報を取りに来る
+/// フロントエンドが接続情報を取りに来る。
+///
+/// サイドカーは窓を出した後に背景で起動するので、成否が決まるまで待つ。
+/// 失敗したときはその理由を返し、画面がそのまま出す
 #[tauri::command]
-fn sidecar_connection(state: tauri::State<'_, SidecarState>) -> Result<ConnectionView, String> {
-    state
-        .0
-        .lock()
+async fn sidecar_connection(app: tauri::AppHandle) -> Result<ConnectionView, String> {
+    // 待つのは非同期の実行器ではなく、待つための別スレッドで行う
+    tauri::async_runtime::spawn_blocking(move || app.state::<SidecarState>().wait_connection())
+        .await
         .map_err(|error| error.to_string())?
-        .as_ref()
-        .map(|running| ConnectionView::from(&running.connection))
-        .ok_or_else(|| "サイドカーが起動していません".to_string())
 }
 
-/// 起動時にサイドカーを立ち上げ、接続情報を保持する
-fn launch_sidecar(app: &tauri::AppHandle) -> Result<ConnectionView, String> {
+/// サイドカーを立ち上げる
+fn launch_sidecar(app: &tauri::AppHandle) -> Result<Sidecar, String> {
     let state_dir = app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&state_dir).map_err(|error| error.to_string())?;
 
-    // 読むのを許すのは利用者のホーム以下だけにする。トークンに加えた
-    // もう一段の制限で、想定外のパスを読ませない。
+    // 読み書きできる場所は絞らない（--allow-root を渡さない）。蔵書は
+    // 2 台目のドライブや NAS に置かれることが多く、ホームへ縛ると整理
+    // そのものができなくなるため。サイドカーは 127.0.0.1 だけで待ち受け、
+    // 起動ごとの使い捨てトークンが無ければ応じない
     //
-    // 書き出す先はここでは決まらない。蔵書は 2 台目のドライブや NAS に
-    // 置かれることが多く、ホームへ縛ると整理そのものができなくなるため、
-    // 利用者が画面で選んだ出力先をサイドカーが起動のあいだ覚える
-    // （POST /api/output-roots）。書けるのはホーム以下と、その覚えだけ
-    let home = app.path().home_dir().map_err(|error| error.to_string())?;
-
+    // 同梱物は tauri.conf.json の resources の相対パスのまま置かれる
+    // （インストール先でも tauri dev の target/debug でも同じ形）
     let program = app
         .path()
         .resource_dir()
         .map_err(|error| error.to_string())?
+        .join("resources")
         .join("sidecar")
         .join(if cfg!(windows) {
             "manga-api.exe"
@@ -110,13 +109,8 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<ConnectionView, String> {
             "manga-api"
         });
 
-    let running =
-        Sidecar::start(&program, &[], &state_dir, &[home]).map_err(|error| error.to_string())?;
-    let connection = ConnectionView::from(&running.connection);
-
-    let state = app.state::<SidecarState>();
-    *state.0.lock().map_err(|error| error.to_string())? = Some(running);
-    Ok(connection)
+    let args = ["--exit-with-parent".to_string()];
+    Sidecar::start(&program, &args, &state_dir, &[]).map_err(|error| error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -126,28 +120,49 @@ pub fn run() {
         .manage(SidecarState::default())
         .invoke_handler(tauri::generate_handler![sidecar_connection])
         .setup(|app| {
-            match launch_sidecar(app.handle()) {
-                Ok(connection) => {
-                    app.emit("sidecar-ready", connection)?;
-                }
-                Err(reason) => {
-                    // 起動できなくてもウィンドウは出す。理由を画面に示す
-                    app.emit("sidecar-failed", reason)?;
-                }
-            }
+            // 起動を待つ間も窓を動かしておく。起動できなくても窓は出し、
+            // 理由は接続情報を取りに来た画面へ返す
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let outcome = launch_sidecar(&handle);
+                handle.state::<SidecarState>().settle(outcome);
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                // ブラウザでは実パスが取れない。ネイティブ側で受けて渡す
-                let payload = DroppedEntries {
-                    entries: dropped_entries(paths),
-                };
-                let _ = window.emit("files-dropped", payload);
+            let tauri::WindowEvent::DragDrop(drag) = event else {
+                return;
+            };
+            // ドロップを受ける設定では WebView2 に HTML のドラッグイベントが
+            // 届かない。来た・離れたも転送しないと、画面は離す前に「落とせる」
+            // と示せない（#106）
+            match drag {
+                tauri::DragDropEvent::Enter { .. } => {
+                    let _ = window.emit("files-dragging", true);
+                }
+                tauri::DragDropEvent::Leave => {
+                    let _ = window.emit("files-dragging", false);
+                }
+                tauri::DragDropEvent::Drop { paths, .. } => {
+                    let _ = window.emit("files-dragging", false);
+                    // ブラウザでは実パスが取れない。ネイティブ側で受けて渡す
+                    let payload = DroppedEntries {
+                        entries: dropped_entries(paths),
+                    };
+                    let _ = window.emit("files-dropped", payload);
+                }
+                _ => {}
             }
         })
-        .run(tauri::generate_context!())
-        .expect("Tauri アプリの起動に失敗しました");
+        .build(tauri::generate_context!())
+        .expect("Tauri アプリの起動に失敗しました")
+        .run(|app, event| {
+            // 終わるときは process::exit で抜けるので、持っているサイドカーの
+            // Drop が走らない。閉じた後に残さないよう、ここで止める
+            if let tauri::RunEvent::Exit = event {
+                app.state::<SidecarState>().stop();
+            }
+        });
 }
 
 #[cfg(test)]
@@ -400,8 +415,8 @@ mod tests {
             .split_once(".on_window_event(")
             .expect("on_window_event が見つかりません")
             .1
-            .split_once(".run(tauri::generate_context!())")
-            .expect("run が見つかりません")
+            .split_once(".build(tauri::generate_context!())")
+            .expect("build が見つかりません")
             .0;
 
         assert!(
@@ -411,6 +426,34 @@ mod tests {
         assert!(
             !handler.contains("keep_archives("),
             "ドロップの受け口が古い keep_archives を呼んだままです: {handler}"
+        );
+    }
+
+    /// ドラッグが窓の上に来た・離れたも前面へ転送する（#106）。
+    ///
+    /// 窓のイベントは単体では起こせないので、上と同じく受け口の書き方で
+    /// 押さえる。転送が無いと、画面は離す前に「落とせる」と示せない。
+    #[test]
+    fn the_window_drop_handler_forwards_drag_enter_and_leave() {
+        const SOURCE: &str = include_str!("lib.rs");
+
+        let handler = SOURCE
+            .split_once(".on_window_event(")
+            .expect("on_window_event が見つかりません")
+            .1
+            .split_once(".build(tauri::generate_context!())")
+            .expect("build が見つかりません")
+            .0;
+
+        for variant in ["DragDropEvent::Enter", "DragDropEvent::Leave"] {
+            assert!(
+                handler.contains(variant),
+                "{variant} を受けていません: {handler}"
+            );
+        }
+        assert!(
+            handler.contains("\"files-dragging\""),
+            "ドラッグの状態を前面へ送っていません: {handler}"
         );
     }
 }
