@@ -31,31 +31,27 @@ bash scripts/run_merge_gate.sh --publish-status
 
 `--publish-status` は GitHub の `Local Merge Gate` commit status を HEAD へ publish します。
 
-## 成果物配信
-
-Windows ホストで exe をビルドし、公開済み成果物の照合だけを Actions が行います。
+## 動作確認
 
 ```bash
-# Windows ホスト（Git Bash）: 成果物をビルド
-bash scripts/build_release_artifact.sh
+# 開発コンテナ: ブラウザで画面を見る（http://127.0.0.1:5173/?token=dev）
+(cd services/core && uv run python -m manga_api --port 8765 --token dev) &
+(cd apps/desktop && npm run dev)
 
-# 不変 prerelease として公開（artifactRef が stdout に JSON で返る）
-ENGINEERING_DELIVERY_ARTIFACT_PATH=.artifacts/MangaOrganizer.exe \
-ENGINEERING_DELIVERY_ARTIFACT_SHA256=<sha256> \
-ENGINEERING_DELIVERY_ARTIFACT_SIZE=<bytes> \
-ENGINEERING_DELIVERY_SOURCE_COMMIT=<40桁 commit> \
-ENGINEERING_DELIVERY_SOURCE_TREE=<40桁 tree> \
-  node scripts/publish_release_artifact.mjs
-
-# CD を 1 回だけ起動
-gh workflow run release.yml \
-  -f artifact_ref=<上の artifactRef> \
-  -f artifact_sha256=<sha256> \
-  -f source_commit=<commit> \
-  -f source_tree=<tree>
+# Windows ホスト（Git Bash）: デスクトップアプリとして動かす
+bash scripts/build_sidecar.sh
+cd apps/desktop && npx tauri dev
 ```
 
-`scripts/build_release_artifact.sh` は非 Windows では失敗します。現時点では Tauri シェルと Python サイドカーを 1 つのインストーラへまとめる処理が未実装のため、Windows でも失敗します。
+## 成果物配信
+
+インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。PR では配布物の作り方に関わる変更のときだけ走り、インストーラを Artifacts に残します。
+
+```bash
+# 4 か所の version（tauri.conf.json / Cargo.toml / package.json / pyproject.toml）を揃えて main へマージした後
+git tag v4.0.0
+git push origin v4.0.0   # Release が作られ MangaOrganizer-v4.0.0-setup.exe が添付される
+```
 
 ## 主な場所
 
@@ -64,4 +60,5 @@ gh workflow run release.yml \
 - `apps/desktop/src-tauri/` — Tauri シェル（Rust）
 - `docker/` — Orca SSH 用の常駐開発コンテナ
 - `scripts/run_merge_gate.sh` — Local Merge Gate
-- `scripts/publish_release_artifact.mjs` — 不変 prerelease の公開
+- `scripts/build_sidecar.sh` — サイドカーを PyInstaller で梱包して Tauri の資材へ置く
+- `.github/workflows/release.yml` — Windows インストーラのビルドと Release

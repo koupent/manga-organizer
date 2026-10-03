@@ -70,39 +70,38 @@ pub fn dropped_entries(paths: &[PathBuf]) -> Vec<DroppedEntry> {
     kept
 }
 
-/// フロントエンドが接続情報を取りに来る
+/// フロントエンドが接続情報を取りに来る。
+///
+/// サイドカーは窓を出した後に背景で起動するので、成否が決まるまで待つ。
+/// 失敗したときはその理由を返し、画面がそのまま出す
 #[tauri::command]
-fn sidecar_connection(state: tauri::State<'_, SidecarState>) -> Result<ConnectionView, String> {
-    state
-        .0
-        .lock()
+async fn sidecar_connection(app: tauri::AppHandle) -> Result<ConnectionView, String> {
+    // 待つのは非同期の実行器ではなく、待つための別スレッドで行う
+    tauri::async_runtime::spawn_blocking(move || app.state::<SidecarState>().wait_connection())
+        .await
         .map_err(|error| error.to_string())?
-        .as_ref()
-        .map(|running| ConnectionView::from(&running.connection))
-        .ok_or_else(|| "サイドカーが起動していません".to_string())
 }
 
-/// 起動時にサイドカーを立ち上げ、接続情報を保持する
-fn launch_sidecar(app: &tauri::AppHandle) -> Result<ConnectionView, String> {
+/// サイドカーを立ち上げる
+fn launch_sidecar(app: &tauri::AppHandle) -> Result<Sidecar, String> {
     let state_dir = app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&state_dir).map_err(|error| error.to_string())?;
 
-    // 読むのを許すのは利用者のホーム以下だけにする。トークンに加えた
-    // もう一段の制限で、想定外のパスを読ませない。
+    // 読み書きできる場所は絞らない（--allow-root を渡さない）。蔵書は
+    // 2 台目のドライブや NAS に置かれることが多く、ホームへ縛ると整理
+    // そのものができなくなるため。サイドカーは 127.0.0.1 だけで待ち受け、
+    // 起動ごとの使い捨てトークンが無ければ応じない
     //
-    // 書き出す先はここでは決まらない。蔵書は 2 台目のドライブや NAS に
-    // 置かれることが多く、ホームへ縛ると整理そのものができなくなるため、
-    // 利用者が画面で選んだ出力先をサイドカーが起動のあいだ覚える
-    // （POST /api/output-roots）。書けるのはホーム以下と、その覚えだけ
-    let home = app.path().home_dir().map_err(|error| error.to_string())?;
-
+    // 同梱物は tauri.conf.json の resources の相対パスのまま置かれる
+    // （インストール先でも tauri dev の target/debug でも同じ形）
     let program = app
         .path()
         .resource_dir()
         .map_err(|error| error.to_string())?
+        .join("resources")
         .join("sidecar")
         .join(if cfg!(windows) {
             "manga-api.exe"
@@ -110,13 +109,7 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<ConnectionView, String> {
             "manga-api"
         });
 
-    let running =
-        Sidecar::start(&program, &[], &state_dir, &[home]).map_err(|error| error.to_string())?;
-    let connection = ConnectionView::from(&running.connection);
-
-    let state = app.state::<SidecarState>();
-    *state.0.lock().map_err(|error| error.to_string())? = Some(running);
-    Ok(connection)
+    Sidecar::start(&program, &[], &state_dir, &[]).map_err(|error| error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -126,15 +119,13 @@ pub fn run() {
         .manage(SidecarState::default())
         .invoke_handler(tauri::generate_handler![sidecar_connection])
         .setup(|app| {
-            match launch_sidecar(app.handle()) {
-                Ok(connection) => {
-                    app.emit("sidecar-ready", connection)?;
-                }
-                Err(reason) => {
-                    // 起動できなくてもウィンドウは出す。理由を画面に示す
-                    app.emit("sidecar-failed", reason)?;
-                }
-            }
+            // 起動を待つ間も窓を動かしておく。起動できなくても窓は出し、
+            // 理由は接続情報を取りに来た画面へ返す
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let outcome = launch_sidecar(&handle);
+                handle.state::<SidecarState>().settle(outcome);
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -162,8 +153,15 @@ pub fn run() {
                 _ => {}
             }
         })
-        .run(tauri::generate_context!())
-        .expect("Tauri アプリの起動に失敗しました");
+        .build(tauri::generate_context!())
+        .expect("Tauri アプリの起動に失敗しました")
+        .run(|app, event| {
+            // 終わるときは process::exit で抜けるので、持っているサイドカーの
+            // Drop が走らない。閉じた後に残さないよう、ここで止める
+            if let tauri::RunEvent::Exit = event {
+                app.state::<SidecarState>().stop();
+            }
+        });
 }
 
 #[cfg(test)]
@@ -416,8 +414,8 @@ mod tests {
             .split_once(".on_window_event(")
             .expect("on_window_event が見つかりません")
             .1
-            .split_once(".run(tauri::generate_context!())")
-            .expect("run が見つかりません")
+            .split_once(".build(tauri::generate_context!())")
+            .expect("build が見つかりません")
             .0;
 
         assert!(
@@ -442,8 +440,8 @@ mod tests {
             .split_once(".on_window_event(")
             .expect("on_window_event が見つかりません")
             .1
-            .split_once(".run(tauri::generate_context!())")
-            .expect("run が見つかりません")
+            .split_once(".build(tauri::generate_context!())")
+            .expect("build が見つかりません")
             .0;
 
         for variant in ["DragDropEvent::Enter", "DragDropEvent::Leave"] {

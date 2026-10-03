@@ -6,10 +6,11 @@
 //!
 //! アプリを閉じたときにプロセスを残さないよう、Drop で確実に終了させる。
 
+use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -82,10 +83,21 @@ impl Sidecar {
         for root in allowed_roots {
             command.arg("--allow-root").arg(root);
         }
+        // stderr は誰かが読まないと、溜まったところで書き込みが止まり、
+        // サイドカーごと固まる。ファイルへ流し、不具合の手掛かりにもする
+        let log = File::create(state_dir.join("sidecar.log"))
+            .map_err(|error| SidecarError::Spawn(error.to_string()))?;
         command
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::from(log))
             .stdin(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // コンソール向けの exe を窓のアプリから起こすと、黒い窓が別に開く
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
 
         let mut child = command
             .spawn()
@@ -129,9 +141,47 @@ fn read_connection(stdout: std::process::ChildStdout) -> Result<Connection, Side
     ))
 }
 
-/// 起動中のサイドカーを保持する。アプリ全体で 1 つ
+/// 起動中のサイドカーを保持する。アプリ全体で 1 つ。
+///
+/// 起動は窓を出した後に背景で行う。初回はウイルス対策の走査で十数秒
+/// かかることがあり、その間に窓を止めると「応答なし」に見えるため。
+/// 画面が接続情報を取りに来たら、起動の成否が決まるまで待たせる。
 #[derive(Default)]
-pub struct SidecarState(pub Mutex<Option<Sidecar>>);
+pub struct SidecarState {
+    slot: Mutex<Option<Result<Sidecar, String>>>,
+    settled: Condvar,
+}
+
+impl SidecarState {
+    /// 起動の成否を入れ、待っている側を起こす
+    pub fn settle(&self, outcome: Result<Sidecar, String>) {
+        if let Ok(mut slot) = self.slot.lock() {
+            *slot = Some(outcome);
+        }
+        self.settled.notify_all();
+    }
+
+    /// 起動の成否が決まるまで待ち、接続情報か失敗の理由を返す
+    pub fn wait_connection(&self) -> Result<ConnectionView, String> {
+        let slot = self.slot.lock().map_err(|error| error.to_string())?;
+        let slot = self
+            .settled
+            .wait_while(slot, |slot| slot.is_none())
+            .map_err(|error| error.to_string())?;
+        match slot.as_ref() {
+            Some(Ok(running)) => Ok(ConnectionView::from(&running.connection)),
+            Some(Err(reason)) => Err(reason.clone()),
+            None => Err("サイドカーが起動していません".into()),
+        }
+    }
+
+    /// サイドカーを止める（Drop で終了させる）。アプリを閉じるときに呼ぶ
+    pub fn stop(&self) {
+        if let Ok(mut slot) = self.slot.lock() {
+            slot.take();
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -155,6 +205,20 @@ mod tests {
         let connection: Connection = serde_json::from_str(payload).unwrap();
         assert_eq!(45619, connection.port);
         assert_eq!("abc", connection.token);
+    }
+
+    #[test]
+    fn waiting_returns_the_reason_once_the_launch_fails() {
+        let state = std::sync::Arc::new(SidecarState::default());
+        let launcher = std::sync::Arc::clone(&state);
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            launcher.settle(Err("起動できませんでした".into()));
+        });
+
+        let reason = state.wait_connection().unwrap_err();
+        thread.join().unwrap();
+        assert_eq!("起動できませんでした", reason);
     }
 
     #[test]

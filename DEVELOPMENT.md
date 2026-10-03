@@ -6,6 +6,7 @@
 
 - [開発環境のセットアップ](#開発環境のセットアップ)
 - [Local Merge Gate](#local-merge-gate)
+- [動作確認](#動作確認)
 - [ビルドとリリース](#ビルドとリリース)
 - [バージョンアップ手順](#バージョンアップ手順)
 - [プロジェクト構造](#プロジェクト構造)
@@ -30,7 +31,7 @@ VS Code / Cursor の Dev Container と Engineering Dev Foundation / Workflow Plu
 
 - Docker Desktop
 - Orca ADE（SSH ターゲットで接続）
-- Windows ホスト（exe ビルド時）
+- Windows ホスト（デスクトップアプリとして動かすとき。Git Bash・Node 20・Rust・uv）
 - SSH 鍵 `~/.ssh/id_manga_organaizer_orca`（無ければ `ssh-keygen -t ed25519 -f ~/.ssh/id_manga_organaizer_orca`）
 
 ### 手順
@@ -119,59 +120,72 @@ bash scripts/run_merge_gate.sh --publish-status
 
 `--publish-status` は GitHub の `Local Merge Gate` commit status を更新します。
 
+## 動作確認
+
+### 開発コンテナで画面を見る（ブラウザ）
+
+サイドカーを固定ポートとトークンで起動し、Vite の dev server が `/api` を中継します。
+
+```bash
+# 端末 1
+cd services/core
+uv run python -m manga_api --port 8765 --token dev
+
+# 端末 2
+cd apps/desktop
+npm run dev
+```
+
+ブラウザで `http://127.0.0.1:5173/?token=dev` を開きます。コンテナの 5173 番は Orca のポート転送か、ホストから `ssh -L 5173:127.0.0.1:5173 -p 2223 -i ~/.ssh/id_manga_organaizer_orca node@127.0.0.1` で手元へ出します。辿れるのはコンテナの中のファイルです。
+
+ネイティブのドロップ（エクスプローラーからの実パス）だけはブラウザでは確かめられません。
+
+### Windows でデスクトップアプリとして動かす
+
+Windows ホストの Git Bash で、サイドカーを一度作ってから Tauri を開発モードで起動します。
+
+```bash
+bash scripts/build_sidecar.sh   # サイドカーを apps/desktop/src-tauri/resources/sidecar へ
+cd apps/desktop
+npm ci
+npx tauri dev
+```
+
+インストーラまで作るときは `npx tauri build`（`apps/desktop/src-tauri/target/release/bundle/nsis/` に出ます）。サイドカーを変えたら `build_sidecar.sh` をやり直してください（`tauri build` は自分で作り直します）。
+
+### 配る物そのものを試す
+
+`.github/workflows/release.yml` が走った PR では、Actions の実行結果の Artifacts にインストーラ（`MangaOrganizer-vX.X.X-setup.exe`）が残ります。タグを打つ前に実機へ入れて確かめられます。
+
 ## ビルドとリリース
 
-タグ push では何も起動しません。Actions は `workflow_dispatch` 専用の照合・公開だけを行います。
+インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。作ったインストーラを黙って入れ、同梱のサイドカーが応答するところまで確かめます。
 
-### Windows ホストでの成果物作成
+- PR: 配布物の作り方に関わるファイル（`src-tauri/`・依存の宣言・`manga_api.spec`・`build_sidecar.sh` など）を変えたときだけ走り、インストーラを Artifacts に残す
+- `v*` タグの push: 同じことをしたうえで、タグ名の GitHub Release を作ってインストーラを添付する
+- 手動（`workflow_dispatch`）: 任意のブランチで試す
 
-```bash
-# リポジトリルート（Git Bash）
-bash scripts/build_release_artifact.sh
-# 成果物: .artifacts/MangaOrganizer.exe
-```
-
-現時点で `scripts/build_release_artifact.sh` は未実装として失敗します。旧
-Tkinter アプリの PyInstaller 経路は #28 で撤去済みで、Tauri シェルと Python
-サイドカーを 1 つのインストーラへまとめる処理はまだありません。サイドカー
-単体の梱包は `scripts/build_sidecar.sh` にあります。
-
-### 公開と CD 起動
-
-`scripts/publish_release_artifact.mjs` が成果物を不変 prerelease として公開し、`artifactRef` を stdout へ JSON で返します。
-
-```bash
-ENGINEERING_DELIVERY_ARTIFACT_PATH=.artifacts/MangaOrganizer.exe \
-ENGINEERING_DELIVERY_ARTIFACT_SHA256=<sha256> \
-ENGINEERING_DELIVERY_ARTIFACT_SIZE=<bytes> \
-ENGINEERING_DELIVERY_SOURCE_COMMIT=<40桁 commit> \
-ENGINEERING_DELIVERY_SOURCE_TREE=<40桁 tree> \
-  node scripts/publish_release_artifact.mjs
-```
-
-続けて `.github/workflows/release.yml` を一度だけ起動します。digest 照合後、製品向け GitHub Release へ exe が添付されます。
-
-```bash
-gh workflow run release.yml \
-  -f artifact_ref=<上の artifactRef> \
-  -f artifact_sha256=<sha256> \
-  -f source_commit=<commit> \
-  -f source_tree=<tree>
-```
-
-非 Windows では `scripts/build_release_artifact.sh` は失敗します。
+リポジトリが private なので、Release をダウンロードできるのはコラボレーターとして招待した人だけです。
 
 ## バージョンアップ手順
 
-1. 次の 4 箇所の version を同じ値に更新する（`release.yml` が一致を検証し、食い違うと公開が止まります）
+1. 次の 4 箇所の version を同じ値に更新し、lock を作り直す（`release.yml` が一致を検証し、食い違うと止まります）
 
-   - `apps/desktop/src-tauri/tauri.conf.json` — exe に刻まれる正本
-   - `apps/desktop/src-tauri/Cargo.toml`
-   - `apps/desktop/package.json`
-   - `services/core/pyproject.toml`
+   - `apps/desktop/src-tauri/tauri.conf.json` — インストーラに刻まれる正本
+   - `apps/desktop/src-tauri/Cargo.toml`（`Cargo.lock` は `cargo update -p manga-organizer-desktop`）
+   - `apps/desktop/package.json`（`package-lock.json` の自分の version も）
+   - `services/core/pyproject.toml`（`uv.lock` は `uv lock`）
 
 2. PR 経由で main へ squash merge（Local Merge Gate 必須）
-3. Windows ホストでビルド・公開し、`release.yml` を起動する（[ビルドとリリース](#ビルドとリリース)）
+3. main の先頭にタグを打って push する
+
+   ```bash
+   git switch main && git pull
+   git tag v4.0.0
+   git push origin v4.0.0
+   ```
+
+4. Actions の「Windows インストーラ」が緑になると、Releases に `MangaOrganizer-v4.0.0-setup.exe` が載る
 
 ## プロジェクト構造
 
@@ -197,9 +211,7 @@ manga-organizer/                 # リポジトリルート
 │   ├── dev-up.sh
 │   ├── dev-setup.sh
 │   ├── run_merge_gate.sh
-│   ├── build_sidecar.sh
-│   ├── build_release_artifact.sh
-│   └── publish_release_artifact.mjs
+│   └── build_sidecar.sh
 ├── .github/workflows/release.yml
 ├── CLAUDE.md
 └── DEVELOPMENT.md

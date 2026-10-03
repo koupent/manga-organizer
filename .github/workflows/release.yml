@@ -1,155 +1,213 @@
-name: 成果物リリース
+name: Windows インストーラ
 
+# インストーラを Windows ランナーで作り、黙って入れて同梱のサイドカーが
+# 起動するかまで確かめる。v で始まるタグのときだけ GitHub Release に載せる。
+#
+# PR では配布物の作り方に関わる変更のときだけ走らせる。private リポジトリの
+# Windows ランナーは分数が 2 倍に数えられ、画面の変更は Local Merge Gate で
+# 検証済みのため。
 on:
+  pull_request:
+    paths:
+      - apps/desktop/src-tauri/**
+      - apps/desktop/package.json
+      - apps/desktop/package-lock.json
+      - services/core/manga_api.spec
+      - services/core/pyproject.toml
+      - services/core/uv.lock
+      - scripts/build_sidecar.sh
+      - .github/workflows/release.yml
+  push:
+    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      artifact_ref:
-        description: ローカルで公開済みの不変な成果物参照
-        required: true
-        type: string
-      artifact_sha256:
-        description: ローカルで測定した成果物のSHA-256
-        required: true
-        type: string
-      source_commit:
-        description: ローカルbuild元のmain commit
-        required: true
-        type: string
-      source_tree:
-        description: ローカルbuild元のGit tree
-        required: true
-        type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: product-release
-  cancel-in-progress: false
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  release:
-    name: 検証済みexeをGitHub Releaseへ公開
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: commit・tree・成果物参照を検証
-        id: provenance
+  build:
+    name: インストーラを作って確かめる
+    runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      asset: ${{ steps.version.outputs.asset }}
+    defaults:
+      run:
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_REF: ${{ inputs.artifact_ref }}
-          ARTIFACT_SHA256: ${{ inputs.artifact_sha256 }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-          SOURCE_TREE: ${{ inputs.source_tree }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # インストーラに刻まれるのは tauri.conf.json の版。他の宣言と食い違った
+      # まま、またはタグと違う名前で配らない
+      - name: 版の宣言を突き合わせる
+        id: version
         run: |
           set -Eeuo pipefail
-          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$SOURCE_TREE" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          default_branch=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
-          [[ "$default_branch" == "main" ]]
-          [[ "$GITHUB_REF" == "refs/heads/$default_branch" ]]
-          [[ "$GITHUB_SHA" == "$SOURCE_COMMIT" ]]
-          remote_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$default_branch" --jq .object.sha)
-          [[ "$remote_head" == "$SOURCE_COMMIT" ]]
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          desktop_version=$(node -p "require('./apps/desktop/package.json').version")
+          cargo_version=$(sed -n '/^\[package\]/,/^\[/{s/^version = "\([^"]*\)"$/\1/p}' apps/desktop/src-tauri/Cargo.toml)
+          core_version=$(sed -n '/^\[project\]/,/^\[/{s/^version = "\([^"]*\)"$/\1/p}' services/core/pyproject.toml)
+          echo "tauri=$version package=$desktop_version cargo=$cargo_version core=$core_version"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$desktop_version" == "$version" ]]
+          [[ "$cargo_version" == "$version" ]]
+          [[ "$core_version" == "$version" ]]
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$version" ]]
+          fi
+          echo "asset=MangaOrganizer-v$version-setup.exe" >> "$GITHUB_OUTPUT"
 
-          remote_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SOURCE_COMMIT" --jq .tree.sha)
-          [[ "$remote_tree" == "$SOURCE_TREE" ]]
+      # beforeBuildCommand が画面のビルドとサイドカーの PyInstaller を行う。
+      # その中の bash が Git Bash を指すよう、この手順は bash で動かす
+      - name: インストーラを作る
+        working-directory: apps/desktop
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npx tauri build
 
-          tag="delivery-${SOURCE_COMMIT}-${ARTIFACT_SHA256}"
-          asset="MangaOrganizer-${ARTIFACT_SHA256}.exe"
-          expected_ref="github-release://${GITHUB_REPOSITORY}/${tag}/${asset}"
-          [[ "$ARTIFACT_REF" == "$expected_ref" ]]
+      - name: 配布物の名前を揃える
+        env:
+          ASSET: ${{ steps.version.outputs.asset }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p out
+          cp apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe "out/$ASSET"
+          ls -l out
 
-          release_json=$(gh api \
-            "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
-            -H 'X-GitHub-Api-Version: 2026-03-10')
-          jq -e \
-            --arg tag "$tag" \
-            --arg asset "$asset" \
-            --arg digest "sha256:$ARTIFACT_SHA256" \
-            --arg commit "$SOURCE_COMMIT" \
-            '.prerelease == true
-              and .draft == false
-              and .tag_name == $tag
-              and .target_commitish == $commit
-              and ([.assets[] | select(
-                .name == $asset
-                and (.digest == $digest or .digest == null or .digest == "")
-                and .state == "uploaded"
-              )] | length) == 1' <<< "$release_json"
+      - name: 黙って入れて、同梱のサイドカーが応答するか確かめる
+        shell: pwsh
+        env:
+          ASSET: ${{ steps.version.outputs.asset }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'manga-organizer'
+          Start-Process -FilePath "out\$env:ASSET" -ArgumentList '/S', "/D=$dir" -Wait
 
-          fetch_file() {
-            gh api \
-              "repos/$GITHUB_REPOSITORY/contents/$1?ref=$SOURCE_COMMIT" \
-              --jq .content | base64 -d
+          $exe = Join-Path $dir 'resources\sidecar\manga-api.exe'
+          if (-not (Test-Path $exe)) {
+            Get-ChildItem -Recurse -Depth 2 $dir | Select-Object -ExpandProperty FullName
+            throw "同梱のサイドカーが見つかりません: $exe"
           }
 
-          # 製品版は exe に刻まれる tauri.conf.json を正本とし、他の宣言と
-          # 食い違ったまま公開しないよう突き合わせる。中身と名前が違う exe を
-          # 出さないための検証で、release.yml の他の照合と同じ立て付け。
-          tauri_conf=$(fetch_file apps/desktop/src-tauri/tauri.conf.json)
-          cargo_toml=$(fetch_file apps/desktop/src-tauri/Cargo.toml)
-          desktop_pkg=$(fetch_file apps/desktop/package.json)
-          core_pyproject=$(fetch_file services/core/pyproject.toml)
+          $state = Join-Path $env:RUNNER_TEMP 'manga-organizer-state'
+          $out = Join-Path $env:RUNNER_TEMP 'sidecar.out'
+          $err = Join-Path $env:RUNNER_TEMP 'sidecar.err'
+          New-Item -ItemType Directory -Force $state | Out-Null
+          $sidecar = Start-Process -FilePath $exe -ArgumentList '--state-dir', $state `
+            -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+          try {
+            $ready = $null
+            for ($i = 0; $i -lt 120 -and -not $ready; $i++) {
+              Start-Sleep -Seconds 1
+              $ready = Select-String -Path $out -Pattern '^MANGA_API_READY (.+)$' -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+              if (-not $ready -and $sidecar.HasExited) { break }
+            }
+            if (-not $ready) {
+              Get-Content $err -ErrorAction SilentlyContinue
+              throw 'サイドカーが READY を出しませんでした'
+            }
+            $connection = $ready.Matches[0].Groups[1].Value | ConvertFrom-Json
+            $health = Invoke-RestMethod "http://$($connection.host):$($connection.port)/api/health?token=$($connection.token)"
+            if ($health.status -ne 'ok') { throw "サイドカーの応答が想定外です: $($health | ConvertTo-Json -Compress)" }
+            Write-Host "サイドカーは応答しました: $($health | ConvertTo-Json -Compress)"
+          } finally {
+            Stop-Process -Id $sidecar.Id -Force -ErrorAction SilentlyContinue
+          }
 
-          version=$(jq -r .version <<< "$tauri_conf")
-          desktop_version=$(jq -r .version <<< "$desktop_pkg")
-          cargo_version=$(sed -n '/^\[package\]/,/^\[/{s/^version = "\([^"]*\)"$/\1/p}' <<< "$cargo_toml")
-          core_version=$(sed -n '/^\[project\]/,/^\[/{s/^version = "\([^"]*\)"$/\1/p}' <<< "$core_pyproject")
+      # 同梱の場所の取り違えや終了時の後始末は、アプリ本体を通さないと分からない
+      - name: 入れたアプリがサイドカーを起こし、閉じると止めるか確かめる
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'manga-organizer'
+          $log = Join-Path $env:APPDATA 'dev.koupent.manga-organizer\sidecar.log'
+          $app = Get-ChildItem $dir -Filter '*.exe' | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          $proc = Start-Process -FilePath $app.FullName -PassThru
+          try {
+            $sidecar = $null
+            for ($i = 0; $i -lt 120 -and -not $sidecar; $i++) {
+              Start-Sleep -Seconds 1
+              $sidecar = Get-Process manga-api -ErrorAction SilentlyContinue |
+                Where-Object { $_.Path -like "$dir*" } | Select-Object -First 1
+            }
+            if (-not $sidecar) {
+              Get-Content $log -ErrorAction SilentlyContinue
+              throw "$($app.Name) が同梱のサイドカーを起動しませんでした"
+            }
+            Write-Host "サイドカーが起動しました: $($sidecar.Path)"
 
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
-          [[ "$cargo_version" == "$version" ]]
-          [[ "$desktop_version" == "$version" ]]
-          [[ "$core_version" == "$version" ]]
-          printf 'tag=%s\nasset=%s\nversion=%s\n' "$tag" "$asset" "$version" >> "$GITHUB_OUTPUT"
+            for ($i = 0; $i -lt 30 -and $proc.MainWindowHandle -eq 0; $i++) {
+              Start-Sleep -Seconds 1
+              $proc.Refresh()
+            }
+            if (-not $proc.CloseMainWindow()) { throw 'ウィンドウを閉じられませんでした' }
+            if (-not $proc.WaitForExit(30000)) { throw 'ウィンドウを閉じてもアプリが終わりませんでした' }
+            if (-not $sidecar.WaitForExit(10000)) { throw 'アプリを閉じてもサイドカーが残りました' }
+            Write-Host 'アプリを閉じるとサイドカーも止まりました'
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Get-Process manga-api -ErrorAction SilentlyContinue | Stop-Process -Force
+          }
 
-      - name: 公開済み成果物を取得
-        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.asset }}
+          path: out/${{ steps.version.outputs.asset }}
+          if-no-files-found: error
+
+  # 書き込みの権限は公開するこのジョブだけに渡す。PR のコードを動かす
+  # ビルドには持たせない
+  release:
+    name: GitHub Release に載せる
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.asset }}
+
+      - name: Release を作る
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.provenance.outputs.tag }}
-          ASSET_NAME: ${{ steps.provenance.outputs.asset }}
+          ASSET: ${{ needs.build.outputs.asset }}
         run: |
           set -Eeuo pipefail
-          mkdir -p .delivery
-          gh release download "$RELEASE_TAG" \
+          gh release create "$GITHUB_REF_NAME" "$ASSET" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern "$ASSET_NAME" \
-            --dir .delivery
+            --verify-tag \
+            --title "Manga Organizer $GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "$(cat <<EOF
+          ## 入れ方
 
-      - name: digestを照合する
-        shell: bash
-        env:
-          ARTIFACT_SHA256: ${{ inputs.artifact_sha256 }}
-          ASSET_NAME: ${{ steps.provenance.outputs.asset }}
-        run: |
-          set -Eeuo pipefail
-          archive=".delivery/$ASSET_NAME"
-          printf '%s  %s\n' "$ARTIFACT_SHA256" "$archive" | sha256sum --check --strict
+          1. 下の Assets から \`$ASSET\` をダウンロードして実行します。
+          2. 「Windows によって PC が保護されました」と出たら「詳細情報」→「実行」を押します（署名していないために出る警告です）。
+          3. 終わるとスタートメニューに「Manga Organizer」が入ります。
 
-      - name: 製品リリースを作成または更新する
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-          ASSET_NAME: ${{ steps.provenance.outputs.asset }}
-          VERSION: ${{ steps.provenance.outputs.version }}
-        run: |
-          set -Eeuo pipefail
-          product_tag="v${VERSION}"
-          product_asset="MangaOrganizer-v${VERSION}.exe"
-          cp ".delivery/$ASSET_NAME" ".delivery/$product_asset"
-
-          if gh release view "$product_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$product_tag" ".delivery/$product_asset" \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
-          else
-            gh release create "$product_tag" ".delivery/$product_asset" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$SOURCE_COMMIT" \
-              --title "Release v${VERSION}" \
-              --notes "Manga Organizer v${VERSION}"
-          fi
+          RAR / CBR を扱うときだけ 7-Zip が要ります。詳しくはリポジトリの README を参照してください。
+          EOF
+          )"
