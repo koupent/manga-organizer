@@ -1,0 +1,61 @@
+name: CI
+
+# main へ合流する条件の Merge Gate を回す。検査の中身は
+# scripts/run_merge_gate.sh が正本で、ここは道具を揃えて呼ぶだけ。
+#
+# paths で絞らない。必須チェックが走らないと「待ち」のまま残り、文書だけの
+# 変更でもマージできなくなる。
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  merge-gate:
+    name: Merge Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # Tauri v2 の Linux でのビルドに要るもの（clippy と test がリンクする）
+      - name: Tauri のビルドに要るライブラリを入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev
+
+      - name: Playwright のブラウザを入れる
+        working-directory: apps/desktop
+        run: |
+          npm ci --no-fund --no-audit
+          npx playwright install --with-deps chromium
+
+      # tauri.conf.json の resources はサイドカーの置き場を glob で指す。
+      # 空だと cargo のビルドが失敗するので、印だけ置く（gitignore 済みの場所）
+      - name: サイドカーの置き場を用意する
+        run: |
+          mkdir -p apps/desktop/src-tauri/resources/sidecar
+          touch apps/desktop/src-tauri/resources/sidecar/.keep
+
+      - name: Merge Gate
+        run: bash scripts/run_merge_gate.sh

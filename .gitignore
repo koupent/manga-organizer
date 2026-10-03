@@ -130,8 +130,5 @@ Thumbs.db
 # Claude Code の開発者ごとのローカル設定
 /.claude/
 
-# 開発コンテナの SSH 公開鍵（個人用。example だけ追跡する）
-/docker/authorized_keys
-
 # 動作確認用の作業場所（コミットしない）
 .sandbox/

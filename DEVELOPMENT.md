@@ -4,125 +4,36 @@
 
 ## 目次
 
-- [開発環境のセットアップ](#開発環境のセットアップ)
-- [Local Merge Gate](#local-merge-gate)
+- [開発の場](#開発の場)
+- [Merge Gate（CI）](#merge-gateci)
 - [動作確認](#動作確認)
 - [ビルドとリリース](#ビルドとリリース)
 - [バージョンアップ手順](#バージョンアップ手順)
 - [プロジェクト構造](#プロジェクト構造)
 - [コーディング規約](#コーディング規約)
 
-## 開発基盤
+## 開発の場
 
-開発は **常駐 Docker コンテナ**（sshd）の中で行い、[Orca ADE](https://www.onorca.dev/) から SSH で接続します。
+実装は [Claude Code のクラウド](https://code.claude.com/docs/en/claude-code-on-the-web)（claude.ai/code）で行います。リポジトリを選んでセッションを始め、変更は PR として出します。手元に開発環境を作る必要はありません。
 
-正本:
+Windows でしか確かめられないもの（インストーラ、ネイティブのドラッグ&ドロップ）は、Actions が作ったインストーラを手元の PC へ入れて確かめます（[配る物そのものを試す](#配る物そのものを試す)）。
 
-- `docker/Dockerfile` — ツールチェーン（Python / uv / Node 20 / Rust / gh / Tauri 依存 / Claude Code / Codex）
-- `docker/compose.yaml` — ポート `127.0.0.1:2223`、リポジトリを `/workspace/manga-organizer` に bind、SSH ホスト鍵と各 CLI の認証を named volume で永続化
-- `docker/entrypoint.sh` — ホスト鍵の生成、volume の所有調整、公開鍵の配置、sshd の起動
-- `scripts/run_merge_gate.sh` — Local Merge Gate
+## Merge Gate（CI）
 
-VS Code / Cursor の Dev Container と Engineering Dev Foundation / Workflow Plugin は使いません。
-
-## 開発環境のセットアップ
-
-### 必要環境
-
-- Docker Desktop
-- Orca ADE（SSH ターゲットで接続）
-- Windows ホスト（デスクトップアプリとして動かすとき。Git Bash・Node 20・Rust・uv）
-- SSH 鍵 `~/.ssh/id_manga_organaizer_orca`（無ければ `ssh-keygen -t ed25519 -f ~/.ssh/id_manga_organaizer_orca`）
-
-### 手順
-
-```bash
-git clone https://github.com/koupent/manga-organizer.git
-cd manga-organizer
-```
-
-1. SSH 公開鍵を用意する
-
-```bash
-cp docker/authorized_keys.example docker/authorized_keys
-cat ~/.ssh/id_manga_organaizer_orca.pub >> docker/authorized_keys
-```
-
-2. 開発コンテナを起動する（Windows ホスト / Git Bash）
-
-```bash
-bash scripts/dev-up.sh
-```
-
-3. Orca の Settings → SSH に登録する
-
-- Host: `127.0.0.1`
-- Port: `2223`
-- User: `node`
-- IdentityFile: `~/.ssh/id_manga_organaizer_orca`
-
-4. Orca からその SSH 先でリポジトリを開き、初回だけ依存を同期する
-
-```bash
-bash scripts/dev-setup.sh
-```
-
-5. コンテナの中で、名乗りと各 CLI の認証を通す（初回だけ）
-
-ホストの `~/.gitconfig` も資格情報もコンテナへは渡していないので、ここで一度入れます。
-
-```bash
-git config --global user.name "あなたの名前"
-git config --global user.email "you@example.com"
-
-gh auth login      # PR・run_merge_gate.sh --publish-status に要る
-gh auth setup-git  # git push が gh の資格情報を使うようにする
-claude             # Claude Code
-codex              # Codex
-```
-
-`gh auth login` だけでは `git push` は通りません。credential helper を入れる `gh auth setup-git` まで実行してください。
-
-通した認証は named volume に入るので、**イメージを作り直しても消えません。**Claude Code のセッション履歴（`sessions` / `projects`）も残るため、リビルドを挟んでも作業を続けられます。
-
-| 対象 | 置き場（volume） |
-|---|---|
-| Claude Code の認証・履歴・セッション | `claude-home` → `/home/node/.claude` |
-| Codex | `codex-home` → `/home/node/.codex` |
-| gh | `gh-config` → `/home/node/.config/gh` |
-| git の名乗り | `git-config` → `/home/node/.config/git` |
-| SSH ホスト鍵 | `ssh-host-keys` → `/etc/ssh/host_keys` |
-| Playwright のブラウザ | `playwright-cache` → `/home/node/.cache/ms-playwright` |
-
-`docker compose down` では消えません。捨てるときだけ `docker volume rm manga-organizer_claude-home` のように明示します。
-
-接続確認（ホストから）:
-
-```bash
-ssh -p 2223 -i ~/.ssh/id_manga_organaizer_orca node@127.0.0.1
-```
-
-## Local Merge Gate
-
-品質判定は GitHub Actions ではなく、**開発コンテナ内**で必須です。
-
-```bash
-bash scripts/run_merge_gate.sh
-bash scripts/run_merge_gate.sh --publish-status
-```
+PR ごとに GitHub Actions（`.github/workflows/ci.yml`、ubuntu）が `scripts/run_merge_gate.sh` を回します。main への合流はこの `Merge Gate` チェックの合格が条件です。
 
 実行内容:
 
 - `services/core/` — `uv lock --check`・`ruff`・`compileall`・`unittest`
 - OpenAPI スキーマ照合
-- `apps/desktop/` — 型検査・ビルド・Playwright
+- `apps/desktop/` — 型検査・ESLint・ビルド・Playwright
 - Tauri シェル — `cargo fmt`・`clippy`・`test`
 
-`--publish-status` は GitHub の `Local Merge Gate` commit status を更新します。
+同じスクリプトは、uv・npm・cargo と Tauri のビルドに要るライブラリ（`libwebkit2gtk-4.1-dev` など）がある環境なら、クラウドのセッションでも手元でも回せます。
 
 ## 動作確認
 
-### 開発コンテナで画面を見る（ブラウザ）
+### ブラウザで画面を見る
 
 サイドカーを固定ポートとトークンで起動し、Vite の dev server が `/api` を中継します。
 
@@ -136,13 +47,13 @@ cd apps/desktop
 npm run dev
 ```
 
-ブラウザで `http://127.0.0.1:5173/?token=dev` を開きます。コンテナの 5173 番は Orca のポート転送か、ホストから `ssh -L 5173:127.0.0.1:5173 -p 2223 -i ~/.ssh/id_manga_organaizer_orca node@127.0.0.1` で手元へ出します。辿れるのはコンテナの中のファイルです。
+ブラウザで `http://127.0.0.1:5173/?token=dev` を開きます。辿れるのはサイドカーを動かしているマシンのファイルです。
 
 ネイティブのドロップ（エクスプローラーからの実パス）だけはブラウザでは確かめられません。
 
 ### Windows でデスクトップアプリとして動かす
 
-Windows ホストの Git Bash で、サイドカーを一度作ってから Tauri を開発モードで起動します。
+Windows の Git Bash で、サイドカーを一度作ってから Tauri を開発モードで起動します（Node 20・Rust・uv が要ります）。
 
 ```bash
 bash scripts/build_sidecar.sh   # サイドカーを apps/desktop/src-tauri/resources/sidecar へ
@@ -155,7 +66,7 @@ npx tauri dev
 
 ### 配る物そのものを試す
 
-タグを打つ前に、`.github/workflows/release.yml` を手動で走らせるとインストーラだけを作れます（Release は作りません）。
+配布物の作り方に関わるファイルを変えた PR では、`.github/workflows/release.yml` が自動で走り、インストーラを Artifacts に残します。それ以外の変更を試したいときは手動で走らせます（Release は作りません）。
 
 ```bash
 gh workflow run release.yml --ref <ブランチ名>   # または Actions の画面の「Run workflow」
@@ -167,10 +78,11 @@ gh workflow run release.yml --ref <ブランチ名>   # または Actions の画
 
 インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。作ったインストーラを黙って入れ、同梱のサイドカーが応答するところまで確かめます。
 
-Actions は CD だけに使います。CI（lint・テスト）は [Local Merge Gate](#local-merge-gate) で行い、PR や branch の push では Actions を起動しません。
-
+- PR: 配布物の作り方に関わるファイル（`src-tauri/`・依存の宣言・`manga_api.spec`・`build_sidecar.sh` など）を変えたときだけ走り、インストーラを Artifacts に残す
 - `v*` タグの push: 作って確かめたうえで、タグ名の GitHub Release を作ってインストーラを添付する
 - 手動（`workflow_dispatch`）: 作って確かめ、インストーラを Artifacts に残すだけ
+
+Windows ランナーは分数が 2 倍に数えられるため、画面だけの変更では走らせません（そちらは Merge Gate で足ります）。
 
 リポジトリが private なので、Release をダウンロードできるのはコラボレーターとして招待した人だけです。
 
@@ -183,7 +95,7 @@ Actions は CD だけに使います。CI（lint・テスト）は [Local Merge 
    - `apps/desktop/package.json`（`package-lock.json` の自分の version も）
    - `services/core/pyproject.toml`（`uv.lock` は `uv lock`）
 
-2. PR 経由で main へ squash merge（Local Merge Gate 必須）
+2. PR 経由で main へ squash merge（Merge Gate 必須）
 3. main の先頭にタグを打って push する
 
    ```bash
@@ -209,17 +121,12 @@ manga-organizer/                 # リポジトリルート
 │   ├── pyproject.toml
 │   ├── uv.lock
 │   └── manga_api.spec           # サイドカーの PyInstaller 定義
-├── docker/                      # 常駐開発コンテナ（Orca SSH）
-│   ├── Dockerfile
-│   ├── compose.yaml
-│   ├── entrypoint.sh
-│   └── authorized_keys.example
 ├── scripts/
-│   ├── dev-up.sh
-│   ├── dev-setup.sh
-│   ├── run_merge_gate.sh
-│   └── build_sidecar.sh
-├── .github/workflows/release.yml
+│   ├── run_merge_gate.sh        # Merge Gate の中身
+│   └── build_sidecar.sh         # サイドカーを PyInstaller で梱包
+├── .github/workflows/
+│   ├── ci.yml                   # Merge Gate（PR ごと）
+│   └── release.yml              # Windows インストーラと Release
 ├── CLAUDE.md
 └── DEVELOPMENT.md
 ```
@@ -230,44 +137,3 @@ manga-organizer/                 # リポジトリルート
 - ブランチ: `feature/issue-<番号>-...` / `fix/issue-<番号>-...`
 - コミットメッセージ: `# <Issue番号> <接頭辞>: <概要>`
 - main へのマージは squash のみ
-
-## トラブルシューティング
-
-### tkinter が見つからない（Linux）
-
-```bash
-sudo apt-get install python3-tk
-```
-
-### SSH で Permission denied
-
-- `docker/authorized_keys` に `id_manga_organaizer_orca.pub` があるか確認
-- Orca / ssh が `~/.ssh/id_manga_organaizer_orca` を使っているか確認
-- コンテナを再起動: `bash scripts/dev-up.sh`
-
-### リビルド後に Orca が繋がらない／ホスト鍵が違うと言われる
-
-ホスト鍵は `ssh-host-keys` volume にあり、通常はリビルドしても変わりません。`docker volume rm` で消した場合だけ作り直されるので、そのときはピン留めを更新します。
-
-現在の鍵を確認する:
-
-```bash
-docker exec manga-organizer-dev-1 ssh-keygen -lf /etc/ssh/host_keys/ssh_host_ed25519_key.pub
-```
-
-- ホストの `ssh`: `ssh-keygen -R '[127.0.0.1]:2223'` で古い項目を消してから接続し直す
-- Orca: `%APPDATA%Orcaprofileslocal-defaultssh-host-keys.json` の port 2223 の項目を消して接続し直す
-
-### cargo / uv が見つからない
-
-開発コンテナ外で動いています。`bash scripts/dev-up.sh` のあと、SSH 先（`/workspace/manga-organizer`）で作業してください。
-
-### git commit で「Author identity unknown」／git push が Username を訊いてくる
-
-コンテナに名乗りと GitHub の認証が入っていません。[開発環境のセットアップ](#開発環境のセットアップ)の手順 5 を通してください。一度通せば volume に残るので、リビルドのあとに通し直す必要はありません。
-
-```bash
-git config --global --get user.email
-gh auth status
-git config --get-regexp '^credential\.' # gh auth setup-git を通していれば出る
-```

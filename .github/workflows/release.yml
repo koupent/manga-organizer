@@ -1,12 +1,25 @@
 name: Windows インストーラ
 
-# CD 専用。CI（lint・テスト）は開発コンテナの Local Merge Gate で済ませる。
-#
 # インストーラを Windows ランナーで作り、黙って入れて同梱のサイドカーが
-# 起動するかまで確かめてから配る。v で始まるタグのときだけ GitHub Release に
-# 載せる。手動実行はタグを打つ前にインストーラを試すためのもので、Artifacts に
+# 起動するかまで確かめる。v で始まるタグのときだけ GitHub Release に載せる。
+# lint・テストは ci.yml の Merge Gate が受け持つ。
+#
+# PR では配布物の作り方に関わる変更のときだけ走らせる。Windows ランナーは
+# 分数が 2 倍に数えられ、画面だけの変更は Merge Gate で足りるため。
+# 手動実行はタグを打つ前にインストーラを試すためのもので、Artifacts に
 # 残すだけで Release は作らない。
 on:
+  pull_request:
+    paths:
+      - apps/desktop/src-tauri/**
+      - apps/desktop/package.json
+      - apps/desktop/package-lock.json
+      - services/core/src/manga_api/__main__.py
+      - services/core/manga_api.spec
+      - services/core/pyproject.toml
+      - services/core/uv.lock
+      - scripts/build_sidecar.sh
+      - .github/workflows/release.yml
   push:
     tags: ["v*"]
   workflow_dispatch:
@@ -16,7 +29,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
