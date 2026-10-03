@@ -98,6 +98,7 @@ Windows ランナーは分数が 2 倍に数えられるため、画面だけの
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | その鍵のパスワード | 同上 |
 | `RELEASES_TOKEN` | 公開リポジトリだけに書ける fine-grained PAT（Contents: Read and write） | タグで Release を作れない |
 
+- **署名鍵とパスワードの控えは、利用者の Google Drive（マイドライブ > GitHub > manga-orgaizer）にあります。** Secrets は書き込んだ後に読み出せないので、作り直すときや別の場所で使うときはここから取ります。
 - **署名鍵は失くさないこと。** 配ったアプリは、この鍵で署名された更新しか受け付けません。失くしたら鍵を作り直して公開鍵を差し替え、利用者に一度だけ手でインストールし直してもらうことになります。
 - `RELEASES_TOKEN` は期限が切れると新しい Release を作れなくなるだけで、配ったアプリが更新を受け取るのには影響しません（公開リポジトリは誰でも読めるため）。切れたら作り直して Secrets を差し替えます。
 
