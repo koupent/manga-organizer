@@ -449,6 +449,15 @@ test.describe("ファイル整理: 投入は左、出来上がりは右", () => 
       "出来上がる本がここに並びます",
     );
     await expect(page.getByTestId("plan-count")).toHaveText("0 冊");
+    // 主操作の行は、次にすることとその場所を言う
+    await expect(page.getByTestId("organize-status")).toHaveText(
+      "左の「投入したもの」にフォルダかアーカイブを入れてください",
+    );
+    // 出力先は、空でも何が入るのかを言う
+    await expect(page.getByTestId("output-directory")).toHaveAttribute(
+      "placeholder",
+      "最初に入れたものの場所が入ります",
+    );
 
     // Assert - 点線は「落とす先」の印。左の箱ちょうど 1 つだけが持つ。
     // 「1 つ以上」で縛ると右の箱まで点線のままでも通ってしまう

@@ -1054,22 +1054,34 @@ test.describe("整理済みの本の見せ方", () => {
   });
 
   test("作品情報の見出しに、左の列が何に使われるかが出る", async ({ page }) => {
-    // Arrange - まず整理済みが 1 冊も無い投入。ここは第 3 段階までの画面と
-    // 同じで、余計な言葉を足さない
+    // Arrange - 何も入れていない最初の画面。まだ意味の定まらない 2 つの欄が
+    // 最初に目に入るので、欄の役目を先に言う（サイドバー案 段階 6）
     await openPlan(page, "見出しの説明");
+    const hint = page.getByTestId("organize-name-hint");
+    await expect(
+      hint,
+      "何も入れていないときに欄の役目を言っていない",
+    ).toHaveText("出来上がる本の名前に使います");
+    const emptyHeight = (await page.getByTestId("series-info").boundingBox())!
+      .height;
+
+    // Act - 整理済みが 1 冊も無い投入
     await addArchive(page, LOOSE_NAME);
     await waitForBooks(page, 1);
 
-    // Assert - 整理済みの行が 1 つも無いなら、説明そのものを出さない。
-    // 常に出す実装では、一度も整理していない利用者に無用の但し書きが増える
+    // Assert - 整理済みでない本の数を言う。文言が替わっても高さは変わらない
     await expect(
       page.locator('[data-testid="plan-row"][data-organized="true"]'),
       "整理済みの行が混ざっている",
     ).toHaveCount(0);
-    await expect(
-      page.getByTestId("organize-name-hint"),
-      "整理済みが 1 冊も無いのに説明が出ている",
-    ).toHaveCount(0);
+    await expect(hint).toHaveText("整理済みでない 1 冊の名前に使います");
+    expect(
+      Math.abs(
+        (await page.getByTestId("series-info").boundingBox())!.height -
+          emptyHeight,
+      ),
+      "文言が替わると作品情報の高さが変わる",
+    ).toBeLessThan(1);
 
     // Act - 整理済みと未整理が混ざった蔵書を足す
     await addLibraryFolder(page);
@@ -1092,7 +1104,7 @@ test.describe("整理済みの本の見せ方", () => {
 
     // Assert - 作る本が無い。左の列を打っても何も起きないことを先に伝える
     await expect(hint, "作る本が無いことが見出しから読めない").toHaveText(
-      "今は使いません · 作る本がありません",
+      "作る本がないので使いません",
     );
 
     // Act - 全部を入れ直す
@@ -1102,7 +1114,7 @@ test.describe("整理済みの本の見せ方", () => {
     // 理由が違うので、後ろに続く言葉を変える。1 種類しか出さない実装は
     // どちらか片方で落ちる
     await expect(hint, "使わない理由が読み分けられない").toHaveText(
-      "今は使いません · 残した本は整理済み",
+      "作る本は全部整理済みなので使いません",
     );
   });
 });

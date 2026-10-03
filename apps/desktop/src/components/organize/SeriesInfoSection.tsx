@@ -13,8 +13,8 @@ type SeriesInfoSectionProps = {
   authorSource: AuthorSource;
   candidates: Candidate[];
   searching: boolean;
-  /** 整理済みの行が一覧に在るか。無いときは但し書きを出さない */
-  hasOrganized: boolean;
+  /** 投入したものの件数。0 件なら欄の役目を先に言う */
+  sourceCount: number;
   /** 実際に何かが作られる単位の数 */
   keptLeafCount: number;
   /** そのうち自分の名前を持たない本の数 */
@@ -40,7 +40,7 @@ export function SeriesInfoSection({
   authorSource,
   candidates,
   searching,
-  hasOrganized,
+  sourceCount,
   keptLeafCount,
   namelessCount,
   onChangeTitle,
@@ -111,15 +111,14 @@ export function SeriesInfoSection({
     <section className="flex shrink-0 flex-col gap-2" data-testid="series-info">
       <div className="flex h-7 items-center gap-2">
         <SectionTitle>作品情報</SectionTitle>
-        {/* 整理済みの行があるときだけ、左の列が何に使われるかを添える */}
-        {hasOrganized ? (
-          <span
-            className="min-w-0 truncate text-[11px] text-ink-faint"
-            data-testid="organize-name-hint"
-          >
-            {nameHint(keptLeafCount, namelessCount)}
-          </span>
-        ) : null}
+        {/* 左の列が何に使われるかを添える。文言だけが替わり、高さは変わらない */}
+        <span
+          className="min-w-0 truncate text-[11px] text-ink-faint"
+          data-testid="organize-name-hint"
+          title={nameHint(sourceCount, keptLeafCount, namelessCount)}
+        >
+          {nameHint(sourceCount, keptLeafCount, namelessCount)}
+        </span>
         <div className="flex-1" />
         <Button data-testid="open-library" onClick={onOpenLibrary}>
           <BookMarked />

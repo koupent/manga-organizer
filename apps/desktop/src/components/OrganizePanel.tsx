@@ -481,7 +481,8 @@ export function OrganizePanel({
    * ください」と言うことになり、その作品名はどこにも使われない。
    */
   const problems = useMemo(() => {
-    if (sources.length === 0) return ["処理対象のファイルを追加してください"];
+    if (sources.length === 0)
+      return ["左の「投入したもの」にフォルダかアーカイブを入れてください"];
     if (!outputDirectory.trim()) return ["出力先を選んでください"];
     // 作る本が無いことは、状態の行に出す 1 行がそのまま理由になる
     if (keptLeafCount === 0)
@@ -759,7 +760,7 @@ export function OrganizePanel({
           authorSource={authorSource}
           candidates={candidates}
           searching={searching}
-          hasOrganized={hasOrganized}
+          sourceCount={sources.length}
           keptLeafCount={keptLeafCount}
           namelessCount={namelessCount}
           onChangeTitle={changeTitle}

@@ -69,15 +69,24 @@ export function planSummary(
 }
 
 /**
- * 作品情報の見出しに添える、左の列が何に使われるかの一言（#73 段階 4b）。
+ * 作品情報の見出しに添える、左の列が何に使われるかの一言（#73 段階 4b・
+ * サイドバー案 段階 6）。
  *
- * 整理済みの本が混ざると、左の列は「残した本のうち自分の名前を持たないもの」
- * にしか使われなくなる。使われないときに黙っていると、打っても何も変わらない
- * 欄の前で利用者が詰まる。
+ * 常に出す。何も入れていない最初の画面でも、まだ意味の定まらない 2 つの欄が
+ * 最初に目に入るので、欄の役目を先に言う。整理済みの本が混ざると、左の列は
+ * 「残した本のうち自分の名前を持たないもの」にしか使われなくなる。使われない
+ * ときに黙っていると、打っても何も変わらない欄の前で利用者が詰まる。
+ *
+ * 文言だけが替わり、見出し行（28px）の中に収まるので高さは変わらない。
  */
-export function nameHint(keptCount: number, namelessCount: number): string {
-  if (keptCount === 0) return "今は使いません · 作る本がありません";
-  if (namelessCount === 0) return "今は使いません · 残した本は整理済み";
+export function nameHint(
+  sourceCount: number,
+  keptCount: number,
+  namelessCount: number,
+): string {
+  if (sourceCount === 0) return "出来上がる本の名前に使います";
+  if (keptCount === 0) return "作る本がないので使いません";
+  if (namelessCount === 0) return "作る本は全部整理済みなので使いません";
   return `整理済みでない ${namelessCount} 冊の名前に使います`;
 }
 
