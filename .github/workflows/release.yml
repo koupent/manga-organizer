@@ -154,6 +154,9 @@ jobs:
       # 同じ条件で起こしたときにだけ起きる不具合（Windows での保存の失敗など）は、
       # 配る物そのもので保存まで通して確かめる
       - name: 入れたサイドカーで、並べ替え・分割・サムネイルの保存が通るか確かめる
+        # ランナーの端末は cp1252 で、日本語の報告を書けない
+        env:
+          PYTHONUTF8: "1"
         run: |
           set -Eeuo pipefail
           uv run --no-project python scripts/smoke_saves.py "$RUNNER_TEMP/manga-organizer/resources/sidecar/manga-api.exe"
