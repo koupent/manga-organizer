@@ -49,9 +49,9 @@ def build_archive(path: Path, names, extra_entries=None) -> dict[str, bytes]:
 
 class ZipPageEditorTest(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive_path = self.work_dir / "volume.zip"
 
     def test_lists_pages_in_natural_order(self):
@@ -241,9 +241,9 @@ class ArchiveIntegrityTest(unittest.TestCase):
     """壊れたら戻らないデータを守るための検証"""
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive_path = self.work_dir / "volume.zip"
 
     def test_rejects_archive_with_duplicate_image_names(self):
@@ -355,9 +355,9 @@ class ViewerContractTest(unittest.TestCase):
     """出力が suzume-viewer の解釈と一致することを検証する"""
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive_path = self.work_dir / "volume.zip"
 
     def test_excludes_macos_metadata_from_pages(self):
@@ -445,9 +445,9 @@ class ApplyPagesTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive_path = self.work_dir / "volume.zip"
         self.payloads = build_archive(self.archive_path, ["a.jpg", "b.jpg"])
         self.OutputPage = load_output_page()
@@ -546,9 +546,9 @@ class ReplacementIntegrityTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive_path = self.work_dir / "volume.zip"
         build_archive(self.archive_path, ["a.jpg", "b.jpg"])
         self.editor = ZipPageEditor(self.archive_path)
@@ -628,9 +628,9 @@ class CarriedPageIntegrityTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive_path = self.work_dir / "volume.zip"
         self.OutputPage = load_output_page()
 

@@ -253,9 +253,9 @@ def tree_snapshot(root: Path) -> list[tuple[str, int]]:
 
 class TocFormatTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
     def analyze(self, root: Path) -> list:
         """出来上がる本を並べる。投入は利用者と同じくフォルダ 1 つ"""

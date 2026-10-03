@@ -200,9 +200,9 @@ class TransformImageTest(unittest.TestCase):
 
 class ApplyToArchiveTest(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive = self.work_dir / "volume.zip"
         with zipfile.ZipFile(self.archive, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("ComicInfo.xml", b"<ComicInfo/>")
@@ -299,9 +299,9 @@ class ApplyToArchiveMakeFirstTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive = self.work_dir / "volume.zip"
         with zipfile.ZipFile(self.archive, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("ComicInfo.xml", b"<ComicInfo/>")

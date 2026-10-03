@@ -139,9 +139,9 @@ def discover_path_parameters(schema: dict) -> set[tuple[str, str, str]]:
 
 class ApiTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive = self.work_dir / "volume.zip"
         with zipfile.ZipFile(self.archive, "w", zipfile.ZIP_DEFLATED) as archive:
             for name in ("002.jpg", "001.jpg", "003.jpg"):
@@ -276,9 +276,9 @@ class AllowedRootsTest(ApiTestBase):
 
     def setUp(self):
         super().setUp()
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
-        self.outside = Path(outside_temp.name)
+        self.outside = Path(outside_temp.name).resolve()
         self.outside_archive = self.outside / "外.zip"
         with zipfile.ZipFile(
             self.outside_archive, "w", zipfile.ZIP_DEFLATED
@@ -1249,9 +1249,9 @@ class FixedTokenTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
     def test_uses_the_given_token(self):
         # Arrange
@@ -1404,9 +1404,9 @@ class OrganizeFolderExpansionTest(ApiTestBase):
 
     def test_skips_links_that_leave_the_allowed_roots(self):
         # Arrange - 許可の外に 1 冊置き、許可の中からリンクで指す
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
-        outside = self.make_archive(Path(outside_temp.name) / "外_09.zip")
+        outside = self.make_archive(Path(outside_temp.name).resolve() / "外_09.zip")
 
         folder = self.work_dir / "リンク入り"
         self.make_archive(folder / "本物_01.zip")

@@ -36,9 +36,9 @@ def wait_until(predicate, timeout: float = 5.0) -> bool:
 
 class JobStoreTest(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.store = JobStore(Path(self._temp.name) / "jobs.db")
+        self.store = JobStore(Path(self._temp.name).resolve() / "jobs.db")
         self.addCleanup(self.store.close)
 
     def stored_log_count(self, job_id: str) -> int:
@@ -301,9 +301,9 @@ class PartialResultTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.store = JobStore(Path(self._temp.name) / "jobs.db")
+        self.store = JobStore(Path(self._temp.name).resolve() / "jobs.db")
         self.addCleanup(self.store.close)
 
     def test_a_partial_result_is_visible_while_the_job_is_still_running(self):
@@ -416,9 +416,9 @@ class PrunedWhileRunningTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.store = JobStore(Path(self._temp.name) / "jobs.db")
+        self.store = JobStore(Path(self._temp.name).resolve() / "jobs.db")
         self.addCleanup(self.store.close)
 
     def outcome_of(self, *, prune: bool) -> tuple[str, list[int]]:

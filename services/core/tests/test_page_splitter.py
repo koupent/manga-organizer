@@ -224,9 +224,9 @@ class SplitFixture(unittest.TestCase):
     """1 冊分の ZIP を用意する"""
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         self.archive_path = self.work_dir / "volume.zip"
         self.splitter = load_splitter()
 

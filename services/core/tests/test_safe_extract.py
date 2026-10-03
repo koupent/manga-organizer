@@ -26,7 +26,7 @@ from manga_core.safe_extract import (  # noqa: E402
 
 class SafeDestinationTest(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
         self.root = Path(self._temp.name).resolve()
 
@@ -117,9 +117,9 @@ class ExtractionBudgetTest(unittest.TestCase):
 
 class DeclaredSizeTest(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.root = Path(self._temp.name)
+        self.root = Path(self._temp.name).resolve()
 
     def test_reads_the_uncompressed_size_from_the_central_directory(self):
         # Arrange - 展開前に膨張を見抜けるようにする

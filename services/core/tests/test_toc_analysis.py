@@ -86,9 +86,9 @@ def tree_snapshot(root: Path) -> list[tuple[str, int]]:
 
 class TocAnalysisTestBase(unittest.TestCase):
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
 
     def write_archive(
         self, path: Path, entries: dict[str, bytes] | None = None

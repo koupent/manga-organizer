@@ -113,7 +113,7 @@ class AnalysisJobTestBase(unittest.TestCase):
     inline = True
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
         self.work_dir = Path(self._temp.name).resolve()
 
@@ -339,9 +339,9 @@ class AnalysisJobSecurityTest(AnalysisJobTestBase):
 
     def test_refuses_a_folder_outside_the_allowed_roots(self):
         # Arrange - 許可の外と中に、同じ形のフォルダを用意する
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
-        outside = Path(outside_temp.name) / "許可の外"
+        outside = Path(outside_temp.name).resolve() / "許可の外"
         self.write_archive(outside / "raw_01.zip")
 
         inside = self.work_dir / "許可の中"
@@ -372,9 +372,9 @@ class AnalysisJobSecurityTest(AnalysisJobTestBase):
         # Arrange - 許可の中・許可の外・存在しないパスを 1 度に投げる。
         # 1 件でも断ると投入全体が通らないので、画面はどれを外せばよいかを
         # 知る必要がある（#107）
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
-        outside = Path(outside_temp.name) / "許可の外"
+        outside = Path(outside_temp.name).resolve() / "許可の外"
         self.write_archive(outside / "raw_01.zip")
         inside = self.make_folder("許可の中")
         missing = self.work_dir / "消えた.zip"
@@ -399,9 +399,9 @@ class AnalysisJobSecurityTest(AnalysisJobTestBase):
     def test_leaves_out_files_that_point_outside_through_a_link(self):
         # Arrange - 許可の中のフォルダに、外を指すリンクを置く。名前のままでは
         # 中に見えて、開くと外を読む
-        outside_temp = TemporaryDirectory()
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(outside_temp.cleanup)
-        secret = self.write_archive(Path(outside_temp.name) / "外.zip")
+        secret = self.write_archive(Path(outside_temp.name).resolve() / "外.zip")
 
         folder = self.work_dir / "リンク入り"
         allowed = self.write_archive(folder / "許可_01.zip")

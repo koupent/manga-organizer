@@ -124,9 +124,9 @@ class VolumeOverrideTestBase(unittest.TestCase):
     """
 
     def setUp(self):
-        self._temp = TemporaryDirectory()
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._temp.cleanup)
-        self.work_dir = Path(self._temp.name)
+        self.work_dir = Path(self._temp.name).resolve()
         # 鍵の表と出来上がりの表を丸ごと比べる。切り詰められると、どの鍵で
         # 食い違ったのかが失敗の出力から読めない
         self.maxDiff = None
