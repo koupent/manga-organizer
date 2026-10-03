@@ -1,4 +1,5 @@
-import { BookMarked, Loader2 } from "lucide-react";
+import { BookMarked, Check, ChevronDown, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AuthorSource, Candidate } from "../../hooks/useAuthorLookup";
 import { nameHint } from "../../lib/organize-text";
 import { cn } from "../../lib/utils";
@@ -29,6 +30,9 @@ type SeriesInfoSectionProps = {
  *
  * 作品名と著者は、出来る本の名前を組み立てる材料。打つと著者が勝手に
  * 埋まるので、どこから来た著者なのかを色と data-source で示す。
+ *
+ * 区画の高さは変えない（左の列の 3 段のうち上の段）。検索の候補は著者欄に
+ * ぶら下げて重ねて出し、下の投入の箱を押し下げない。
  */
 export function SeriesInfoSection({
   title,
@@ -44,6 +48,65 @@ export function SeriesInfoSection({
   onChooseAuthor,
   onOpenLibrary,
 }: SeriesInfoSectionProps) {
+  const [open, setOpen] = useState(false);
+  const [seen, setSeen] = useState(candidates);
+  const box = useRef<HTMLDivElement>(null);
+  const authorInput = useRef<HTMLInputElement>(null);
+
+  // 候補が届いたとき、今の著者と違うものが 1 つでもあれば開いて見せる。
+  // 著者に入った 1 件だけなら選び直す相手が無いので開かない
+  if (candidates !== seen) {
+    setSeen(candidates);
+    setOpen(candidates.some((candidate) => candidate.author !== author));
+  }
+
+  // 外を押したとき・焦点が外へ出たとき（Tab で離れたとき）に閉じる。
+  // 押した先の操作はそのまま効かせる
+  useEffect(() => {
+    const area = box.current;
+    if (!open || !area) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!area.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnLeave = (event: FocusEvent) => {
+      if (!area.contains(event.relatedTarget as Node | null)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    area.addEventListener("focusout", closeOnLeave);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      area.removeEventListener("focusout", closeOnLeave);
+    };
+  }, [open]);
+
+  const choose = (next: string) => {
+    onChooseAuthor(next);
+    setOpen(false);
+    authorInput.current?.focus();
+  };
+
+  const handleKey = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && open) {
+      event.preventDefault();
+      setOpen(false);
+      authorInput.current?.focus();
+    }
+    // 著者欄から ↓ で開き、先頭の候補へ移る
+    if (
+      event.key === "ArrowDown" &&
+      event.target === authorInput.current &&
+      candidates.length > 0
+    ) {
+      event.preventDefault();
+      setOpen(true);
+      requestAnimationFrame(() =>
+        box.current
+          ?.querySelector<HTMLButtonElement>('[data-testid="author-candidate"]')
+          ?.focus(),
+      );
+    }
+  };
+
   return (
     <section className="flex shrink-0 flex-col gap-2" data-testid="series-info">
       <div className="flex h-7 items-center gap-2">
@@ -75,57 +138,102 @@ export function SeriesInfoSection({
         />
       </label>
 
-      <label className="flex flex-col gap-1">
-        <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink-muted">
-          著者
-          {searching ? (
-            <span
-              className="flex items-center gap-1 text-ink-faint"
-              data-testid="author-searching"
-            >
-              <Loader2 className="size-3 animate-spin" />
-              検索中
-            </span>
-          ) : null}
-        </span>
-        <Input
-          value={author}
-          list="known-authors"
-          placeholder="著者"
-          data-testid="organize-author"
-          data-source={authorSource}
-          className={authorSource === "library" ? "text-brand" : undefined}
-          onChange={(event) => onTypeAuthor(event.target.value)}
-        />
-      </label>
+      <div ref={box} className="relative flex flex-col gap-1">
+        <label className="flex flex-col gap-1">
+          <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink-muted">
+            著者
+            {searching ? (
+              <span
+                className="flex items-center gap-1 text-ink-faint"
+                data-testid="author-searching"
+              >
+                <Loader2 className="size-3 animate-spin" />
+                検索中
+              </span>
+            ) : null}
+          </span>
+          <Input
+            ref={authorInput}
+            value={author}
+            // 候補を出している間は入力の候補（datalist）を外す。WebView2 では
+            // 両方が同時に開いて重なる
+            list={candidates.length > 0 ? undefined : "known-authors"}
+            placeholder="著者"
+            data-testid="organize-author"
+            data-source={authorSource}
+            className={cn(
+              authorSource === "library" && "text-brand",
+              candidates.length > 0 && "pr-20",
+            )}
+            onKeyDown={handleKey}
+            onChange={(event) => {
+              setOpen(false);
+              onTypeAuthor(event.target.value);
+            }}
+          />
+        </label>
 
-      {candidates.length > 0 ? (
-        <div
-          className="flex flex-wrap items-center gap-1.5"
-          data-testid="author-candidates"
-        >
-          <span className="text-[11.5px] text-ink-faint">検索結果</span>
-          {candidates.map((candidate) => (
-            <button
-              key={candidate.author}
-              type="button"
-              data-testid="author-candidate"
-              data-author={candidate.author}
-              title={`${candidate.title}（${candidate.source}）`}
-              className={cn(
-                "rounded-full border px-2 py-0.5 text-[11.5px] transition-colors",
-                candidate.author === author
-                  ? "border-brand bg-brand/10 text-brand"
-                  : "border-line text-ink-muted hover:border-line-strong hover:text-ink",
-              )}
-              onClick={() => onChooseAuthor(candidate.author)}
-            >
-              {candidate.author}
-              <span className="ml-1 text-ink-faint">{candidate.title}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+        {candidates.length > 0 ? (
+          <Button
+            size="icon"
+            data-testid="author-candidates-toggle"
+            aria-expanded={open}
+            title="検索で見つかった著者の候補"
+            className={cn(
+              "absolute right-0.5 bottom-0.5 w-auto px-1.5 text-[11.5px]",
+              open && "border-brand",
+            )}
+            onClick={() => setOpen((current) => !current)}
+            onKeyDown={handleKey}
+          >
+            候補 {candidates.length}
+            <ChevronDown />
+          </Button>
+        ) : null}
+
+        {open && candidates.length > 0 ? (
+          <div
+            className="absolute inset-x-0 top-full z-20 mt-1 rounded-card border border-line bg-canvas p-1 shadow-lg"
+            data-testid="author-candidates"
+          >
+            <p className="flex h-5 items-center px-2 text-[11px] text-ink-faint">
+              検索結果 {candidates.length} 件 · 近い順
+            </p>
+            <ul className="max-h-[140px] overflow-y-auto">
+              {candidates.map((candidate) => (
+                <li key={candidate.author}>
+                  <button
+                    type="button"
+                    data-testid="author-candidate"
+                    data-author={candidate.author}
+                    title={`${candidate.title}（${candidate.source}）`}
+                    className={cn(
+                      "flex h-7 w-full items-center gap-2 rounded-control px-2 text-left outline-none",
+                      "hover:bg-surface-2 focus-visible:bg-surface-2",
+                      candidate.author === author && "text-brand",
+                    )}
+                    onClick={() => choose(candidate.author)}
+                    onKeyDown={handleKey}
+                  >
+                    <Check
+                      className={cn(
+                        "size-3.5 shrink-0",
+                        candidate.author !== author && "invisible",
+                      )}
+                    />
+                    <span className="shrink-0 text-[12.5px] font-medium">
+                      {candidate.author}
+                    </span>
+                    <span className="min-w-0 truncate text-[11.5px] text-ink-faint">
+                      {candidate.title}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }

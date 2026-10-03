@@ -526,4 +526,106 @@ test.describe("ファイル整理: 投入は左、出来上がりは右", () => 
     // 左の行は右の行の名前を名乗らない。名乗ると右の行の検査が左まで拾う
     await expect(sourceRows(page).getByTestId("plan-row")).toHaveCount(0);
   });
+
+  test("著者の候補は欄に重ねて出し、作品情報の高さも投入の箱の位置も変えない", async ({
+    page,
+  }) => {
+    // Arrange - 外部検索の応答を差し替える。先頭が著者に入り、残りが候補
+    await openOrganize(page);
+    await page.route("**/api/library/suggest*", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          title: "重ねる作品",
+          author: "候補の著者A",
+          candidates: ["A", "B", "C"].map((mark, index) => ({
+            title: `重ねる作品 ${mark}`,
+            author: `候補の著者${mark}`,
+            source: "AniList",
+            similarity: 1 - index * 0.1,
+          })),
+        }),
+      }),
+    );
+    const before = {
+      info: (await boxOf(page, "series-info")).height,
+      box: (await boxOf(page, "dropzone")).y,
+    };
+
+    // Act
+    await page.getByTestId("organize-title").fill("重ねる作品");
+
+    // Assert - 候補が実際に見えている。見えないまま測ると何も変わらないので
+    // 高さの検査が素通りする
+    await expect(page.getByTestId("organize-author")).toHaveValue(
+      "候補の著者A",
+    );
+    await expect(page.getByTestId("author-candidate")).toHaveCount(3);
+    await expect(
+      page.locator(
+        '[data-testid="author-candidate"][data-author="候補の著者B"]',
+      ),
+    ).toBeVisible();
+    const after = {
+      info: (await boxOf(page, "series-info")).height,
+      box: (await boxOf(page, "dropzone")).y,
+    };
+    expect(Math.abs(after.info - before.info)).toBeLessThan(SLACK);
+    expect(Math.abs(after.box - before.box)).toBeLessThan(SLACK);
+
+    // Act - 選ぶと閉じる
+    await page
+      .locator('[data-testid="author-candidate"][data-author="候補の著者B"]')
+      .click();
+
+    // Assert
+    await expect(page.getByTestId("organize-author")).toHaveValue(
+      "候補の著者B",
+    );
+    await expect(page.getByTestId("author-candidate")).toHaveCount(0);
+
+    // Act / Assert - 札で開き直せ、Esc で閉じる
+    await expect(page.getByTestId("author-candidates-toggle")).toContainText(
+      "候補 3",
+    );
+    await page.getByTestId("author-candidates-toggle").click();
+    await expect(page.getByTestId("author-candidate")).toHaveCount(3);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("author-candidate")).toHaveCount(0);
+  });
+
+  test("著者に入った 1 件だけの候補は、勝手に開かない", async ({ page }) => {
+    // Arrange
+    await openOrganize(page);
+    await page.route("**/api/library/suggest*", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          title: "ひとつだけ",
+          author: "唯一の著者",
+          candidates: [
+            {
+              title: "ひとつだけ",
+              author: "唯一の著者",
+              source: "AniList",
+              similarity: 1,
+            },
+          ],
+        }),
+      }),
+    );
+
+    // Act
+    await page.getByTestId("organize-title").fill("ひとつだけ");
+
+    // Assert - 著者には入る。選び直す相手が無いので一覧は開かないが、
+    // 札は残って開ける
+    await expect(page.getByTestId("organize-author")).toHaveValue("唯一の著者");
+    await expect(page.getByTestId("author-candidates-toggle")).toContainText(
+      "候補 1",
+    );
+    await expect(page.getByTestId("author-candidate")).toHaveCount(0);
+  });
 });
