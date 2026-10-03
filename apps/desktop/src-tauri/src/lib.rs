@@ -138,12 +138,28 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                // ブラウザでは実パスが取れない。ネイティブ側で受けて渡す
-                let payload = DroppedEntries {
-                    entries: dropped_entries(paths),
-                };
-                let _ = window.emit("files-dropped", payload);
+            let tauri::WindowEvent::DragDrop(drag) = event else {
+                return;
+            };
+            // ドロップを受ける設定では WebView2 に HTML のドラッグイベントが
+            // 届かない。来た・離れたも転送しないと、画面は離す前に「落とせる」
+            // と示せない（#106）
+            match drag {
+                tauri::DragDropEvent::Enter { .. } => {
+                    let _ = window.emit("files-dragging", true);
+                }
+                tauri::DragDropEvent::Leave => {
+                    let _ = window.emit("files-dragging", false);
+                }
+                tauri::DragDropEvent::Drop { paths, .. } => {
+                    let _ = window.emit("files-dragging", false);
+                    // ブラウザでは実パスが取れない。ネイティブ側で受けて渡す
+                    let payload = DroppedEntries {
+                        entries: dropped_entries(paths),
+                    };
+                    let _ = window.emit("files-dropped", payload);
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())
@@ -411,6 +427,34 @@ mod tests {
         assert!(
             !handler.contains("keep_archives("),
             "ドロップの受け口が古い keep_archives を呼んだままです: {handler}"
+        );
+    }
+
+    /// ドラッグが窓の上に来た・離れたも前面へ転送する（#106）。
+    ///
+    /// 窓のイベントは単体では起こせないので、上と同じく受け口の書き方で
+    /// 押さえる。転送が無いと、画面は離す前に「落とせる」と示せない。
+    #[test]
+    fn the_window_drop_handler_forwards_drag_enter_and_leave() {
+        const SOURCE: &str = include_str!("lib.rs");
+
+        let handler = SOURCE
+            .split_once(".on_window_event(")
+            .expect("on_window_event が見つかりません")
+            .1
+            .split_once(".run(tauri::generate_context!())")
+            .expect("run が見つかりません")
+            .0;
+
+        for variant in ["DragDropEvent::Enter", "DragDropEvent::Leave"] {
+            assert!(
+                handler.contains(variant),
+                "{variant} を受けていません: {handler}"
+            );
+        }
+        assert!(
+            handler.contains("\"files-dragging\""),
+            "ドラッグの状態を前面へ送っていません: {handler}"
         );
     }
 }

@@ -9,12 +9,19 @@ import { PageGrid } from "./components/PageGrid";
 import { OrganizePanel } from "./components/OrganizePanel";
 import { SplitEditor } from "./components/SplitEditor";
 import type { HandoffMode } from "./components/ProducedList";
-import { onFilesDropped, resolveConnection } from "./connection";
+import {
+  onFilesDragging,
+  onFilesDropped,
+  resolveConnection,
+} from "./connection";
 import { Alert } from "./components/ui/alert";
 import { Segmented } from "./components/ui/segmented";
 
 type Page = { name: string; size: number; modified: string };
 type Mode = "organize" | "reorder" | "thumbnail" | "split";
+
+/** もう一度落とされた投入を光らせておく時間 */
+const FLASH_MS = 600;
 
 // 対象物ではなく、そこで何ができるかでタブを名付ける
 // 使う順に並べる。整理はほぼ必ず通り、サムネイルは良し悪しが一目で分かる。
@@ -116,6 +123,11 @@ export function App() {
   const [opened, setOpened] = useState<Mode[]>(() => [mode]);
 
   const [sources, setSources] = useState<string[]>([]);
+  // エクスプローラーから窓の上へ持ってきている最中か（Tauri のドラッグ）
+  const [nativeDragging, setNativeDragging] = useState(false);
+  // もう一度落とされた投入。増えない代わりに少しのあいだ光らせる
+  const [flashing, setFlashing] = useState<ReadonlySet<string>>(new Set());
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [outputDirectory, setOutputDirectory] = useState(
     () => startupParams().get("output") ?? "",
   );
@@ -142,6 +154,26 @@ export function App() {
     }
     setSources(paths);
   };
+
+  /**
+   * 投入に足す。ドロップ（Tauri・ブラウザ）と、整理画面の窓のドロップが通る。
+   *
+   * 既に入っているものは増やさない。増えないことを黙っていると、落とせたのか
+   * どうかが分からないので、その行を少しのあいだ光らせる。
+   */
+  const addSources = (paths: string[]) => {
+    const current = sourcesRef.current;
+    const repeated = paths.filter((path) => current.includes(path));
+    if (repeated.length > 0) {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      setFlashing(new Set(repeated));
+      flashTimer.current = setTimeout(() => setFlashing(new Set()), FLASH_MS);
+    }
+    changeSources([...new Set([...current, ...paths])]);
+  };
+  // ドロップの購読は起動時の一度きりなので、最新の addSources は ref から呼ぶ
+  const addSourcesRef = useRef(addSources);
+  addSourcesRef.current = addSources;
 
   /**
    * どれかの画面がアーカイブを書き換えた。
@@ -228,13 +260,10 @@ export function App() {
       }
       // 整理はフォルダごと受ける。フォルダも本もそのまま入力に足す
       changeMode("organize");
-      changeSources([
-        ...new Set([
-          ...sourcesRef.current,
-          ...entries.map((entry) => entry.path),
-        ]),
-      ]);
+      addSourcesRef.current(entries.map((entry) => entry.path));
     }, setError);
+    // 窓の上へ持ってきた・離れた。落とせる所を離す前に示すため（#106）
+    const dragging = onFilesDragging(setNativeDragging);
 
     // 購読そのものが立たないこともある（動的 import や listen の失敗）。
     // 放っておくと未処理の rejection になるだけで、利用者からは「落として
@@ -249,6 +278,10 @@ export function App() {
       cancelled = true;
       // 解除は購読が立ってから。立つ前に画面が消えても、立った直後に解く
       void settled.then((unlisten) => unlisten());
+      void dragging.then(
+        (unlisten) => unlisten(),
+        () => undefined,
+      );
     };
   }, []);
 
@@ -336,6 +369,9 @@ export function App() {
               outputDirectory={outputDirectory}
               onOutputDirectoryChange={setOutputDirectory}
               onOpenProduced={openArchiveIn}
+              onAddSources={addSources}
+              nativeDragging={nativeDragging}
+              flashing={flashing}
             />
           </Panel>
         ) : null}

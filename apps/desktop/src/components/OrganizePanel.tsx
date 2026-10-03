@@ -10,9 +10,11 @@ import {
   analysisResult,
   IDLE_ANALYSIS,
   organizeResult,
+  refusedPaths,
   snapshotMark,
   type Analysis,
 } from "../lib/analysis";
+import { resolveDroppedPaths } from "../lib/dropped";
 import {
   ORGANIZED_STATUS_TIP,
   organizeSummary,
@@ -35,12 +37,13 @@ import {
   type Decisions,
   type PlanRow,
 } from "../lib/plan";
+import { cn } from "../lib/utils";
 import { FailedList, type OrganizeFailure } from "./FailedList";
 import { FilePicker } from "./FilePicker";
 import { LibraryEditor } from "./LibraryEditor";
 import { OptionsSection } from "./organize/OptionsSection";
 import { SeriesInfoSection } from "./organize/SeriesInfoSection";
-import { SourceList } from "./organize/SourceList";
+import { SourceList, type SourceProblem } from "./organize/SourceList";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
 import { PlanList } from "./PlanList";
@@ -71,7 +74,22 @@ type OrganizePanelProps = {
   onOutputDirectoryChange: (path: string) => void;
   /** 出来たファイルを、指定した画面へ読み込んだ状態で開く */
   onOpenProduced: (path: string, mode: HandoffMode) => void;
+  /** 投入に足す。既に入っているものは増やさず光らせる（App が決める） */
+  onAddSources: (paths: string[]) => void;
+  /** エクスプローラーから窓の上へ持ってきている最中か（Tauri のドラッグ） */
+  nativeDragging?: boolean;
+  /** もう一度落とされて光らせている投入 */
+  flashing?: ReadonlySet<string>;
 };
+
+/** 赤い行を見分ける鍵。同じ名前が何度落とされても別の行にする */
+let problemSeq = 0;
+const problemKey = () => `problem-${++problemSeq}`;
+
+/** パスの末尾。赤い行には名前だけを出す */
+function baseName(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path;
+}
 
 /**
  * ファイル整理。
@@ -87,8 +105,16 @@ export function OrganizePanel({
   outputDirectory,
   onOutputDirectoryChange,
   onOpenProduced,
+  onAddSources,
+  nativeDragging = false,
+  flashing = new Set<string>(),
 }: OrganizePanelProps) {
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // 窓の上をブラウザのドラッグが通っているか（Tauri のドラッグは App から届く）
+  const [browserDragging, setBrowserDragging] = useState(false);
+  const dragging = nativeDragging || browserDragging;
+  // 入れられなかったもの（赤い行）。投入の一覧には入れない
+  const [rejected, setRejected] = useState<SourceProblem[]>([]);
   // 辞書から返事をもらった作品名。もう一度は勧めない。断られた対は辞書に
   // 入らないままなので、これが無いと「押しても何も起きない操作」が画面に
   // 残り続ける
@@ -236,10 +262,29 @@ export function OrganizePanel({
           });
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        // 断られたパスは赤い行へ移し、残りで解析し直す（#107）。1 件でも
+        // 断られると投入全体が通らないので、黙っていると何も解析されない
+        const refused = refusedPaths(error);
+        const kept = sources.filter(
+          (path) => !refused.some((item) => item.path === path),
+        );
+        if (kept.length < sources.length) {
+          setRejected((current) => [
+            ...current,
+            ...refused.map((item) => ({
+              key: problemKey(),
+              name: baseName(item.path),
+              reason: item.reason,
+            })),
+          ]);
+          onSourcesChange(kept);
+          return;
+        }
         // 解析できなくても投入そのものは生きている。行はそのまま残し、
         // 実行時に展開してみて分かる結果に委ねる
-        if (!controller.signal.aborted) setAnalysis(IDLE_ANALYSIS);
+        setAnalysis(IDLE_ANALYSIS);
       });
 
     return () => {
@@ -253,6 +298,55 @@ export function OrganizePanel({
     // すべて切っ掛け」としか言えないため、ここでは規則の側が合わない
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sources]);
+
+  /**
+   * 窓のどこに落としても投入に入れる。
+   *
+   * 落とす先を 360px の箱に限ると、狙って落とす手間を利用者に払わせる。
+   * Tauri のドロップは窓に届くので、ブラウザの経路も窓で受けて揃える。
+   * 隠れている間は受けない（別の画面へのドロップを横取りしない）。
+   */
+  const dropInto = useRef<(transfer: DataTransfer) => void>(() => undefined);
+  dropInto.current = (transfer) => {
+    if (running) return;
+    void resolveDroppedPaths(client, transfer).then(
+      ({ paths, problems: failed }) => {
+        if (failed.length > 0) {
+          setRejected((current) => [
+            ...current,
+            ...failed.map((problem) => ({ key: problemKey(), ...problem })),
+          ]);
+        }
+        if (paths.length > 0) onAddSources(paths);
+      },
+    );
+  };
+
+  useEffect(() => {
+    if (!active) return;
+    const over = (event: DragEvent) => {
+      event.preventDefault();
+      setBrowserDragging(true);
+    };
+    // 要素の間を移るたびにも届く。窓の外へ出たときだけ（行き先が無い）消す
+    const leave = (event: DragEvent) => {
+      if (event.relatedTarget === null) setBrowserDragging(false);
+    };
+    const drop = (event: DragEvent) => {
+      event.preventDefault();
+      setBrowserDragging(false);
+      if (event.dataTransfer) dropInto.current(event.dataTransfer);
+    };
+    window.addEventListener("dragover", over);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
+      setBrowserDragging(false);
+    };
+  }, [active]);
 
   const rows = useMemo(
     () =>
@@ -617,17 +711,31 @@ export function OrganizePanel({
         <FilePicker
           client={client}
           selected={sources}
-          onChange={onSourcesChange}
+          onChange={(paths) => {
+            // 空にするのは「空にする」だけ。赤い行も一緒に片付ける
+            if (paths.length === 0) setRejected([]);
+            onSourcesChange(paths);
+          }}
           disabled={running}
           fill
+          dragging={dragging && !running}
           list={
-            <SourceList
-              sources={sources}
-              rows={rows}
-              analysis={analysis}
-              disabled={running}
-              onRemove={removeSource}
-            />
+            sources.length > 0 || rejected.length > 0 ? (
+              <SourceList
+                sources={sources}
+                rows={rows}
+                analysis={analysis}
+                problems={rejected}
+                flashing={flashing}
+                disabled={running}
+                onRemove={removeSource}
+                onDismissProblem={(key) =>
+                  setRejected((current) =>
+                    current.filter((problem) => problem.key !== key),
+                  )
+                }
+              />
+            ) : undefined
           }
         />
 
@@ -678,8 +786,13 @@ export function OrganizePanel({
           {/* 何も入れていないときは落とす先ではなく出来上がりの予告。点線は
               左の落とす箱だけの印なので、ここは空でも実線にする */}
           <div
-            className="flex min-h-0 flex-1 flex-col rounded-card border border-line bg-surface/50"
+            className={cn(
+              "flex min-h-0 flex-1 flex-col rounded-card border bg-surface/50 transition-colors",
+              // ドラッグ中は枠だけ変える。中身は隠さない（落とせば左に入る）
+              dragging && !running ? "border-brand" : "border-line",
+            )}
             data-testid="plan-box"
+            data-dragging={String(dragging && !running)}
           >
             {sources.length === 0 ? (
               <Empty

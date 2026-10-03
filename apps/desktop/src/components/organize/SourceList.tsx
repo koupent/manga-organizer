@@ -1,4 +1,4 @@
-import { Folder, Loader2, Package, X } from "lucide-react";
+import { Folder, Loader2, Package, TriangleAlert, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { Analysis } from "../../lib/analysis";
 import { sourceCount } from "../../lib/organize-text";
@@ -7,15 +7,29 @@ import { cn } from "../../lib/utils";
 import { parentDirectory } from "../../path";
 import { Button } from "../ui/button";
 
+/**
+ * 入れられなかったもの 1 件（赤い行）。
+ *
+ * 場所を特定できなかったドロップと、解析を断られた投入。どちらも投入の
+ * 一覧（App の sources）には入れない。数えない・右に出さない・解析に
+ * 送らない。理由を見せて、× で消せるようにだけしておく。
+ */
+export type SourceProblem = { key: string; name: string; reason: string };
+
 type SourceListProps = {
   /** 投入したもの。App が持つ一覧そのもの */
   sources: string[];
   /** 右の一覧と同じ行。冊数もアイコンもここから導く */
   rows: PlanRow[];
   analysis: Pick<Analysis, "running" | "settled">;
+  /** 入れられなかったもの。投入の行の後ろに、起きた順に並べる */
+  problems: SourceProblem[];
+  /** 既に入っているものをもう一度落とされた行。増えない代わりに光らせる */
+  flashing: ReadonlySet<string>;
   /** 実行中は中身を変えさせない。実際に処理される内容と画面が食い違う */
   disabled: boolean;
   onRemove: (path: string) => void;
+  onDismissProblem: (key: string) => void;
 };
 
 /**
@@ -30,8 +44,11 @@ export function SourceList({
   sources,
   rows,
   analysis,
+  problems,
+  flashing,
   disabled,
   onRemove,
+  onDismissProblem,
 }: SourceListProps) {
   return (
     // 溢れた行はこの箱の中でスクロールする。左の列そのものは動かさない
@@ -47,8 +64,16 @@ export function SourceList({
           // 決めると、.zip という名前のフォルダで左右の絵が食い違う
           folder={rows.some((row) => row.id === path && row.kind === "folder")}
           count={sourceCount(rows, path, analysis)}
+          flashing={flashing.has(path)}
           disabled={disabled}
           onRemove={onRemove}
+        />
+      ))}
+      {problems.map((problem) => (
+        <ProblemRow
+          key={problem.key}
+          problem={problem}
+          onDismiss={onDismissProblem}
         />
       ))}
     </ul>
@@ -65,12 +90,14 @@ function SourceRow({
   path,
   folder,
   count,
+  flashing,
   disabled,
   onRemove,
 }: {
   path: string;
   folder: boolean;
   count: ReturnType<typeof sourceCount>;
+  flashing: boolean;
   disabled: boolean;
   onRemove: (path: string) => void;
 }) {
@@ -89,9 +116,11 @@ function SourceRow({
       data-testid="source-row"
       data-path={path}
       data-kind={folder ? "folder" : "archive"}
+      data-flash={String(flashing)}
       tabIndex={0}
       className={cn(
-        "group flex h-10 shrink-0 flex-col justify-center gap-px rounded-control pr-1 pl-2 outline-none",
+        "group flex h-10 shrink-0 flex-col justify-center gap-px rounded-control pr-1 pl-2 outline-none transition-colors",
+        flashing && "bg-brand/15",
         "hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2",
         "focus-visible:ring-brand/40",
       )}
@@ -147,6 +176,46 @@ function SourceRow({
           </span>
         ) : null}
       </div>
+    </li>
+  );
+}
+
+/** 入れられなかったものの行。1 行目に名前と ×、2 行目に理由 */
+function ProblemRow({
+  problem,
+  onDismiss,
+}: {
+  problem: SourceProblem;
+  onDismiss: (key: string) => void;
+}) {
+  return (
+    <li
+      data-testid="source-problem"
+      className="group flex h-10 shrink-0 flex-col justify-center gap-px rounded-control bg-danger/10 pr-1 pl-2"
+    >
+      <div className="flex h-[22px] items-center gap-2">
+        <TriangleAlert className="size-3.5 shrink-0 text-danger" />
+        <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-muted">
+          {problem.name}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          title="この行を消す"
+          aria-label={`${problem.name} の行を消す`}
+          data-testid="source-remove"
+          className="opacity-55 group-hover:opacity-100"
+          onClick={() => onDismiss(problem.key)}
+        >
+          <X />
+        </Button>
+      </div>
+      <p
+        className="truncate pl-[22px] text-[11px] text-danger"
+        title={problem.reason}
+      >
+        {problem.reason}
+      </p>
     </li>
   );
 }

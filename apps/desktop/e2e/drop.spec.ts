@@ -119,11 +119,13 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
     // Act - 許可された場所に無いファイル
     await dropFiles(page, [{ name: "どこにもない.zip", size: 42 }]);
 
-    // Assert
-    await expect(page.getByTestId("picker-error")).toContainText(
-      "見つかりません",
-    );
+    // Assert - 投入の一覧の中に、理由付きの赤い行として残る。行に絞って
+    // 見る（画面のどこかに文言があるだけでは、行として残ったと言えない）
+    const problem = page.getByTestId("dropzone").getByTestId("source-problem");
+    await expect(problem).toContainText("どこにもない.zip");
+    await expect(problem).toContainText("場所を特定できません");
     await expect(page.getByTestId("selected-count")).toHaveText("0 件");
+    await expect(droppedRows(page)).toHaveCount(0);
   });
 
   test("file:// の URI が載っていればそのまま使う", async ({ page }) => {
@@ -153,10 +155,9 @@ test.describe("ドラッグ&ドロップでの読み込み", () => {
   test("見つからないときは探した場所を示す", async ({ page }) => {
     await openOrganize(page);
     await dropFiles(page, [{ name: "存在しない.zip", size: 7 }]);
-    await expect(page.getByTestId("picker-error")).toContainText("探した場所");
-    await expect(page.getByTestId("picker-error")).toContainText(
-      sidecar.workDir,
-    );
+    const problem = page.getByTestId("dropzone").getByTestId("source-problem");
+    await expect(problem).toContainText("探した場所");
+    await expect(problem).toContainText(sidecar.workDir);
   });
 
   test("一覧から 1 件だけ外せる", async ({ page }) => {

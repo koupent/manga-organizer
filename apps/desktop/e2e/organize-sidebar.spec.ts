@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
@@ -175,6 +175,42 @@ function countOf(page: Page, name: string) {
       `[data-testid="source-row"][data-path="${join(sidecar.workDir, name)}"]`,
     )
     .getByTestId("source-count");
+}
+
+/** 実パスを載せたドロップ（エクスプローラーや VS Code と同じ text/uri-list） */
+async function dropPaths(page: Page, target: string, paths: string[]) {
+  await page.dispatchEvent(target, "drop", {
+    dataTransfer: await page.evaluateHandle(
+      (uris) => {
+        const transfer = new DataTransfer();
+        transfer.setData("text/uri-list", uris.join("\r\n"));
+        return transfer;
+      },
+      paths.map((path) => `file://${encodeURI(path)}`),
+    ),
+  });
+}
+
+/** 名前とサイズだけのドロップ（多くのブラウザ）。実パスはサイドカーが探す */
+async function dropNames(page: Page, files: { name: string; size: number }[]) {
+  await page.dispatchEvent('[data-testid="dropzone"]', "drop", {
+    dataTransfer: await page.evaluateHandle((entries) => {
+      const transfer = new DataTransfer();
+      for (const entry of entries) {
+        transfer.items.add(
+          new File([new Uint8Array(entry.size)], entry.name, {
+            type: "application/zip",
+          }),
+        );
+      }
+      return transfer;
+    }, files),
+  });
+}
+
+/** 左の一覧の赤い行（入れられなかったもの） */
+function problemRows(page: Page) {
+  return page.getByTestId("source-problem");
 }
 
 /** 左の列の行。右の一覧の行（plan-row）とは別の名前を名乗る */
@@ -627,5 +663,156 @@ test.describe("ファイル整理: 投入は左、出来上がりは右", () => 
       "候補 1",
     );
     await expect(page.getByTestId("author-candidate")).toHaveCount(0);
+  });
+
+  test("場所を特定できなかったドロップは、左の一覧に赤い行で残り、数えない", async ({
+    page,
+  }) => {
+    // Arrange
+    const found = names[0];
+    const size = readFileSync(pathOf(found)).length;
+    await openOrganize(page);
+    await addArchives(page, [found]);
+
+    // Act - 1 つは名前で引き当たり（既に入っている）、1 つはどこにも無い
+    await dropNames(page, [{ name: "どこにもない.zip", size: 42 }]);
+
+    // Assert - 赤い行が左の一覧の中に出る。理由と探した場所を言う
+    await expect(problemRows(page)).toHaveCount(1);
+    await expect(problemRows(page)).toContainText("どこにもない.zip");
+    await expect(problemRows(page)).toContainText("場所を特定できません");
+    await expect(problemRows(page)).toContainText(sidecar.workDir);
+    await expect(
+      page.getByTestId("dropzone").getByTestId("source-problem"),
+    ).toHaveCount(1);
+    // Assert - 数えない・右に出さない
+    await expect(page.getByTestId("selected-count")).toHaveText("1 件");
+    await expect(rootRows(page)).toHaveCount(1);
+    await expect(page.getByTestId("picker-error")).toHaveCount(0);
+
+    // Act / Assert - × で消える。入っているものは残る
+    await problemRows(page).getByTestId("source-remove").click();
+    await expect(problemRows(page)).toHaveCount(0);
+    await expect(sourceRow(page, found)).toBeVisible();
+    expect(size).toBeGreaterThan(0);
+  });
+
+  test("右の作業面に落としても左の投入に入る", async ({ page }) => {
+    // Arrange
+    await openOrganize(page);
+    const right = await boxOf(page, "plan-box");
+    const left = await boxOf(page, "dropzone");
+    expect(right.x, "落とす先が左の箱と重なっている").toBeGreaterThan(
+      left.x + left.width,
+    );
+
+    // Act
+    await dropPaths(page, '[data-testid="plan-box"]', [pathOf(names[0])]);
+
+    // Assert
+    await expect(page.getByTestId("selected-count")).toHaveText("1 件");
+    await expect(sourceRow(page, names[0])).toBeVisible();
+  });
+
+  test("ドラッグ中は左の箱が「離すと追加します」と言い、右の箱は枠だけ変わる", async ({
+    page,
+  }) => {
+    // Arrange
+    await openOrganize(page);
+    await addArchives(page, names.slice(0, 2));
+
+    // Act - 窓の上に持ってきたところ
+    await page.dispatchEvent('[data-testid="plan-box"]', "dragover", {
+      dataTransfer: await page.evaluateHandle(() => new DataTransfer()),
+    });
+
+    // Assert - 幕は左の箱の中に 1 つだけ。右は中身を隠さない
+    await expect(page.getByTestId("dropzone")).toHaveAttribute(
+      "data-dragging",
+      "true",
+    );
+    await expect(page.getByTestId("plan-box")).toHaveAttribute(
+      "data-dragging",
+      "true",
+    );
+    await expect(page.getByText("離すと追加します")).toHaveCount(1);
+    await expect(
+      page.getByTestId("dropzone").getByText("離すと追加します"),
+    ).toBeVisible();
+    await expect(rootRows(page).first()).toBeVisible();
+
+    // Act - 窓の外へ出た
+    await page.dispatchEvent("body", "dragleave", {
+      dataTransfer: await page.evaluateHandle(() => new DataTransfer()),
+    });
+
+    // Assert
+    await expect(page.getByTestId("dropzone")).toHaveAttribute(
+      "data-dragging",
+      "false",
+    );
+    await expect(page.getByTestId("plan-box")).toHaveAttribute(
+      "data-dragging",
+      "false",
+    );
+    await expect(page.getByText("離すと追加します")).toHaveCount(0);
+  });
+
+  test("既に入っているものを落とすと、増えない代わりにその行が光る", async ({
+    page,
+  }) => {
+    // Arrange
+    const [again, other] = names.slice(0, 2);
+    await openOrganize(page);
+    await addArchives(page, [again, other]);
+
+    // Act
+    await dropPaths(page, '[data-testid="dropzone"]', [pathOf(again)]);
+
+    // Assert - 落としたものの行だけが光り、件数は変わらない
+    await expect(sourceRow(page, again)).toHaveAttribute("data-flash", "true");
+    await expect(sourceRow(page, other)).not.toHaveAttribute(
+      "data-flash",
+      "true",
+    );
+    await expect(page.getByTestId("selected-count")).toHaveText("2 件");
+    // Assert - 光りっぱなしにしない
+    await expect(sourceRow(page, again)).not.toHaveAttribute(
+      "data-flash",
+      "true",
+    );
+  });
+
+  test("解析を断られた投入は赤い行になり、残りは解析し直す", async ({
+    page,
+  }) => {
+    // Arrange - 解析の投入を控える。断られた後の投げ直しが 1 回きりで、
+    // 断られたパスを含まないことまで見る（往復し続ける暴走の番人）
+    const good = pathOf(names[0]);
+    const gone = join(sidecar.workDir, ARCHIVE_DIR, "消えた.zip");
+    const submitted: string[][] = [];
+    await page.route("**/api/jobs/analyze*", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      submitted.push(body.archives ?? []);
+      await route.continue();
+    });
+    await openOrganize(page);
+
+    // Act - 実在するものと、もう無いものを一度に落とす
+    await dropPaths(page, '[data-testid="dropzone"]', [good, gone]);
+
+    // Assert - 無いものは理由付きの赤い行。数えず、右にも出さない
+    await expect(problemRows(page)).toHaveCount(1, { timeout: 30_000 });
+    await expect(problemRows(page)).toContainText("消えた.zip");
+    await expect(problemRows(page)).toContainText("見つかりません");
+    await expect(page.getByTestId("selected-count")).toHaveText("1 件");
+    // Assert - 残りは解析されて本が生える。解析ごと止まっていない
+    await expect(
+      page.locator('[data-testid="plan-row"][data-kind="book"]'),
+    ).toHaveCount(1, { timeout: 30_000 });
+    await expect.poll(() => submitted.length).toBe(2);
+    expect(submitted[1]).toEqual([good]);
+    await page.waitForTimeout(2000);
+    expect(submitted, "解析を投げ直し続けている").toHaveLength(2);
   });
 });

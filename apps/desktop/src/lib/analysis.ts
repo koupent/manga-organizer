@@ -87,3 +87,25 @@ export function snapshotMark(job: {
 }): string {
   return [job.updated_at, job.state, job.current, job.total].join("/");
 }
+
+/**
+ * 解析の投入を断られたパスと理由を、断りの応答から取り出す（#107）。
+ *
+ * サイドカーは 1 件でも断ると投入全体を通さず、断ったパスを ``refused`` に
+ * 名指しして返す。名指しが無い失敗（通信の失敗など）は空を返す。
+ */
+export function refusedPaths(
+  error: unknown,
+): { path: string; reason: string }[] {
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed = JSON.parse(raw) as { refused?: unknown };
+    if (!Array.isArray(parsed.refused)) return [];
+    return parsed.refused.filter(
+      (item): item is { path: string; reason: string } =>
+        typeof item?.path === "string" && typeof item?.reason === "string",
+    );
+  } catch {
+    return [];
+  }
+}

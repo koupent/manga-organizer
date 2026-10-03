@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type DragEvent,
   type ReactNode,
 } from "react";
 import { resolveDroppedPaths } from "../lib/dropped";
@@ -40,9 +41,17 @@ type FilePickerProps = {
    * 投入したものの一覧。何を出すかは呼び出し側の機能が決める。
    *
    * ファイル整理は左の列に、入れたものごと外す × 付きの行を並べる。
-   * 単一選択の画面は一覧を持たない。
+   * 単一選択の画面は一覧を持たない。渡さなければ「まだ何も無い」の箱になる。
    */
   list?: ReactNode;
+  /**
+   * ドラッグ中かどうかを呼び出し側が決める。
+   *
+   * ファイル整理は窓のどこに落としても受ける（Tauri のドロップは窓に届き、
+   * 360px の箱を狙わせる理由が無い）。そのときは受け取りも呼び出し側が
+   * 窓で行い、ここは見た目だけを出す。渡さなければ箱そのものが受ける。
+   */
+  dragging?: boolean;
 };
 
 /**
@@ -69,6 +78,7 @@ export function FilePicker({
   title,
   fill = false,
   list,
+  dragging,
 }: FilePickerProps) {
   const [browsing, setBrowsing] = useState(false);
   const [location, setLocation] = useState<BrowseLocation>({
@@ -77,7 +87,10 @@ export function FilePicker({
   });
   const [entries, setEntries] = useState<BrowseEntry[]>([]);
   const [error, setError] = useState("");
-  const [dragging, setDragging] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const external = dragging !== undefined;
+  const shownDragging = external ? dragging : dragOver;
+  const empty = !list;
 
   // 通信の結果は実行が始まった後に届くことがある。そのときの状態で判断する
   const locked = useRef(disabled);
@@ -141,43 +154,65 @@ export function FilePicker({
   const dropzone = (
     <div
       className={cn(
-        "flex flex-col rounded-card border transition-colors",
+        "relative flex flex-col rounded-card border transition-colors",
         // 点線は「まだ何も入っていない」の合図。中身が入った後も囲い続けると、
         // 置いた物を包む箱がもう 1 枚増えるだけで、何も伝えていない
-        selected.length === 0 && "border-dashed",
-        dragging
+        empty && "border-dashed",
+        shownDragging
           ? "border-brand bg-brand/8"
-          : selected.length === 0
+          : empty
             ? "border-line-strong bg-surface/50"
             : "border-line bg-surface/50",
         fill && "min-h-[88px] flex-1",
       )}
       data-testid="dropzone"
-      onDragOver={(event) => {
-        event.preventDefault();
-        // 受け取れないときに受け取れそうな見た目にしない
-        setDragging(!disabled);
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(event) => {
-        event.preventDefault();
-        setDragging(false);
-        void handleDrop(event.dataTransfer);
-      }}
+      data-dragging={String(shownDragging)}
+      {...(external
+        ? {}
+        : {
+            onDragOver: (event: DragEvent) => {
+              event.preventDefault();
+              // 受け取れないときに受け取れそうな見た目にしない
+              setDragOver(!disabled);
+            },
+            onDragLeave: () => setDragOver(false),
+            onDrop: (event: DragEvent) => {
+              event.preventDefault();
+              setDragOver(false);
+              void handleDrop(event.dataTransfer);
+            },
+          })}
     >
-      {selected.length === 0 ? (
+      {empty ? (
         <Empty
           className="m-auto"
           icon={<Upload />}
-          title="ここにフォルダかアーカイブをドラッグ&ドロップ"
+          title={
+            shownDragging
+              ? "離すと追加します"
+              : "ここにフォルダかアーカイブをドラッグ&ドロップ"
+          }
         >
-          {single
-            ? "または「ファイルを選ぶ」から辿ってください。フォルダは下の階層まで辿り、ZIP は中を読んで、画像のある所を 1 冊として並べます。zip / cbz / rar / 7z を扱えます。まとめて落としたときは先頭の 1 件を対象にします。"
-            : "または上の「選んで追加」から辿ります。フォルダは下の階層まで、ZIP は中まで読んで、画像のある所を 1 冊として右に並べます。zip / cbz / rar / 7z"}
+          {shownDragging
+            ? "フォルダとアーカイブをまとめて落とせます"
+            : single
+              ? "または「ファイルを選ぶ」から辿ってください。フォルダは下の階層まで辿り、ZIP は中を読んで、画像のある所を 1 冊として並べます。zip / cbz / rar / 7z を扱えます。まとめて落としたときは先頭の 1 件を対象にします。"
+              : "または上の「選んで追加」から辿ります。フォルダは下の階層まで、ZIP は中まで読んで、画像のある所を 1 冊として右に並べます。zip / cbz / rar / 7z"}
         </Empty>
       ) : (
         list
       )}
+      {/* 中身がある箱では、行の上に幕を重ねて「離すと追加します」と言う。
+          行を消さないので、何が入っているかは透けて見えたまま */}
+      {!empty && shownDragging ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-card bg-canvas/80 text-center">
+          <Upload className="size-7 text-brand" />
+          <p className="text-[13px] font-medium text-brand">離すと追加します</p>
+          <p className="text-[12px] text-ink-faint">
+            フォルダとアーカイブをまとめて落とせます
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 
@@ -228,7 +263,7 @@ export function FilePicker({
             <Button
               variant="ghost"
               data-testid="clear-selection"
-              disabled={disabled || selected.length === 0}
+              disabled={disabled || empty}
               onClick={() => replace([])}
             >
               空にする
