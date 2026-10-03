@@ -1,8 +1,9 @@
 name: Windows インストーラ
 
 # インストーラを Windows ランナーで作り、黙って入れて同梱のサイドカーが
-# 起動するかまで確かめる。v で始まるタグのときだけ GitHub Release に載せる。
-# lint・テストは ci.yml の Merge Gate が受け持つ。
+# 起動し、保存まで通るかを確かめる。v で始まるタグのときだけ、配布用の公開
+# リポジトリ（koupent/manga-organizer-releases）へ、インストーラと自動更新の
+# 案内（latest.json）を載せる。lint・テストは ci.yml が受け持つ。
 #
 # PR では配布物の作り方に関わる変更のときだけ走らせる。Windows ランナーは
 # 分数が 2 倍に数えられ、画面だけの変更は Merge Gate で足りるため。
@@ -19,6 +20,7 @@ on:
       - services/core/pyproject.toml
       - services/core/uv.lock
       - scripts/build_sidecar.sh
+      - scripts/smoke_saves.py
       - .github/workflows/release.yml
   push:
     tags: ["v*"]
@@ -79,13 +81,22 @@ jobs:
           echo "asset=MangaOrganizer-v$version-setup.exe" >> "$GITHUB_OUTPUT"
 
       # beforeBuildCommand が画面のビルドとサイドカーの PyInstaller を行う。
-      # その中の bash が Git Bash を指すよう、この手順は bash で動かす
+      # その中の bash が Git Bash を指すよう、この手順は bash で動かす。
+      # 自動更新の署名（.sig）はここでだけ作る。手元の tauri build は鍵が
+      # 無くても通るよう、tauri.conf.json では有効にしない
       - name: インストーラを作る
         working-directory: apps/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -Eeuo pipefail
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "自動更新の署名鍵（Secrets の TAURI_SIGNING_PRIVATE_KEY）がありません" >&2
+            exit 1
+          fi
           npm ci
-          npx tauri build
+          npx tauri build --config '{"bundle":{"createUpdaterArtifacts":true}}'
 
       - name: 配布物の名前を揃える
         env:
@@ -94,6 +105,8 @@ jobs:
           set -Eeuo pipefail
           mkdir -p out
           cp apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe "out/$ASSET"
+          # 署名はインストーラの中身に対するもので、名前を変えても効く
+          cp apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig "out/$ASSET.sig"
           ls -l out
 
       - name: 黙って入れて、同梱のサイドカーが応答するか確かめる
@@ -137,6 +150,14 @@ jobs:
             Stop-Process -Id $sidecar.Id -Force -ErrorAction SilentlyContinue
           }
 
+      # 単体のテストは Python のソースを直に動かす。凍結したサイドカーを Tauri と
+      # 同じ条件で起こしたときにだけ起きる不具合（Windows での保存の失敗など）は、
+      # 配る物そのもので保存まで通して確かめる
+      - name: 入れたサイドカーで、並べ替え・分割・サムネイルの保存が通るか確かめる
+        run: |
+          set -Eeuo pipefail
+          uv run --no-project python scripts/smoke_saves.py "$RUNNER_TEMP/manga-organizer/resources/sidecar/manga-api.exe"
+
       # 同梱の場所の取り違えや終了時の後始末は、アプリ本体を通さないと分からない
       - name: 入れたアプリがサイドカーを起こし、閉じると止めるか確かめる
         shell: pwsh
@@ -175,42 +196,77 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.version.outputs.asset }}
-          path: out/${{ steps.version.outputs.asset }}
+          path: |
+            out/${{ steps.version.outputs.asset }}
+            out/${{ steps.version.outputs.asset }}.sig
           if-no-files-found: error
 
-  # 書き込みの権限は公開するこのジョブだけに渡す。PR のコードを動かす
-  # ビルドには持たせない
+  # 配布用の公開リポジトリへ載せる。書き込みには、そのリポジトリだけに
+  # 書けるトークン（Secrets の RELEASES_TOKEN）を使う。ソースの private
+  # リポジトリには Release を作らない（置き場を 1 つにする）
   release:
     name: GitHub Release に載せる
     needs: build
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: write
+    env:
+      PUBLIC_REPO: koupent/manga-organizer-releases
     steps:
+      # 変更点は前のタグからのコミットの題名で作る。履歴を全部取る
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           name: ${{ needs.build.outputs.asset }}
+          path: out
 
-      - name: Release を作る
+      # アプリはこの latest.json を読んで新しい版を知る（tauri.conf.json の
+      # plugins.updater.endpoints が releases/latest/download/latest.json を指す）
+      - name: 自動更新の案内（latest.json）を作る
         env:
-          GH_TOKEN: ${{ github.token }}
           ASSET: ${{ needs.build.outputs.asset }}
         run: |
           set -Eeuo pipefail
-          gh release create "$GITHUB_REF_NAME" "$ASSET" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
+          previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          if [[ -n "$previous" ]]; then
+            git log --no-merges --format='- %s' "$previous..$GITHUB_REF_NAME" > out/notes.md
+          else
+            echo "- 最初の版" > out/notes.md
+          fi
+          jq -n \
+            --arg version "${GITHUB_REF_NAME#v}" \
+            --rawfile notes out/notes.md \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --rawfile signature "out/$ASSET.sig" \
+            --arg url "https://github.com/$PUBLIC_REPO/releases/download/$GITHUB_REF_NAME/$ASSET" \
+            '{version: $version, notes: $notes, pub_date: $pub_date,
+              platforms: {"windows-x86_64": {signature: $signature, url: $url}}}' \
+            > out/latest.json
+          cat out/latest.json
+
+      - name: Release を作る
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          ASSET: ${{ needs.build.outputs.asset }}
+        run: |
+          set -Eeuo pipefail
+          {
+            echo "## 入れ方"
+            echo
+            echo "1. 下の Assets から \`$ASSET\` をダウンロードして実行します。"
+            echo "2. 「Windows によって PC が保護されました」と出たら「詳細情報」→「実行」を押します（署名していないために出る警告です）。"
+            echo "3. 終わるとスタートメニューに「Manga Organizer」が入ります。"
+            echo
+            echo "v4.1.0 以降を入れてあれば、次の版からはアプリが知らせて、そのまま更新できます。RAR / CBR を扱うときだけ 7-Zip が要ります。"
+            echo
+            echo "## 変更点"
+            echo
+            cat out/notes.md
+          } > out/body.md
+          gh release create "$GITHUB_REF_NAME" "out/$ASSET" out/latest.json \
+            --repo "$PUBLIC_REPO" \
             --title "Manga Organizer $GITHUB_REF_NAME" \
-            --generate-notes \
-            --notes "$(cat <<EOF
-          ## 入れ方
-
-          1. 下の Assets から \`$ASSET\` をダウンロードして実行します。
-          2. 「Windows によって PC が保護されました」と出たら「詳細情報」→「実行」を押します（署名していないために出る警告です）。
-          3. 終わるとスタートメニューに「Manga Organizer」が入ります。
-
-          RAR / CBR を扱うときだけ 7-Zip が要ります。詳しくはリポジトリの README を参照してください。
-          EOF
-          )"
+            --notes-file out/body.md

@@ -64,16 +64,16 @@ MangaOrganizer で RAR 形式（.rar, .cbr）のファイルを処理するに�
 
 ## 📥 インストール
 
-Windows 10 / 11（64 bit）向けです。リポジトリは非公開なので、招待された GitHub アカウントでログインしてからダウンロードします。
+Windows 10 / 11（64 bit）向けです。インストーラは配布用のページに置いてあり、ログインせずにダウンロードできます。
 
-1. [Releases](https://github.com/koupent/manga-organizer/releases/latest) の Assets から `MangaOrganizer-vX.X.X-setup.exe` をダウンロード
+1. [配布用のページ](https://github.com/koupent/manga-organizer-releases/releases/latest) の Assets から `MangaOrganizer-vX.X.X-setup.exe` をダウンロード
 2. ダウンロードしたファイルを実行
    - 「Windows によって PC が保護されました」と出たら「**詳細情報**」→「**実行**」を押します（コード署名をしていないために出る警告です）
    - 管理者権限は要りません（自分のユーザーにだけ入ります）
    - 画面の部品（WebView2）が無い古い Windows では、途中で自動的に取り込みます（インターネット接続が必要）
 3. スタートメニューの「Manga Organizer」から起動
 
-**更新**: 新しい版のインストーラをそのまま実行すれば上書きされます。設定と辞書は残ります。
+**更新**: v4.1.0 からは、起動したときに新しい版があればアプリの上部に知らせが出ます。「更新する」を押すと、ダウンロードしてアプリがいったん閉じ、入れ替わってから起ち上がり直します。設定と辞書は残ります。v4.0.0 を使っている場合は、一度だけ v4.1.0 以降のインストーラを手で実行してください。
 
 **アンインストール**: Windows の「設定」→「アプリ」→「インストールされているアプリ」から「Manga Organizer」を削除します。
 

@@ -22,6 +22,8 @@ Windows でしか確かめられないもの（インストーラ、ネイティ
 
 PR ごとに GitHub Actions（`.github/workflows/ci.yml`、ubuntu）が `scripts/run_merge_gate.sh` を回します。main への合流はこの `Merge Gate` チェックの合格が条件です。
 
+同じ PR で `Core (Windows)` も回ります。配る先は Windows で、ファイルの扱いは OS で振る舞いが違う（読み取り専用で開いたものへの fsync が Windows だけ失敗する、など）ため、コアのテストを Windows でも回します。
+
 実行内容:
 
 - `services/core/` — `uv lock --check`・`ruff`・`compileall`・`unittest`
@@ -76,15 +78,28 @@ gh workflow run release.yml --ref <ブランチ名>   # または Actions の画
 
 ## ビルドとリリース
 
-インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。作ったインストーラを黙って入れ、同梱のサイドカーが応答するところまで確かめます。
+インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。作ったインストーラを黙って入れ、同梱のサイドカーが応答すること、並べ替え・分割・サムネイルの保存が通ること（`scripts/smoke_saves.py`）、アプリを閉じるとサイドカーも止まることまで確かめます。
 
 - PR: 配布物の作り方に関わるファイル（`src-tauri/`・依存の宣言・`manga_api.spec`・`build_sidecar.sh` など）を変えたときだけ走り、インストーラを Artifacts に残す
-- `v*` タグの push: 作って確かめたうえで、タグ名の GitHub Release を作ってインストーラを添付する
+- `v*` タグの push: 作って確かめたうえで、配布用の公開リポジトリ [koupent/manga-organizer-releases](https://github.com/koupent/manga-organizer-releases) に Release を作り、インストーラと `latest.json` を載せる
 - 手動（`workflow_dispatch`）: 作って確かめ、インストーラを Artifacts に残すだけ
 
 Windows ランナーは分数が 2 倍に数えられるため、画面だけの変更では走らせません（そちらは Merge Gate で足ります）。
 
-リポジトリが private なので、Release をダウンロードできるのはコラボレーターとして招待した人だけです。
+### 自動更新
+
+アプリは起動時に `https://github.com/koupent/manga-organizer-releases/releases/latest/download/latest.json` を読み、新しい版があれば知らせます（tauri-plugin-updater）。入れ替える前に、インストーラの署名を `tauri.conf.json` の `plugins.updater.pubkey` で確かめます。ソースのリポジトリは private のままで、公開リポジトリにはインストーラと `latest.json` だけを置きます。
+
+`release.yml` が使う Secrets（`manga-organizer` の Settings → Secrets and variables → Actions）:
+
+| 名前 | 中身 | 無いと |
+|---|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | 更新の署名鍵（秘密鍵） | インストーラを作れない |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | その鍵のパスワード | 同上 |
+| `RELEASES_TOKEN` | 公開リポジトリだけに書ける fine-grained PAT（Contents: Read and write） | タグで Release を作れない |
+
+- **署名鍵は失くさないこと。** 配ったアプリは、この鍵で署名された更新しか受け付けません。失くしたら鍵を作り直して公開鍵を差し替え、利用者に一度だけ手でインストールし直してもらうことになります。
+- `RELEASES_TOKEN` は期限が切れると新しい Release を作れなくなるだけで、配ったアプリが更新を受け取るのには影響しません（公開リポジトリは誰でも読めるため）。切れたら作り直して Secrets を差し替えます。
 
 ## バージョンアップ手順
 
@@ -102,7 +117,7 @@ Windows ランナーは分数が 2 倍に数えられるため、画面だけの
    git fetch origin && git tag v4.0.0 origin/main && git push origin v4.0.0
    ```
 
-4. Actions の「Windows インストーラ」が緑になると、Releases に `MangaOrganizer-v4.0.0-setup.exe` が載る
+4. Actions の「Windows インストーラ」が緑になると、配布用の公開リポジトリの Releases に `MangaOrganizer-v4.0.0-setup.exe` と `latest.json` が載り、入れてあるアプリが次の起動で知らせる
 
 ## プロジェクト構造
 
