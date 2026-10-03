@@ -367,7 +367,11 @@ class ArchiveHandler:
                 f"  Scanning {total_dirs} directories for images and nested archives..."
             )
 
-        for dirpath, _dirnames, filenames in os.walk(dir_path):
+        for dirpath, dirnames, filenames in os.walk(dir_path):
+            # 並び順は巻数（並び順で決まる本）に効く。OS の列挙順に任せると
+            # ファイルシステムごとに巻数が変わり、画面に出した解析
+            # （toc_analyzer._scan_directory、名前順）とも食い違う。同じ順に固定する
+            dirnames.sort(key=natural_sort_key)
             current_dir = Path(dirpath)
             rel_path = (
                 current_dir.relative_to(root_path)
@@ -387,11 +391,14 @@ class ArchiveHandler:
                 self._log(f"  Found {len(image_files)} images in: {rel_path}")
 
             # Check for nested archives
-            archive_files = [
-                f
-                for f in filenames
-                if Path(f).suffix.lower() in self.SUPPORTED_ARCHIVES
-            ]
+            archive_files = sorted(
+                (
+                    f
+                    for f in filenames
+                    if Path(f).suffix.lower() in self.SUPPORTED_ARCHIVES
+                ),
+                key=natural_sort_key,
+            )
 
             if archive_files and depth == 0:
                 self._log(f"  Found {len(archive_files)} nested archives to process")
