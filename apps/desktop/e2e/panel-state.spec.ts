@@ -439,7 +439,12 @@ test.describe("画面を切り替えても状態が残る", () => {
       { x: 1, y: 1 },
     );
     const edited = await settledFrameBox(page);
-    expect(Math.abs(edited.x - initial.x)).toBeGreaterThan(10);
+    // 位置は横と縦を合わせて見る。回した後の縦長は、枠を外へ広げられる範囲
+    // （画像の全体が収まる 2:3）ごと描かれる（#130）。左上へ寄せた枠は画像の
+    // 左上に着き、その横の位置は回す前の既定の枠とたまたま重なる
+    expect(
+      Math.abs(edited.x - initial.x) + Math.abs(edited.y - initial.y),
+    ).toBeGreaterThan(10);
     expect(Math.abs(edited.width - initial.width)).toBeGreaterThan(10);
 
     // Act - ファイル整理を覗いてから戻る
