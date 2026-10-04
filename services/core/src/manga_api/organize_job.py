@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from manga_api.analysis_job import file_size
 from manga_api.jobs import ProgressReporter
 from manga_core.cancellation import OperationCancelled
 from manga_core.file_identity import file_key
@@ -307,7 +308,7 @@ def organize_work(
         done = 0
         # 出来た本と、それが一覧のどの行か（#160）。全部済むのを待たずに途中の
         # 結果として返し、画面は出来た本の行から編集へ移れるようにする
-        finished: list[dict[str, str]] = []
+        finished: list[dict[str, Any]] = []
 
         def advance(to: int = 0, message: str = "") -> None:
             # 予告より多く出来たら、総数のほうを伸ばす。100% を超えさせない
@@ -329,6 +330,7 @@ def organize_work(
                             "source": str(archive),
                             "entry": entry,
                             "path": str(result.output_path),
+                            "size": file_size(result.output_path),
                         }
                     )
                 advance(done + 1)

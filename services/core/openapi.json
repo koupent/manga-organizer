@@ -1228,6 +1228,59 @@
         }
       }
     },
+    "/api/files/trash": {
+      "post": {
+        "summary": "Trash File",
+        "description": "利用者が一覧で選んだファイルを、ごみ箱へ移す（#164）。\n\n消すのではなくごみ箱へ移す。画面は消す前に確かめるが、押し間違えた\nときに取り戻せる道を残す。触れるのは読んでよい場所か、この起動で\n選んだ出力先の中のファイルだけ。フォルダは扱わない。中身ごと消える\nことになり、確かめた 1 冊より多くを失いうるため。",
+        "operationId": "trash_file_api_files_trash_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrashRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrashedView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/organize": {
       "post": {
         "summary": "Submit Organize",
@@ -2382,6 +2435,36 @@
         "type": "object",
         "title": "Suggestion",
         "description": "補完の結果。近い順に候補を並べ、先頭を既定として示す"
+      },
+      "TrashRequest": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "ごみ箱へ移すファイルの絶対パス"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "TrashRequest",
+        "description": "一覧から消すファイル（#164）"
+      },
+      "TrashedView": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "ごみ箱へ移したファイル（辿り直した絶対パス）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "TrashedView",
+        "description": "ごみ箱へ移したファイル"
       },
       "ValidationError": {
         "properties": {

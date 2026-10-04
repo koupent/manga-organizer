@@ -285,6 +285,11 @@ class AllowedRootsTest(ApiTestBase):
         ) as archive:
             for name in ("001.jpg", "002.jpg", "003.jpg"):
                 archive.writestr(name, make_page())
+        # ごみ箱へ移す経路も表に載る。本物のごみ箱を汚さず、他の経路が使う
+        # アーカイブも動かさないよう、渡すところを差し替える
+        trash = mock.patch("manga_api.app.send2trash")
+        trash.start()
+        self.addCleanup(trash.stop)
 
     def scanned_rows(self, archive: str) -> tuple[str, list[dict]]:
         """割る画面を開いたときと同じ印と行を、走査から取る。
@@ -359,6 +364,7 @@ class AllowedRootsTest(ApiTestBase):
                 "POST", "/api/jobs/analyze", "archives", body(), "archive_list", 202
             ),
             GuardedCase("POST", "/api/edits", "paths", body(), "path_list", 200),
+            GuardedCase("POST", "/api/files/trash", "path", body(), "file", 200),
             GuardedCase(
                 "POST",
                 "/api/jobs/organize",
@@ -390,6 +396,8 @@ class AllowedRootsTest(ApiTestBase):
             return {"archives": [str(archive)]}
         if shape == "path_list":
             return {"paths": [str(archive)]}
+        if shape == "file":
+            return {"path": str(archive)}
         if shape == "output_directory":
             return {"output_directory": str(directory / "出力")}
         return {"archive": str(archive)}

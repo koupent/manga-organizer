@@ -12,6 +12,7 @@ import {
   organizeResult,
   refusedPaths,
   snapshotMark,
+  withoutPaths,
   type Analysis,
   type FinishedBook,
 } from "../lib/analysis";
@@ -56,7 +57,7 @@ import { SeriesInfoSection } from "./organize/SeriesInfoSection";
 import { SourceList, type SourceProblem } from "./organize/SourceList";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
-import { PlanList } from "./PlanList";
+import { PlanList, sizeLabel, type TrashTarget } from "./PlanList";
 import { type EditMarks, type HandoffMode } from "./EditShortcuts";
 import { Button } from "./ui/button";
 import { Empty } from "./ui/empty";
@@ -152,6 +153,8 @@ export function OrganizePanel({
 
   // 解析で分かったこと。走査が終わるまでは入れ物も空
   const [analysis, setAnalysis] = useState<Analysis>(IDLE_ANALYSIS);
+  // 最後に解析へ回した投入。外しただけの変化を見分ける（#164）
+  const analyzedSources = useRef<string[]>([]);
   // 解析をやり直させる合図。投入が同じでも、整理が本をその場で作り直したら
   // 一覧の判定は古くなる（#127）
   const [analysisRound, setAnalysisRound] = useState(0);
@@ -168,6 +171,9 @@ export function OrganizePanel({
   // 整理して出来た本。実際に出来たものだけを持ち、整理の途中から 1 冊ずつ
   // 増える（#160）。その本の行に整理済みの印と編集への近道を出す
   const [finished, setFinished] = useState<FinishedBook[]>([]);
+
+  // ごみ箱へ移そうとしている本のファイル。確かめる窓が開いている間だけ在る（#164）
+  const [trashing, setTrashing] = useState<TrashTarget | null>(null);
 
   // 整理できなかったアーカイブと、その理由。ジョブは失敗しても succeeded で
   // 終わるため、ここに出さないと処理ログを開くまで失敗に気づけない
@@ -236,8 +242,22 @@ export function OrganizePanel({
    * 読み直す必要は無い。
    */
   useEffect(() => {
+    const before = analyzedSources.current;
+    analyzedSources.current = sources;
     if (sources.length === 0) {
       setAnalysis(IDLE_ANALYSIS);
+      return;
+    }
+    // 外しただけなら読み直さない（#164）。済んだ解析から外したぶんを除けば
+    // 足りる。目次読みは重く、1 つ外すたびに全部を読み直すと、投入が大きい
+    // ほど待たされる
+    if (
+      analysis.settled &&
+      sources.length < before.length &&
+      sources.every((path) => before.includes(path))
+    ) {
+      const removed = before.filter((path) => !sources.includes(path));
+      setAnalysis((current) => withoutPaths(current, removed));
       return;
     }
     const controller = new AbortController();
@@ -441,9 +461,9 @@ export function OrganizePanel({
     () => outputNames(rows, author, title, off),
     [rows, author, title, off],
   );
-  // 整理して出来た本の行 → 出来たファイル（#160）
+  // 整理して出来た本の行 → 出来た本（#160）
   const made = useMemo(
-    () => new Map(finished.map((book) => [bookId(book), book.path])),
+    () => new Map(finished.map((book) => [bookId(book), book])),
     [finished],
   );
   // 同じ巻の本の数（#162）。外した本も数える
@@ -757,6 +777,30 @@ export function OrganizePanel({
   };
 
   /**
+   * 確かめた本のファイルをごみ箱へ移し、一覧から外す（#164）。
+   *
+   * 整理して出来たファイルなら、その行は整理する前の姿へ戻る。元の
+   * アーカイブなら、解析の結果から除く。読み直さない。
+   */
+  const trash = async (target: TrashTarget) => {
+    setTrashing(null);
+    try {
+      await client.trashFile(target.path);
+    } catch (error) {
+      setStatus(sidecarReason(error));
+      return;
+    }
+    setFinished((current) =>
+      current.filter((book) => book.path !== target.path),
+    );
+    setAnalysis((current) => withoutPaths(current, [target.path]));
+    if (sources.includes(target.path)) {
+      onSourcesChange(sources.filter((path) => path !== target.path));
+    }
+    setStatus(`${baseName(target.path)} をごみ箱へ移しました`);
+  };
+
+  /**
    * 実行を止める。
    *
    * ジョブ番号が分かる前に押されることがあるので、要求を残しておき
@@ -965,6 +1009,7 @@ export function OrganizePanel({
                 onToggle={toggleRows}
                 made={made}
                 sameVolume={sameVolume}
+                onTrash={setTrashing}
                 // 整理済みの行の近道は、いまディスク上に在るファイルを渡す。
                 // 整理して出来た本の行なら、出来たファイル
                 onOpenArchive={onOpenProduced}
@@ -984,6 +1029,57 @@ export function OrganizePanel({
         <FailedList failures={failures} />
         <OrganizeLog lines={log} />
       </div>
+
+      {/* 消す前に確かめる（#164）。押し間違えても取り戻せるよう、消すのでは
+          なくごみ箱へ移す */}
+      <Dialog
+        open={trashing !== null}
+        onOpenChange={(open) => {
+          if (!open) setTrashing(null);
+        }}
+      >
+        <DialogContent
+          data-testid="trash-dialog"
+          className="w-[min(32rem,92vw)] gap-3 p-4"
+        >
+          <DialogTitle className="text-[14px] font-semibold">
+            このファイルをごみ箱へ移しますか
+          </DialogTitle>
+          <DialogDescription className="text-[12.5px] text-ink-muted">
+            {trashing
+              ? `${baseName(trashing.path)}${
+                  trashing.size !== null
+                    ? `（${sizeLabel(trashing.size)}）`
+                    : ""
+                }`
+              : ""}
+          </DialogDescription>
+          <p
+            className="truncate text-[11.5px] text-ink-faint"
+            title={trashing?.path}
+          >
+            {trashing?.path}
+          </p>
+          {/* 主操作を右端に置く。最初のフォーカスは先頭の「やめる」に当たる。
+              Enter 1 つで消えてしまわないように */}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              data-testid="trash-cancel"
+              onClick={() => setTrashing(null)}
+            >
+              やめる
+            </Button>
+            <Button
+              variant="danger"
+              data-testid="trash-confirm"
+              onClick={() => trashing && void trash(trashing)}
+            >
+              ごみ箱へ移す
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/*
         辞書は整理の途中で覗きに行くものなので、画面を切り替えず重ねて出す。

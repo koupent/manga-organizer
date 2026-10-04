@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from PIL import Image
 from pydantic import BaseModel, Field
+from send2trash import send2trash
 
 from manga_api import thumbnails
 from manga_api.analysis_job import AnalyzeRequest, analysis_work
@@ -104,6 +105,18 @@ class OutputRootView(BaseModel):
     """
 
     directory: str = Field(description="覚えた出力先（辿り直した絶対パス）")
+
+
+class TrashRequest(BaseModel):
+    """一覧から消すファイル（#164）"""
+
+    path: str = Field(description="ごみ箱へ移すファイルの絶対パス")
+
+
+class TrashedView(BaseModel):
+    """ごみ箱へ移したファイル"""
+
+    path: str = Field(description="ごみ箱へ移したファイル（辿り直した絶対パス）")
 
 
 class BrowseEntry(BaseModel):
@@ -816,6 +829,39 @@ def create_app(
             )
         remembered = app.state.chosen_output_roots.remember(directory)
         return OutputRootView(directory=str(remembered))
+
+    @app.post("/api/files/trash", dependencies=guarded, response_model=TrashedView)
+    def trash_file(request: TrashRequest) -> TrashedView:
+        """利用者が一覧で選んだファイルを、ごみ箱へ移す（#164）。
+
+        消すのではなくごみ箱へ移す。画面は消す前に確かめるが、押し間違えた
+        ときに取り戻せる道を残す。触れるのは読んでよい場所か、この起動で
+        選んだ出力先の中のファイルだけ。フォルダは扱わない。中身ごと消える
+        ことになり、確かめた 1 冊より多くを失いうるため。
+        """
+        path = Path(request.path).resolve()
+        if not (
+            path_guard.within_allowed(path)
+            or app.state.chosen_output_roots.allows(path)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="対象外のディレクトリです",
+            )
+        if not path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ファイルが見つかりません",
+            )
+        try:
+            send2trash(path)
+        except OSError as error:
+            # 開かれたままのファイルや、ごみ箱の無い場所（一部の NAS など）
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"ごみ箱へ移せませんでした: {error}",
+            ) from error
+        return TrashedView(path=str(path))
 
     @app.post(
         "/api/jobs/organize",

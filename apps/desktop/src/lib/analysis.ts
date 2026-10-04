@@ -1,5 +1,5 @@
 import type { OrganizeFailure } from "../components/FailedList";
-import type { PlannedBook } from "./plan";
+import { isInside, type PlannedBook } from "./plan";
 
 /**
  * ジョブの結果から、出来たファイルと失敗を取り出す。
@@ -28,7 +28,13 @@ export function organizeResult(result: unknown): {
  * 整理して出来た本と、それが一覧のどの行か（#160）。整理の途中から届く。
  * ``source`` と ``entry`` は解析が返した本と同じで、行の鍵（``bookId``）になる
  */
-export type FinishedBook = { source: string; entry: string; path: string };
+export type FinishedBook = {
+  source: string;
+  entry: string;
+  path: string;
+  /** 出来たファイルの大きさ（バイト）（#163） */
+  size: number | null;
+};
 
 /**
  * 解析ジョブから読み取った、いまの解析の様子。
@@ -59,6 +65,23 @@ export type Analysis = {
    */
   reading: number;
 };
+
+/**
+ * 消した・外した入れ物を、解析の結果から除く（#164）。フォルダならその下も。
+ *
+ * 読み直さずに済ませるためのもの。目次読みは重く、1 つ消すたびに投入した
+ * もの全部を読み直すと、投入が大きいほど待たされる。
+ */
+export function withoutPaths(analysis: Analysis, removed: string[]): Analysis {
+  const gone = (path: string) =>
+    removed.some((item) => path === item || isInside(item, path));
+  return {
+    ...analysis,
+    containers: analysis.containers.filter((path) => !gone(path)),
+    books: analysis.books.filter((book) => !gone(book.source)),
+    unreadable: analysis.unreadable.filter((path) => !gone(path)),
+  };
+}
 
 export const IDLE_ANALYSIS: Analysis = {
   running: false,

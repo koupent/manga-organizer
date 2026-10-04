@@ -36,6 +36,11 @@ export type PlannedBook = {
   title: string | null;
   /** 本の名前から読んだ著者名。整理済みでなければ null */
   author: string | null;
+  /**
+   * アーカイブ全体が 1 冊のとき、そのファイルの大きさ（バイト）（#163）。
+   * 中の 1 冊なら null。古いサイドカーや台本の応答には無いことがある
+   */
+  size?: number | null;
 };
 
 /**
@@ -118,6 +123,8 @@ export type PlanRow = {
   title: string;
   /** その本自身の著者名。``title`` と同じ理由で空文字に均す */
   author: string;
+  /** 本のファイルの大きさ（バイト）。分からない本と入れ物の行では null（#163） */
+  size: number | null;
   /**
    * この行の上にある入れ物の鍵。外側から順に並ぶ。
    *
@@ -197,6 +204,7 @@ function containerRow(
     organizedDetail: "",
     title: "",
     author: "",
+    size: null,
     ancestors,
     leaves: leaves.length > 0 ? leaves : [path],
   };
@@ -230,6 +238,7 @@ function bookRow(
     // 「自分の名前を持たない」と読めるようにするため
     title: book.title ?? "",
     author: book.author ?? "",
+    size: book.size ?? null,
     ancestors,
     leaves: [id],
   };
