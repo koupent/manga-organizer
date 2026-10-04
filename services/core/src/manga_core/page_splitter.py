@@ -36,7 +36,9 @@ from manga_core.original_store import (
     content_hash,
     find_original,
     plan_manifest,
+    plan_original,
     read_original,
+    stored_original_hashes,
 )
 from manga_core.page_reorder import (
     OutputPage,
@@ -73,6 +75,7 @@ _SIDE_LATER = "left"
 _CHANGE_NONE = "none"
 _CHANGE_SPLIT = "split"
 _CHANGE_RESTORED = "restored"
+_CHANGE_MERGED = "merged"
 _CHANGE_ADJUSTED = "adjusted"
 _CHANGE_JOINED = "joined"
 
@@ -100,6 +103,12 @@ class SplitRow:
 
     displaced は、対の 2 枚がいま隣り合っていないこと。行は先に出てくる方の
     位置に置かれ、確定するとそこで 2 枚が隣り合う（#133）。
+
+    kept_whole は、見開きのまま残すと利用者が決めたページであること。割って
+    から戻したページ（#138）と、2 ページを結合したページ（#139）がこれに当たる。
+    見開きと判定しても、画面は既定のチェックを入れない。入れると、戻した・
+    結合した直後に読み直した画面でまた「割る」が保留になり、戻せなかった
+    ように見える。
     """
 
     names: tuple[str, ...]
@@ -109,6 +118,7 @@ class SplitRow:
     is_spread: bool
     split: SplitPosition | None
     displaced: bool = False
+    kept_whole: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,6 +141,18 @@ class SplitIntent:
 
 
 @dataclass(frozen=True)
+class MergeIntent:
+    """隣り合う 2 ページを 1 枚の見開きへ結合する、という意図（#139）。
+
+    割った対を戻す意図（2 つの名前と「割らない」）とは型で分ける。同じ形に
+    すると、走査と確定の間に本が変わって対でなくなった 2 枚への「戻す」が、
+    断られずに結合として通ってしまう。
+    """
+
+    names: tuple[str, str]
+
+
+@dataclass(frozen=True)
 class SplitResult:
     """行ぜんぶを適用した結果（#58）。
 
@@ -146,6 +168,8 @@ class SplitResult:
     adjusted_count: int
     # 離れていた対を、位置は変えずに隣り合わせへ戻した数（#133）
     joined_count: int = 0
+    # 隣り合う 2 ページを 1 枚の見開きへ結合した数（#139）
+    merged_count: int = 0
 
 
 def split_halves(image: Image.Image, x: int) -> tuple[Image.Image, Image.Image]:
@@ -178,12 +202,12 @@ def scan_rows(
         facts = _scan_pages(editor, path, progress)
     finally:
         editor.close()
-    return _fold_pairs(path, facts)
+    return _fold_pairs(path, facts, stored_original_hashes(path))
 
 
 def apply_rows(
     archive_path: Path,
-    rows: Sequence[SplitRow | SplitIntent],
+    rows: Sequence[SplitRow | SplitIntent | MergeIntent],
     progress: ProgressCallback | None = None,
 ) -> SplitResult:
     """行ぜんぶを受け取り、split の変化を 1 回の書き直しで適用する。
@@ -235,16 +259,18 @@ def _tally(page_count: int, changes: Counter[str]) -> SplitResult:
     restored = changes[_CHANGE_RESTORED]
     adjusted = changes[_CHANGE_ADJUSTED]
     joined = changes[_CHANGE_JOINED]
+    merged = changes[_CHANGE_MERGED]
     return SplitResult(
         # 1 行も動いていない確定もありうる（画面が走査の結果をそのまま
         # 送り返したとき）。書き直したかどうかではなく、利用者の意図が
         # 何か効いたかどうかを返す
-        changed=bool(split or restored or adjusted or joined),
+        changed=bool(split or restored or adjusted or joined or merged),
         page_count=page_count,
         split_count=split,
         restored_count=restored,
         adjusted_count=adjusted,
         joined_count=joined,
+        merged_count=merged,
     )
 
 
@@ -318,12 +344,19 @@ def _split_marks(ref: OriginalRef | None) -> tuple[str | None, int | None]:
     return side, x if isinstance(x, int) and not isinstance(x, bool) else None
 
 
-def _fold_pairs(path: Path, facts: Sequence[_PageFacts]) -> tuple[SplitRow, ...]:
+def _fold_pairs(
+    path: Path, facts: Sequence[_PageFacts], originals: frozenset[str]
+) -> tuple[SplitRow, ...]:
     """割った対を 1 行へ畳む。行は対のうち先に出てくる方の位置に置く。
 
     並びには頼らない（#133）。ページ並べ替えで左右を入れ替えた対や、離れた
     位置へ動かした対を畳まずにおくと、どちらもただのページとして並び、ZIP に
     元画像が残っているのに戻す手立てが無くなる。
+
+    originals は同梱した元画像のハッシュ。中身がそれと同じページは、見開きの
+    まま残すと決めたものとして印を付ける（#138 #139）。割ってから戻したページは
+    元画像のバイト列そのものを書き戻し、結合したページは結合した 1 枚を元画像
+    として同梱するので、どちらも必ず当たる。
     """
     folded: dict[int, tuple[int, SplitRow]] = {}
     for first, second in _matched_halves(facts):
@@ -341,7 +374,7 @@ def _fold_pairs(path: Path, facts: Sequence[_PageFacts]) -> tuple[SplitRow, ...]
         if index in folded:
             rows.append(folded[index][1])
             continue
-        rows.append(_plain_row(fact))
+        rows.append(_plain_row(fact, kept_whole=fact.digest in originals))
     return tuple(rows)
 
 
@@ -450,7 +483,7 @@ def _split_pair(first: _PageFacts, second: _PageFacts) -> _SplitPair | None:
     return _SplitPair(ref=first.ref, x=first.x, right_first=first.side == _SIDE_EARLIER)
 
 
-def _plain_row(fact: _PageFacts) -> SplitRow:
+def _plain_row(fact: _PageFacts, kept_whole: bool) -> SplitRow:
     """まだ割られていない 1 ページぶんの行"""
     return SplitRow(
         names=(fact.name,),
@@ -459,6 +492,7 @@ def _plain_row(fact: _PageFacts) -> SplitRow:
         height=fact.height,
         is_spread=is_spread(fact.width, fact.height),
         split=None,
+        kept_whole=kept_whole,
     )
 
 
@@ -478,10 +512,12 @@ class _RowPlan:
 def _apply_row(
     editor: ZipPageEditor,
     path: Path,
-    row: SplitRow | SplitIntent,
+    row: SplitRow | SplitIntent | MergeIntent,
     extras: dict[str, bytes],
 ) -> _RowPlan:
     """1 行ぶんの出力ページと記録を組み立てる"""
+    if isinstance(row, MergeIntent):
+        return _merge_pages(editor, path, row.names, extras)
     if len(row.names) == 1:
         if row.split is None:
             return _RowPlan((OutputPage(row.names[0]),), (), extras, _CHANGE_NONE)
@@ -603,6 +639,53 @@ def _rewrite_pair(
     )
 
 
+def _merge_pages(
+    editor: ZipPageEditor,
+    path: Path,
+    names: tuple[str, str],
+    extras: dict[str, bytes],
+) -> _RowPlan:
+    """隣り合う 2 ページを、1 枚の見開きへ貼り合わせる（#139）。
+
+    右綴じなので、先のページを右に、後のページを左に置く。高さが違えば高い方に
+    揃えて縮尺を合わせる。余白で埋めると、後で割り直したときに余白ごと切り
+    出される。
+
+    貼り合わせた 1 枚は元画像として同梱する。開き直したときに「見開きのまま
+    残すと決めたページ」と分かり、割り直してから戻すときの戻り先にもなる。
+
+    隣り合っていない 2 枚は断る。結合した 1 枚は 1 枚目の位置に入るので、
+    離れた 2 枚を通すと、2 枚目が黙って前へ動く。並べ替えは別の経路の仕事。
+    """
+    first_name, second_name = names
+    order = [page.name for page in editor.pages]
+    position = order.index(first_name) if first_name in order else -1
+    if position < 0 or order[position + 1 : position + 2] != [second_name]:
+        raise PageSplitError(f"結合できるのは隣り合う 2 ページです: {names}")
+    right = _rgb(editor.read_entry(first_name))
+    left = _rgb(editor.read_entry(second_name))
+    height = max(right.height, left.height)
+    right, left = _scaled_to(right, height), _scaled_to(left, height)
+    spread = Image.new("RGB", (left.width + right.width, height))
+    spread.paste(left, (0, 0))
+    spread.paste(right, (left.width, 0))
+    data = _encoded(spread, _destination_suffix(first_name))
+    return _RowPlan(
+        outputs=(OutputPage(first_name, data),),
+        dropped=(second_name,),
+        extras=plan_original(path, data, first_name, planned=extras),
+        change=_CHANGE_MERGED,
+    )
+
+
+def _scaled_to(image: Image.Image, height: int) -> Image.Image:
+    """縦横比を保って、高さを揃える"""
+    if image.height == height:
+        return image
+    width = max(1, round(image.width * height / image.height))
+    return image.resize((width, height), Image.Resampling.LANCZOS)
+
+
 def _revalidated_pair(
     editor: ZipPageEditor, path: Path, names: tuple[str, ...]
 ) -> tuple[tuple[_PageFacts, _PageFacts], bool]:
@@ -639,14 +722,18 @@ class _Half:
     derivation: Derivation
 
 
-def _halves_of(source: bytes, name: str, x: int) -> tuple[_Half, _Half]:
-    """バイト列を x で割り、書き戻す形と記録まで揃えて返す"""
+def _rgb(data: bytes) -> Image.Image:
+    """バイト列を RGB の画像として開く。読めなければ断る"""
     try:
-        with Image.open(io.BytesIO(source)) as opened:
-            image = opened.convert("RGB")
+        with Image.open(io.BytesIO(data)) as opened:
+            return opened.convert("RGB")
     except OSError as error:
         raise PageSplitError(f"画像を読めません: {error}") from error
 
+
+def _halves_of(source: bytes, name: str, x: int) -> tuple[_Half, _Half]:
+    """バイト列を x で割り、書き戻す形と記録まで揃えて返す"""
+    image = _rgb(source)
     earlier, later = split_halves(image, x)
     return (
         _half(earlier, name, _SIDE_EARLIER, x, image.width),

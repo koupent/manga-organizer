@@ -1025,7 +1025,7 @@ export interface components {
     };
     /**
      * SplitIntentRowView
-     * @description 画面が送り返す 1 行。名前と割る位置の 2 つきり。
+     * @description 画面が送り返す 1 行。名前と割る位置（と結合するか）だけ。
      *
      *     寸法や出どころは受け取らない。受け取ると、画面が抱えている古い寸法で
      *     切られる余地が残る。
@@ -1038,6 +1038,12 @@ export interface components {
       names: string[];
       /** @description 割る位置。割らない（割る前へ戻す）なら null */
       split: components["schemas"]["SplitPositionView"] | null;
+      /**
+       * Merge
+       * @description 隣り合う 2 ページ（names の 2 つ）を 1 枚の見開きへ結合するか。split は null にする
+       * @default false
+       */
+      merge: boolean;
     };
     /**
      * SplitPositionView

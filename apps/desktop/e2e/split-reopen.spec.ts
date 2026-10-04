@@ -423,6 +423,24 @@ test.describe("ページ分割: 割った本を開き直す", () => {
       "戻したページが、取ってあった割る前の画像と同じバイト列でない",
     ).toBeTruthy();
 
+    // Assert - 読み直した画面でも、戻した見開きにチェックは入り直さない
+    // （#138）。入り直すと「割る」が保留になり、戻せなかったように見える
+    await expect(page.getByTestId("split-page-count")).toHaveText("4 ページ");
+    await expect(cardAt(page, 2)).toHaveAttribute("data-checked", "false");
+    await expect(cardAt(page, 2).getByTestId("split-number")).toHaveAttribute(
+      "data-pending",
+      "false",
+    );
+    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+
+    // Assert - 開き直しても同じ
+    await page.reload();
+    await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4);
+    await expect(cardAt(page, 2)).toHaveAttribute("data-checked", "false");
+    await expect(page.getByTestId("split-status")).toHaveText(
+      "変更はありません",
+    );
+
     await page.context().close();
   });
 });

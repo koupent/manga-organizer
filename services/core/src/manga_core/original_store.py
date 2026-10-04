@@ -247,6 +247,35 @@ def plan_manifest(
     return extras
 
 
+def plan_original(
+    archive_path: Path,
+    source: bytes,
+    source_name: str,
+    planned: Mapping[str, bytes] | None = None,
+) -> dict[str, bytes]:
+    """加工の記録を足さずに、元画像を 1 枚だけ同梱する（#139）。
+
+    2 ページを結合した見開きは、どの 1 枚を加工したものでもないので、記録の形
+    （加工後 -> 元 1 枚）に載らない。それでも元画像として残しておけば、割って
+    から戻したページと同じく「見開きのまま残すと決めたページ」と分かり、後で
+    割ったときにも戻す先がある。
+    """
+    extras: dict[str, bytes] = dict(planned or {})
+    document = _planned_document(Path(archive_path), extras)
+    originals = dict(document.get(_ORIGINALS_KEY, {}))
+    digest = content_hash(source)
+    if digest in originals:
+        return extras
+    entry = original_entry_name(digest, source_name)
+    originals[digest] = entry
+    extras[entry] = source
+    extras[MANIFEST_ENTRY] = _dump_document(
+        originals, dict(document.get(_DERIVED_KEY, {}))
+    )
+    _reject_page_entries(extras)
+    return extras
+
+
 def _planned_document(archive_path: Path, extras: Mapping[str, bytes]) -> dict:
     """記録の土台にする manifest。組み立て中のものがあればそれを使う"""
     raw = extras.get(MANIFEST_ENTRY)
@@ -287,6 +316,17 @@ def find_original(archive_path: Path, image: bytes) -> OriginalRef | None:
     if entry is None:
         return None
     return OriginalRef(hash=current, entry=entry, operations=tuple(operations))
+
+
+def stored_original_hashes(archive_path: Path) -> frozenset[str]:
+    """同梱してある元画像の中身のハッシュ。
+
+    ページの中身がこのどれかと同じなら、そのページは利用者が手を入れたうえで
+    その形に残すと決めたもの。見開きの分割を戻したページ（#138）は元画像の
+    バイト列をそのまま書き戻し、2 ページを結合したページ（#139）は結合した
+    1 枚を元画像として同梱するので、どちらも必ず当たる。
+    """
+    return frozenset(_load_document(Path(archive_path)).get(_ORIGINALS_KEY, {}))
 
 
 def read_original(archive_path: Path, ref: OriginalRef) -> bytes:

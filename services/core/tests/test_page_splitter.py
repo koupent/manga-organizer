@@ -594,6 +594,45 @@ class RestoresTheOriginalTest(SplitFixture):
         # もう一度割ったとき、元の画素をもう引けない
         self.assertEqual(1, len(originals_of(self.archive_path)))
 
+    def test_a_restored_spread_is_marked_kept_whole(self):
+        # Arrange - 割ってから戻す
+        self.build_four_pages()
+        self.split_row(self.archive_path, 1, SPLIT_X)
+        rows = list(self.splitter.scan_rows(self.archive_path))
+        self.splitter.apply_rows(
+            self.archive_path,
+            [
+                replace(row, split=None) if index == 1 else row
+                for index, row in enumerate(rows)
+            ],
+        )
+
+        # Act
+        reopened = self.splitter.scan_rows(self.archive_path)
+
+        # Assert - 戻した見開きは見開きのまま、戻したことの印が付く（#138）。
+        # 印が無いと、画面は判定どおり既定のチェックを入れ、戻した直後に
+        # また「割る」が保留になる
+        self.assertTrue(reopened[1].is_spread)
+        self.assertIsNone(reopened[1].split)
+        self.assertTrue(reopened[1].kept_whole)
+        self.assertEqual(
+            [False, False, False],
+            [row.kept_whole for index, row in enumerate(reopened) if index != 1],
+        )
+
+    def test_a_spread_that_was_never_split_is_not_marked(self):
+        # Arrange
+        self.build_four_pages()
+
+        # Act
+        rows = self.splitter.scan_rows(self.archive_path)
+
+        # Assert - 割ったことの無い見開きには印を付けない。付けると、開いた
+        # ときの既定のチェックが入らず、見開きを割り漏らす
+        self.assertTrue(rows[1].is_spread)
+        self.assertFalse(rows[1].kept_whole)
+
 
 class SplitsSeveralSpreadsAtOnceTest(SplitFixture):
     """1 回の確定で見開きを 2 つ割る。
@@ -1064,3 +1103,148 @@ class EncodedBytesMatchTheEntryNameTest(SplitFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def small_bytes(colour: str, width: int, height: int) -> bytes:
+    """寸法を選べる単ページ。高さの違う 2 枚の結合に使う"""
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), colour).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+class MergesTwoPagesTest(SplitFixture):
+    """隣り合う 2 ページを 1 枚の見開きへ結合する（#139）"""
+
+    def build_tall_pages(self) -> list[str]:
+        build_archive(
+            self.archive_path,
+            {
+                f"p{index}.png": tall_bytes(colour)
+                for index, colour in enumerate(("#202020", *TALL_COLOURS), 1)
+            },
+        )
+        return page_names(self.archive_path)
+
+    def rows_merging(self, names: list[str], first: int) -> list:
+        """first 枚目と次の 1 枚を結合し、残りはそのまま送る行"""
+        rows: list = []
+        for index, name in enumerate(names):
+            if index == first + 1:
+                continue
+            if index == first:
+                rows.append(self.splitter.MergeIntent(names=(name, names[first + 1])))
+            else:
+                rows.append(self.splitter.SplitIntent(names=(name,), split=None))
+        return rows
+
+    def test_two_pages_become_one_spread_with_the_earlier_page_on_the_right(self):
+        # Arrange - 4 ページの 2・3 枚目を結合する
+        names = self.build_tall_pages()
+
+        # Act
+        result = self.splitter.apply_rows(
+            self.archive_path, self.rows_merging(names, 1)
+        )
+
+        # Assert - 1 枚減り、結合した数が返る
+        merged_names = page_names(self.archive_path)
+        self.assertEqual(3, len(merged_names))
+        self.assertEqual(1, result.merged_count)
+        self.assertTrue(result.changed)
+        self.assertEqual(3, result.page_count)
+
+        # Assert - 右綴じなので、先のページ（#101010）が右、次（#303030）が左
+        merged = entry_data(self.archive_path, merged_names[1])
+        self.assertEqual((2400, 1800), size_of(merged))
+        self.assertEqual(TALL_COLOURS[0], colour_at(merged, 2390, 10))
+        self.assertEqual(TALL_COLOURS[1], colour_at(merged, 10, 10))
+
+        # Assert - 前後のページはそのまま
+        self.assertEqual(
+            ["#202020", TALL_COLOURS[2]],
+            [
+                colour_at(entry_data(self.archive_path, merged_names[i]), 10, 10)
+                for i in (0, 2)
+            ],
+        )
+
+        # Assert - 結合した 1 枚は元画像として残り、開き直すと見開きのまま
+        # 残すページとして出る。印が無いと、画面は判定どおりチェックを入れ、
+        # 結合した直後にまた「割る」が保留になる
+        self.assertIn(content_hash(merged), originals_of(self.archive_path))
+        rows = self.splitter.scan_rows(self.archive_path)
+        self.assertEqual(3, len(rows))
+        self.assertTrue(rows[1].is_spread)
+        self.assertIsNone(rows[1].split)
+        self.assertTrue(rows[1].kept_whole)
+
+    def test_pages_of_different_heights_are_scaled_to_the_taller(self):
+        # Arrange - 1200x1800 と 400x600。低い方を 3 倍して高さを揃える
+        build_archive(
+            self.archive_path,
+            {
+                "p1.png": tall_bytes("#101010"),
+                "p2.png": small_bytes("#505050", 400, 600),
+            },
+        )
+        names = page_names(self.archive_path)
+
+        # Act
+        self.splitter.apply_rows(self.archive_path, self.rows_merging(names, 0))
+
+        # Assert - 余白で埋めず、縮尺を合わせる
+        (merged_name,) = page_names(self.archive_path)
+        merged = entry_data(self.archive_path, merged_name)
+        self.assertEqual((2400, 1800), size_of(merged))
+        self.assertEqual("#505050", colour_at(merged, 10, 1790))
+
+    def test_refuses_pages_that_are_not_next_to_each_other(self):
+        # Arrange
+        names = self.build_tall_pages()
+        before = self.archive_path.read_bytes()
+        rows = [
+            self.splitter.MergeIntent(names=(names[0], names[2])),
+            self.splitter.SplitIntent(names=(names[1],), split=None),
+            self.splitter.SplitIntent(names=(names[3],), split=None),
+        ]
+
+        # Act / Assert - 断る。通すと、3 枚目が黙って 2 枚目より前へ動く
+        with self.assertRaises(self.splitter.PageSplitError):
+            self.splitter.apply_rows(self.archive_path, rows)
+        self.assertEqual(before, self.archive_path.read_bytes())
+
+    def test_a_merged_spread_can_be_split_and_restored(self):
+        # Arrange - 結合する
+        names = self.build_tall_pages()
+        self.splitter.apply_rows(self.archive_path, self.rows_merging(names, 1))
+        merged = entry_data(self.archive_path, page_names(self.archive_path)[1])
+
+        # Act - 結合した見開きを、いつもの分割で割る
+        self.split_row(self.archive_path, 1, 1200)
+
+        # Assert - 4 ページに戻り、右半分が先のページになる
+        split_names = page_names(self.archive_path)
+        self.assertEqual(4, len(split_names))
+        self.assertEqual(
+            [TALL_COLOURS[0], TALL_COLOURS[1]],
+            [
+                colour_at(entry_data(self.archive_path, split_names[i]), 10, 10)
+                for i in (1, 2)
+            ],
+        )
+
+        # Act - 割った対を戻す
+        rows = list(self.splitter.scan_rows(self.archive_path))
+        self.assertEqual(2, len(rows[1].names), f"対として畳めていない: {rows}")
+        self.splitter.apply_rows(
+            self.archive_path,
+            [
+                replace(row, split=None) if index == 1 else row
+                for index, row in enumerate(rows)
+            ],
+        )
+
+        # Assert - 結合した 1 枚がそのまま戻る
+        restored_names = page_names(self.archive_path)
+        self.assertEqual(3, len(restored_names))
+        self.assertEqual(merged, entry_data(self.archive_path, restored_names[1]))

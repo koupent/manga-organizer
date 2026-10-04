@@ -108,7 +108,16 @@ PAGE_HEIGHT = 1800
 
 # 走査が返す 1 行の形。鍵が欠けると画面は「割れない行」と「載せ忘れ」を
 # 区別できないので、集合ごと固定する
-ROW_KEYS = {"names", "width", "height", "source", "is_spread", "split", "displaced"}
+ROW_KEYS = {
+    "names",
+    "width",
+    "height",
+    "source",
+    "is_spread",
+    "split",
+    "displaced",
+    "kept_whole",
+}
 SCAN_KEYS = {"archive", "page_count", "token", "rows"}
 CONFIRM_KEYS = {
     "changed",
@@ -117,6 +126,7 @@ CONFIRM_KEYS = {
     "restored_count",
     "adjusted_count",
     "joined_count",
+    "merged_count",
 }
 
 THUMBNAIL_WIDTH = 240
@@ -613,6 +623,10 @@ class SplitRestoreTest(SplitApiTestBase):
         self.assertEqual(
             (SPREAD_WIDTH, SPREAD_HEIGHT), (restored["width"], restored["height"])
         )
+        # 見開きのまま残すと決めた印が付く（#138）。画面はこれを見て既定の
+        # チェックを入れない。入れると戻した直後にまた「割る」が保留になる
+        self.assertIs(True, restored["is_spread"], restored)
+        self.assertIs(True, restored["kept_whole"], restored)
 
         # Assert - 枚数と寸法だけでは、片方の半分を引き伸ばした絵も通る。
         # 左が赤・右が青の 1 枚に戻っていることまで見る
@@ -674,6 +688,87 @@ class SeparatedPairTest(SplitApiTestBase):
         # Assert - 寄せてよいのは対の 2 枚目だけ。ほかの並べ替えは別の経路の仕事
         self.assertEqual(400, refused.status_code, refused.text)
         self.assertEqual(before, self.archive.read_bytes(), "断ったのに書き換えている")
+
+
+class MergeTest(SplitApiTestBase):
+    """7. 隣り合う 2 ページを 1 枚の見開きへ結合できること（#139）"""
+
+    def setUp(self):
+        super().setUp()
+        self.archive = build_archive(
+            self.work_dir / "tall.zip",
+            {
+                "001.png": tall_bytes("#101010"),
+                "002.png": tall_bytes("#202020"),
+                "003.png": tall_bytes("#303030"),
+            },
+        )
+
+    def test_two_adjacent_pages_become_one_spread(self):
+        # Arrange
+        scanned = self.scan(self.archive)
+        first, second, third = (row["names"][0] for row in scanned["rows"])
+
+        # Act
+        result = self.confirmed(
+            self.archive,
+            scanned["token"],
+            [
+                {"names": [first, second], "split": None, "merge": True},
+                {"names": [third], "split": None},
+            ],
+        )
+
+        # Assert
+        self.assertIs(True, result["changed"], result)
+        self.assertEqual(1, result["merged_count"], result)
+        self.assertEqual(2, result["page_count"], result)
+
+        # Assert - 開き直すと、見開きのまま残すページとして出る
+        after = self.scan(self.archive)
+        merged = after["rows"][0]
+        self.assertIs(True, merged["is_spread"], merged)
+        self.assertIs(True, merged["kept_whole"], merged)
+        self.assertIsNone(merged["split"], merged)
+
+    def test_pages_that_are_not_adjacent_are_refused(self):
+        # Arrange
+        scanned = self.scan(self.archive)
+        first, second, third = (row["names"][0] for row in scanned["rows"])
+        before = self.archive.read_bytes()
+
+        # Act - 1 枚目と 3 枚目の結合。結合した 1 枚は 1 枚目の位置に入るので、
+        # 通すと 3 枚目が黙って前へ動く
+        refused = self.submit_confirm(
+            self.archive,
+            scanned["token"],
+            [
+                {"names": [first, third], "split": None, "merge": True},
+                {"names": [second], "split": None},
+            ],
+        )
+
+        # Assert
+        self.assertEqual(400, refused.status_code, refused.text)
+        self.assertEqual(before, self.archive.read_bytes(), "断ったのに書き換えている")
+
+    def test_a_merge_with_a_split_position_is_refused(self):
+        # Arrange
+        scanned = self.scan(self.archive)
+        first, second, third = (row["names"][0] for row in scanned["rows"])
+
+        # Act - 結合と分割を同時に頼む行は、どちらの意図か決められない
+        refused = self.submit_confirm(
+            self.archive,
+            scanned["token"],
+            [
+                {"names": [first, second], "split": {"x": 600}, "merge": True},
+                {"names": [third], "split": None},
+            ],
+        )
+
+        # Assert
+        self.assertEqual(400, refused.status_code, refused.text)
 
 
 class SplitScanSecurityTest(SplitApiTestBase):

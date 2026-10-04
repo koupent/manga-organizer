@@ -39,7 +39,7 @@ const BATCH_MODES: { id: Mode; label: string }[] = [
 const BOOK_MODES: { id: Mode; label: string }[] = [
   { id: "thumbnail", label: "サムネイル作成" },
   { id: "reorder", label: "ページ並べ替え" },
-  { id: "split", label: "ページ分割" },
+  { id: "split", label: "ページ分割・結合" },
 ];
 const MODES = [...BATCH_MODES, ...BOOK_MODES];
 
@@ -77,7 +77,7 @@ function staleAfter(
 const PICKER_TITLES: Record<ArchiveMode, string> = {
   reorder: "並べ替えるアーカイブ",
   thumbnail: "サムネイルを作るアーカイブ",
-  split: "ページを分割するアーカイブ",
+  split: "ページを分割・結合するアーカイブ",
 };
 
 const isArchiveMode = (mode: Mode): mode is ArchiveMode => mode !== "organize";

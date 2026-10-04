@@ -40,6 +40,11 @@ export type SplitScanRow = {
   split: { x: number } | null;
   /** 割った対の 2 枚がいま隣り合っていないか（#133） */
   displaced: boolean;
+  /**
+   * 見開きのまま残すと決めたページか。割ってから戻した（#138）・2 ページを
+   * 結合した（#139）ページ。見開きでも既定のチェックを入れない
+   */
+  kept_whole: boolean;
 };
 
 /** 走査ジョブの結果（manga_api.split_job.SplitScanView） */
@@ -58,6 +63,7 @@ export type SplitConfirmResult = {
   restored_count: number;
   adjusted_count: number;
   joined_count: number;
+  merged_count: number;
 };
 
 /**
@@ -82,6 +88,11 @@ export type SplitRow = {
    * よう、開いた時点から保留として数える
    */
   displaced: boolean;
+  /**
+   * 次の行と 1 枚の見開きへ結合する（#139）。保留の 1 つで、確定するまで
+   * 書き込まない。結合される次の行は、この行に吸い込まれて格子から消える
+   */
+  mergeNext: boolean;
   stored: { checked: boolean; x: number };
 };
 
@@ -126,6 +137,7 @@ export function scanResultOf(value: unknown): SplitScanResult {
       is_spread: row.is_spread === true,
       split: positionOf(row.split),
       displaced: row.displaced === true,
+      kept_whole: row.kept_whole === true,
     };
   });
   return {
@@ -151,6 +163,7 @@ export function confirmResultOf(value: unknown): SplitConfirmResult {
     restored_count: count("restored_count"),
     adjusted_count: count("adjusted_count"),
     joined_count: count("joined_count"),
+    merged_count: count("merged_count"),
   };
 }
 
@@ -180,10 +193,14 @@ export function clampSplit(x: number, width: number): number {
  * 漏れた比のページに付けて回らないのは、割ってはいけない縦長が黙って 2 ページに
  * 割られるのを避けるため。逆に、既に割ってある行は比が閾値の下でもチェックを
  * 入れる。外れていたら、開き直しただけで「割る前へ戻します」になってしまう。
+ *
+ * 割ってから戻した・結合したページには、見開きでも入れない（#138 #139）。
+ * 入れると、直後に読み直した画面でまた「割る」が保留になり、戻せなかった
+ * ように見える。
  */
 export function rowsFrom(result: SplitScanResult): SplitRow[] {
   return result.rows.map((row) => {
-    const checked = row.split !== null || row.is_spread;
+    const checked = row.split !== null || (row.is_spread && !row.kept_whole);
     const x = row.split?.x ?? centerOf(row.width);
     return {
       names: row.names,
@@ -194,6 +211,7 @@ export function rowsFrom(result: SplitScanResult): SplitRow[] {
       checked,
       x,
       displaced: row.displaced,
+      mergeNext: false,
       stored: { checked: row.split !== null, x },
     };
   });
@@ -212,8 +230,36 @@ export function isWide(row: SplitRow): boolean {
  */
 export function isPending(row: SplitRow): boolean {
   return (
+    row.mergeNext ||
     row.checked !== row.stored.checked ||
     (row.checked && (row.x !== row.stored.x || row.displaced))
+  );
+}
+
+/** 前の行に結合されて、格子から消えている行か（#139） */
+export function isAbsorbed(rows: SplitRow[], index: number): boolean {
+  return rows[index - 1]?.mergeNext === true;
+}
+
+/**
+ * index の行を次の行と結合できるか（#139）。
+ *
+ * 単ページ 2 枚に限る。割る行・割ってある対・横長を混ぜると、結合と分割の
+ * どちらが効くのか画面から読めなくなる。3 枚以上を数珠つなぎにもしない。
+ */
+export function canMergeNext(rows: SplitRow[], index: number): boolean {
+  const single = (row: SplitRow | undefined) =>
+    row !== undefined &&
+    row.names.length === 1 &&
+    !row.checked &&
+    !row.detected &&
+    !isWide(row);
+  const next = rows[index + 1];
+  return (
+    single(rows[index]) &&
+    single(next) &&
+    !next.mergeNext &&
+    !isAbsorbed(rows, index)
   );
 }
 
@@ -228,6 +274,7 @@ export function restoredRows(rows: SplitRow[]): SplitRow[] {
     ...row,
     checked: row.stored.checked,
     x: row.stored.x,
+    mergeNext: false,
   }));
 }
 
@@ -240,10 +287,14 @@ export function replaceRow(
   return rows.map((row, at) => (at === index ? { ...row, ...change } : row));
 }
 
-/** いまのチェックのままで確定したときの、行ごとのページ番号 */
+/**
+ * いまのチェックのままで確定したときの、行ごとのページ番号。
+ * 結合されて消える行は、吸い込んだ行と同じ番号になる
+ */
 export function pageNumbers(rows: SplitRow[]): number[][] {
   let next = 1;
-  return rows.map((row) => {
+  return rows.map((row, index) => {
+    if (isAbsorbed(rows, index)) return [next - 1];
     const numbers = row.checked ? [next, next + 1] : [next];
     next += numbers.length;
     return numbers;
@@ -259,7 +310,39 @@ export function numberLabel(numbers: number[]): string {
 
 /** 確定したときのページ数 */
 export function resultTotal(rows: SplitRow[]): number {
-  return rows.reduce((total, row) => total + (row.checked ? 2 : 1), 0);
+  return rows.reduce(
+    (total, row, index) =>
+      total + (isAbsorbed(rows, index) ? 0 : row.checked ? 2 : 1),
+    0,
+  );
+}
+
+/**
+ * 確定で送る行（manga_api.split_job.SplitIntentRowView）。
+ *
+ * 結合する 2 行は 1 行にまとめ、結合することを明示して送る。割った対を戻す
+ * 行と同じ形（2 つの名前と「割らない」）で送ると、サイドカーは見分けられない。
+ */
+export function intentRows(rows: SplitRow[]) {
+  return rows.flatMap((row, index) => {
+    if (isAbsorbed(rows, index)) return [];
+    if (row.mergeNext) {
+      return [
+        {
+          names: [...row.names, ...rows[index + 1].names],
+          split: null,
+          merge: true,
+        },
+      ];
+    }
+    return [
+      {
+        names: row.names,
+        split: row.checked ? { x: row.x } : null,
+        merge: false,
+      },
+    ];
+  });
 }
 
 /**
@@ -283,18 +366,20 @@ export function summaryOf(rows: SplitRow[]): string {
       row.x === row.stored.x &&
       row.displaced,
   ).length;
+  const merged = rows.filter((row) => row.mergeNext).length;
 
   const parts: string[] = [];
   if (fresh > 0) parts.push(`${fresh} 枚を 2 ページに分けます`);
   if (moved > 0) parts.push(`${moved} 枚の分割位置を直します`);
   if (reverted > 0) parts.push(`${reverted} 枚を 1 ページに戻します`);
   if (joined > 0) parts.push(`離れた見開き ${joined} 組を隣り合わせに戻します`);
+  if (merged > 0) parts.push(`${merged} 組を 1 ページに結合します`);
   if (parts.length === 0) {
     return rows.some(isCandidate)
       ? "変更はありません"
       : "見開きは見つかりませんでした";
   }
-  const changesCount = fresh > 0 || reverted > 0;
+  const changesCount = fresh > 0 || reverted > 0 || merged > 0;
   const suffix = changesCount
     ? `（全 ${resultTotal(rows)} ページになります）`
     : "";
@@ -323,6 +408,9 @@ export function doneMessage(result: SplitConfirmResult): string {
     parts.push(
       `離れた見開き ${result.joined_count} 組を隣り合わせに戻しました`,
     );
+  }
+  if (result.merged_count > 0) {
+    parts.push(`${result.merged_count} 組を 1 ページに結合しました`);
   }
   if (parts.length === 0) return "変更はありませんでした";
   return `${parts.join(" · ")}（全 ${result.page_count} ページ）`;
