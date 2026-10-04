@@ -27,6 +27,7 @@ from manga_core.original_store import (
     Operation,
     OriginalStoreError,
     find_original,
+    plan_edit,
     plan_record,
     read_original,
 )
@@ -254,14 +255,18 @@ def _plan_original(
     produced: bytes,
     transform: CoverTransform,
 ) -> dict[str, bytes]:
-    """加工前の画像と紐づけの記録を、書き足すエントリとして組み立てる"""
-    return plan_record(
+    """加工前の画像と紐づけの記録を、書き足すエントリとして組み立てる。
+
+    サムネイルを作ったこと（#143）も同じ記録に残す
+    """
+    planned = plan_record(
         archive_path,
         source=original,
         source_name=name,
         produced=produced,
         operations=_transform_operations(transform),
     )
+    return plan_edit(archive_path, "thumbnail", planned=planned)
 
 
 def _source_pixels(archive_path: Path, stored: bytes, from_original: bool) -> bytes:

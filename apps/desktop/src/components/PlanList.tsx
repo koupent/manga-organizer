@@ -3,9 +3,7 @@ import {
   BookMarked,
   CircleCheck,
   Folder,
-  Image as ImageIcon,
   Info,
-  ListOrdered,
   Package,
   TriangleAlert,
 } from "lucide-react";
@@ -22,9 +20,12 @@ import {
 import { cn } from "../lib/utils";
 import { readDigits } from "../lib/volumes";
 import { parentDirectory } from "../path";
-import { SHORTCUT_SIZE, type HandoffMode } from "./ProducedList";
+import {
+  EditShortcuts,
+  type EditMarks,
+  type HandoffMode,
+} from "./ProducedList";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 
 /** 印の言い換え。知らない印が来ても、印そのものは消さずに素で出す */
@@ -113,16 +114,6 @@ const ORIGIN_WIDTH_PX = 260;
 const DIMMED =
   "opacity-45 group-hover:opacity-100 group-focus-within:opacity-100";
 
-/**
- * 行に乗せている間だけ見せる操作（近道）の見え方。
- *
- * 席は常に空けておき、見え方だけを切り替える。乗せてから初めて置くと行の
- * 中身が押し出され、狙って押せなくなる。Tab で辿り着いたときにも見えないと
- * 押しどころが分からないので、焦点でも出す。
- */
-const REVEAL_ON_ROW =
-  "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100";
-
 type PlanListProps = {
   rows: PlanRow[];
   /** 外した葉の鍵。行そのものは消さず、薄く残す */
@@ -136,6 +127,8 @@ type PlanListProps = {
   onToggle: (row: PlanRow, keep: boolean) => void;
   /** 整理済みの本を、そのまま次の画面へ読み込ませる */
   onOpenArchive: (path: string, mode: HandoffMode) => void;
+  /** 本ごとの編集済みの種類。整理済みの行の近道に印を出す（#143） */
+  edits: EditMarks;
   /** 利用者が巻数を直した本の鍵 */
   corrected: ReadonlySet<string>;
   /** 作る本どうしで名前が重なった本の鍵 */
@@ -173,6 +166,7 @@ export function PlanList({
   locked,
   onToggle,
   onOpenArchive,
+  edits,
   corrected,
   collided,
   onCorrect,
@@ -193,6 +187,7 @@ export function PlanList({
           locked={locked}
           onToggle={onToggle}
           onOpenArchive={onOpenArchive}
+          edited={edits[row.source] ?? []}
           corrected={corrected.has(row.id)}
           collided={collided.has(row.id)}
           onCorrect={onCorrect}
@@ -211,6 +206,7 @@ type PlanListRowProps = {
   locked: boolean;
   onToggle: (row: PlanRow, keep: boolean) => void;
   onOpenArchive: (path: string, mode: HandoffMode) => void;
+  edited: readonly string[];
   corrected: boolean;
   collided: boolean;
   onCorrect: (row: PlanRow, volume: number | null) => void;
@@ -225,6 +221,7 @@ function PlanListRow({
   locked,
   onToggle,
   onOpenArchive,
+  edited,
   corrected,
   collided,
   onCorrect,
@@ -342,11 +339,13 @@ function PlanListRow({
         押し戻され、その行にすることが無いと一目で読めなくなる。
       */}
       {finished ? (
-        <RowShortcuts
+        <EditShortcuts
           name={name}
           // 渡すのは今ディスク上に在るファイル。これから作られる行き先では
           // まだ開けない
-          source={row.source}
+          path={row.source}
+          edited={edited}
+          testIdPrefix="plan"
           onOpen={onOpenArchive}
         />
       ) : null}
@@ -410,48 +409,6 @@ function RowBadges({
           {issueLabel(issue)}
         </Badge>
       ))}
-    </>
-  );
-}
-
-/**
- * 整理済みの行に置く、次の作業への近道。
- *
- * 出来たファイルの一覧（`ProducedList`）と同じ顔・同じ受け渡しにする。同じ
- * ことをする近道が画面ごとに違う顔をしていると、押す前に読み直すことになる。
- * 各画面は今までどおり単独で使えるのが主で、これは任意の近道でしかない。
- */
-function RowShortcuts({
-  name,
-  source,
-  onOpen,
-}: {
-  name: string;
-  source: string;
-  onOpen: (path: string, mode: HandoffMode) => void;
-}) {
-  return (
-    <>
-      <Button
-        variant="ghost"
-        className={cn(SHORTCUT_SIZE, REVEAL_ON_ROW)}
-        data-testid="plan-to-thumbnail"
-        title={`${name} のサムネイルを作る`}
-        onClick={() => onOpen(source, "thumbnail")}
-      >
-        <ImageIcon />
-        サムネイル
-      </Button>
-      <Button
-        variant="ghost"
-        className={cn(SHORTCUT_SIZE, REVEAL_ON_ROW)}
-        data-testid="plan-to-reorder"
-        title={`${name} のページを並べ替える`}
-        onClick={() => onOpen(source, "reorder")}
-      >
-        <ListOrdered />
-        ページ
-      </Button>
     </>
   );
 }

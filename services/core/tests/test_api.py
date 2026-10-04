@@ -37,7 +37,7 @@ def make_page(color: str = "navy") -> bytes:
 # いま公開している /api/ の経路数。経路を app.routes から数え直すテストが
 # 「1 つも見つからないまま合格」する空振りに落ちないための下限。経路を
 # 増やしたらここも上げる
-PUBLISHED_API_ROUTE_COUNT = 22
+PUBLISHED_API_ROUTE_COUNT = 23
 
 # パスらしい引数を名前で見分ける手がかり。名前で拾う以上、これに当たらない
 # 名前を付けられれば見落とすので、拾いすぎる側に倒してある
@@ -358,6 +358,7 @@ class AllowedRootsTest(ApiTestBase):
             GuardedCase(
                 "POST", "/api/jobs/analyze", "archives", body(), "archive_list", 202
             ),
+            GuardedCase("POST", "/api/edits", "paths", body(), "path_list", 200),
             GuardedCase(
                 "POST",
                 "/api/jobs/organize",
@@ -387,6 +388,8 @@ class AllowedRootsTest(ApiTestBase):
             return {"path": str(directory)}
         if shape == "archive_list":
             return {"archives": [str(archive)]}
+        if shape == "path_list":
+            return {"paths": [str(archive)]}
         if shape == "output_directory":
             return {"output_directory": str(directory / "出力")}
         return {"archive": str(archive)}
@@ -687,8 +690,12 @@ class JobTest(ApiTestBase):
 
         job = self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
         self.assertEqual("succeeded", job["state"], job.get("error"))
+        # 並べ替えたことは同梱の記録に残る（#143）。ページはそれ以外
         with zipfile.ZipFile(self.archive) as archive:
-            self.assertEqual(["001.jpg", "002.jpg", "003.jpg"], archive.namelist())
+            self.assertEqual(
+                [".manga-organizer/manifest.json", "001.jpg", "002.jpg", "003.jpg"],
+                archive.namelist(),
+            )
 
     def test_reports_a_failed_job_without_crashing(self):
         # Act - ページ数が合わない並び順

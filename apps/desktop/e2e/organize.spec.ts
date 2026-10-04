@@ -922,14 +922,20 @@ test.describe("整理後の受け渡し", () => {
       ),
     ).toEqual(absolute);
 
-    // Assert - 各行から次の作業へ移る導線がある
+    // Assert - 各行から 1 冊を編集する 3 画面へ移る導線がある（#143）。
+    // アイコンだけで、何をするかは乗せたときの説明で分かる。整理しただけの
+    // 本には、まだ編集済みの印は無い
     for (const index of [0, 1]) {
-      await expect(
-        items.nth(index).getByTestId("produced-to-thumbnail"),
-      ).toContainText("サムネイル");
-      await expect(
-        items.nth(index).getByTestId("produced-to-reorder"),
-      ).toContainText("ページ");
+      const name = expected[index];
+      for (const [mode, action] of [
+        ["thumbnail", "サムネイルを作る"],
+        ["reorder", "ページを並べ替える"],
+        ["split", "ページを分割・結合する"],
+      ] as const) {
+        const shortcut = items.nth(index).getByTestId(`produced-to-${mode}`);
+        await expect(shortcut).toHaveAttribute("title", `${name} の${action}`);
+        await expect(shortcut).toHaveAttribute("data-edited", "false");
+      }
     }
   });
 
@@ -998,6 +1004,59 @@ test.describe("整理後の受け渡し", () => {
 
     // Assert - 中身も 2 件目のもの。ページ数で 1 件目と見分ける
     await expect(page.getByTestId("page-card")).toHaveCount(3);
+  });
+
+  test("出来たファイルの行からページ分割・結合へも移れ、編集した画面には印が付く", async ({
+    page,
+  }) => {
+    // Arrange
+    const paths = writeVolumes("受け渡し印");
+    const output = join(sidecar.workDir, "out-handoff-marks");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await organizeAll(page, "印を見る作品", "印を見る著者", paths);
+    const expected = producedNames(output);
+    expect(expected).toHaveLength(2);
+    const item = (name: string) =>
+      page.getByTestId("produced-item").filter({ hasText: name });
+
+    // Act - ページ分割・結合へ移る（#143）
+    await item(expected[1]).getByTestId("produced-to-split").click();
+
+    // Assert - そのファイルを読み込んだ状態で移る
+    await expect(page.getByTestId("mode-split")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("archive-name")).toHaveText(expected[1]);
+
+    // Act - 戻って、同じ本のサムネイルを作る
+    await page.getByTestId("mode-organize").click();
+    await item(expected[1]).getByTestId("produced-to-thumbnail").click();
+    await page.getByTestId("apply-thumbnail").click();
+    await expect(page.getByTestId("cover-status")).toContainText(
+      "加工しました",
+      { timeout: 30_000 },
+    );
+    await page.getByTestId("mode-organize").click();
+
+    // Assert - サムネイルの近道にだけ編集済みの印が付く。見ただけの分割・
+    // 結合と、触っていないもう 1 冊には付かない
+    const thumbnail = item(expected[1]).getByTestId("produced-to-thumbnail");
+    await expect(thumbnail).toHaveAttribute("data-edited", "true");
+    await expect(thumbnail).toHaveAttribute(
+      "title",
+      `${expected[1]} のサムネイルを作る（編集済み）`,
+    );
+    await expect(
+      item(expected[1]).getByTestId("produced-to-split"),
+    ).toHaveAttribute("data-edited", "false");
+    await expect(
+      item(expected[1]).getByTestId("produced-to-reorder"),
+    ).toHaveAttribute("data-edited", "false");
+    await expect(
+      item(expected[0]).getByTestId("produced-to-thumbnail"),
+    ).toHaveAttribute("data-edited", "false");
   });
 
   test("整理する前は出来たファイルの一覧が出ない", async ({ page }) => {

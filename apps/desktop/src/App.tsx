@@ -444,6 +444,9 @@ export function App() {
               outputDirectory={outputDirectory}
               onOutputDirectoryChange={setOutputDirectory}
               onOpenProduced={openArchiveIn}
+              editsVersion={
+                versions.thumbnail + versions.reorder + versions.split
+              }
               onAddSources={addSources}
               nativeDragging={nativeDragging}
               flashing={flashing}

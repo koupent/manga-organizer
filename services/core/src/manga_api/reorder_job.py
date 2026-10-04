@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from manga_api.jobs import ProgressReporter
 from manga_api.thumbnails import ThumbnailCache
+from manga_core.original_store import plan_edit
 from manga_core.page_reorder import ZipPageEditor
 
 
@@ -32,11 +33,15 @@ def reorder_work(
     def work(report: ProgressReporter) -> dict[str, Any]:
         editor = ZipPageEditor(path)
         try:
+            # 並べ替えたこと（#143）を記録に残す。順序が変わらない保存では
+            # 残さない。書き足すものがあると、何も変わらない保存でも書き直す
+            moved = list(request.order) != [page.name for page in editor.pages]
             result = editor.apply_order(
                 request.order,
                 progress=lambda current, total: report(
                     current=current, total=total, message="書き換え中"
                 ),
+                extra_entries=plan_edit(path, "reorder") if moved else None,
             )
         finally:
             editor.close()

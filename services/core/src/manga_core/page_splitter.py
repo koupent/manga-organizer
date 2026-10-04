@@ -35,6 +35,7 @@ from manga_core.original_store import (
     OriginalStoreError,
     content_hash,
     find_original,
+    plan_edit,
     plan_manifest,
     plan_original,
     read_original,
@@ -240,6 +241,10 @@ def apply_rows(
             dropped.extend(planned.dropped)
             extras = planned.extras
             changes[planned.change] += 1
+        if set(changes) - {_CHANGE_NONE}:
+            # 分割・結合したこと（#143）を記録に残す。何も変わらない確定では
+            # 残さない。書き足すものがあると、それだけで書き直しになる
+            extras = plan_edit(path, "split", planned=extras)
         editor.apply_pages(
             outputs,
             progress=progress,

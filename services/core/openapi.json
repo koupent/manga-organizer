@@ -164,6 +164,59 @@
         }
       }
     },
+    "/api/edits": {
+      "post": {
+        "summary": "Edits",
+        "description": "本ごとに、サムネイル・並べ替え・分割結合のどれを施したかを返す。\n\n整理の画面が、近道のアイコンに編集済みの印を出すのに使う（#143）。\n読むのは本の中の記録だけなので、一覧の冊数ぶんまとめて 1 回で返す。",
+        "operationId": "edits_api_edits_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditsView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/resolve": {
       "post": {
         "summary": "Resolve",
@@ -1579,6 +1632,45 @@
         ],
         "title": "EdgeColorsView",
         "description": "画像の 4 辺の縁の色（#rrggbb）。\n\n切り抜き枠が画像の外へはみ出した所は、サイドカーがこの色で塗る。画面は\n同じ色で見本を描くので、確定する前に仕上がりが見える（#130）。向きは\n回す前の画像のもの。"
+      },
+      "EditsRequest": {
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paths",
+            "description": "アーカイブの絶対パス"
+          }
+        },
+        "type": "object",
+        "required": [
+          "paths"
+        ],
+        "title": "EditsRequest",
+        "description": "編集済みの種類を知りたい本の一覧（#143）"
+      },
+      "EditsView": {
+        "properties": {
+          "edits": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Edits",
+            "description": "受け取ったパスごとの編集の種類（thumbnail / reorder / split）。記録の無い本・読めない本は空"
+          }
+        },
+        "type": "object",
+        "required": [
+          "edits"
+        ],
+        "title": "EditsView",
+        "description": "本ごとの編集済みの種類（#143）"
       },
       "HTTPValidationError": {
         "properties": {

@@ -54,7 +54,7 @@ import { SourceList, type SourceProblem } from "./organize/SourceList";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
 import { PlanList } from "./PlanList";
-import { ProducedList, type HandoffMode } from "./ProducedList";
+import { ProducedList, type EditMarks, type HandoffMode } from "./ProducedList";
 import { Button } from "./ui/button";
 import { Empty } from "./ui/empty";
 import { SectionTitle } from "./ui/section-title";
@@ -81,6 +81,11 @@ type OrganizePanelProps = {
   onOutputDirectoryChange: (path: string) => void;
   /** 出来たファイルを、指定した画面へ読み込んだ状態で開く */
   onOpenProduced: (path: string, mode: HandoffMode) => void;
+  /**
+   * 1 冊を編集する画面が本を書き換えるたびに進む世代。進んだら、近道に
+   * 出す編集済みの印を読み直す（#143）
+   */
+  editsVersion?: number;
   /** 投入に足す。既に入っているものは増やさず光らせる（App が決める） */
   onAddSources: (paths: string[]) => void;
   /** エクスプローラーから窓の上へ持ってきている最中か（Tauri のドラッグ） */
@@ -112,6 +117,7 @@ export function OrganizePanel({
   outputDirectory,
   onOutputDirectoryChange,
   onOpenProduced,
+  editsVersion = 0,
   onAddSources,
   nativeDragging = false,
   flashing = new Set<string>(),
@@ -375,6 +381,34 @@ export function OrganizePanel({
     () => applyVolumes(analyzedRows, volumes),
     [analyzedRows, volumes],
   );
+
+  // 近道に出す編集済みの印（#143）。相手は近道を置く本、つまり整理済みの行と
+  // 出来たファイル。並びが変わったときと、1 冊を編集する画面が本を書き換えた
+  // ときに読み直す。鍵は 1 本の文字列にまとめ、描画のたびに配列が作り直されても
+  // 問い合わせが重ならないようにする
+  const [edits, setEdits] = useState<EditMarks>({});
+  const editTargets = [
+    ...new Set([
+      ...rows
+        .filter((row) => row.kind === "book" && row.organized)
+        .map((row) => row.source),
+      ...produced,
+    ]),
+  ].join("\n");
+  useEffect(() => {
+    if (!editTargets) return;
+    let alive = true;
+    client
+      .edits(editTargets.split("\n"))
+      .then((found) => {
+        if (alive) setEdits(found);
+      })
+      // 印が出ないだけで、整理も近道もそのまま使える
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [client, editTargets, editsVersion]);
   // いま外れている葉。触った覚えと既定から毎回導き直すので、解析中に外した
   // 入れ物へ後から本が生えても、その本は外れたまま出る。1 度だけ導いて、
   // 読む所すべてで同じものを使う
@@ -887,6 +921,7 @@ export function OrganizePanel({
                 // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
                 // 通る。行が渡すのは、いまディスク上に在る元のファイル
                 onOpenArchive={onOpenProduced}
+                edits={edits}
                 corrected={new Set(volumes.keys())}
                 collided={collided}
                 onCorrect={correctVolume}
@@ -900,7 +935,7 @@ export function OrganizePanel({
           出来たぶんの一覧に押し下げられて見落とすと元も子もない。
         */}
         <FailedList failures={failures} />
-        <ProducedList paths={produced} onOpen={onOpenProduced} />
+        <ProducedList paths={produced} edits={edits} onOpen={onOpenProduced} />
         <OrganizeLog lines={log} />
       </div>
 

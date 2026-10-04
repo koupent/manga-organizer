@@ -71,6 +71,7 @@ from manga_core.original_store import (
     OriginalStoreError,
     find_original,
     read_original,
+    recorded_edits,
 )
 from manga_core.page_reorder import PageReorderError
 
@@ -157,6 +158,23 @@ class PageList(BaseModel):
     archive: str
     pages: list[PageView]
     thumbnail_widths: list[int]
+
+
+class EditsRequest(BaseModel):
+    """編集済みの種類を知りたい本の一覧（#143）"""
+
+    paths: list[str] = Field(description="アーカイブの絶対パス")
+
+
+class EditsView(BaseModel):
+    """本ごとの編集済みの種類（#143）"""
+
+    edits: dict[str, list[str]] = Field(
+        description=(
+            "受け取ったパスごとの編集の種類（thumbnail / reorder / split）。"
+            "記録の無い本・読めない本は空"
+        )
+    )
 
 
 class HealthView(BaseModel):
@@ -303,6 +321,20 @@ def create_app(
         finally:
             editor.close()
         return image_response(request, body, THUMBNAIL_MEDIA_TYPE)
+
+    @app.post("/api/edits", dependencies=guarded, response_model=EditsView)
+    def edits(request: EditsRequest) -> EditsView:
+        """本ごとに、サムネイル・並べ替え・分割結合のどれを施したかを返す。
+
+        整理の画面が、近道のアイコンに編集済みの印を出すのに使う（#143）。
+        読むのは本の中の記録だけなので、一覧の冊数ぶんまとめて 1 回で返す。
+        """
+        found: dict[str, list[str]] = {}
+        for raw in request.paths:
+            path = Path(raw).resolve()
+            path_guard.refuse_outside(path)
+            found[raw] = list(recorded_edits(path)) if path.is_file() else []
+        return EditsView(edits=found)
 
     @app.post("/api/resolve", dependencies=guarded, response_model=ResolveResult)
     def resolve(request: ResolveRequest) -> ResolveResult:
