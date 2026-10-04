@@ -696,4 +696,53 @@ test.describe("解析した本の一覧", () => {
     // 「整理しない」ことは別で、中身は実行時に展開して初めて分かる
     await expect(checkOf(broken)).toHaveAttribute("aria-checked", "true");
   });
+
+  test("解析した時点で出来上がる名前の順に並び、同じ巻が複数あれば数が出る（#162）", async ({
+    page,
+  }) => {
+    // Arrange - 元の名前の順（a, dup, m, z）と出来上がる巻の順（1, 1, 2, 3）を
+    // わざと食い違わせる。dup_01 と m_01 は同じ 1 巻
+    const name = "名前順";
+    const folder = join(sidecar.workDir, name);
+    mkdirSync(folder, { recursive: true });
+    const page1 = [{ name: "001.jpg", color: "#ff0000" }];
+    for (const archive of ["a_02.zip", "dup_01.zip", "m_01.zip", "z_03.zip"])
+      writeArchive(sidecar.workDir, join(name, archive), page1);
+    const output = join(sidecar.workDir, "out-名前順");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "名前順の作品");
+
+    // Act
+    await addFolder(page, name);
+    await waitForBooks(page, 4);
+
+    // Assert - 本は出来上がる名前（巻）の順。同じ巻どうしは隣り合う
+    const books = page.locator('[data-testid="plan-row"][data-kind="book"]');
+    const sources = await books.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute("data-source")!.split("/").pop()),
+    );
+    expect(sources).toEqual(["dup_01.zip", "m_01.zip", "a_02.zip", "z_03.zip"]);
+
+    // Assert - 同じ巻の 2 冊にだけ「同じ巻 2」が出る
+    for (const [index, count] of [
+      [0, "同じ巻 2"],
+      [1, "同じ巻 2"],
+    ] as const) {
+      await expect(books.nth(index).getByTestId("plan-row-same")).toHaveText(
+        count,
+      );
+    }
+    await expect(books.nth(2).getByTestId("plan-row-same")).toHaveCount(0);
+    await expect(books.nth(3).getByTestId("plan-row-same")).toHaveCount(0);
+
+    // Act - 要らない方を外す
+    await checkOf(books.nth(0)).click();
+
+    // Assert - 外しても、同じ巻が他にもあることは見えたまま。重なりの警告は消える
+    await expect(books.nth(0).getByTestId("plan-row-same")).toHaveText(
+      "同じ巻 2",
+    );
+    await expect(books.nth(1).getByTestId("plan-row-issue")).toHaveCount(0);
+  });
 });

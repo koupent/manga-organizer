@@ -270,6 +270,22 @@ export function buildPlanRows(
       booksBySource.set(book.source, [book]);
     }
   }
+  // 出来上がる名前の順に並べる（#162）。同じ巻の本が隣り合い、整理する前に
+  // 要らない方を外せる。名前は解析が付けたもので、巻数を直しても並びは
+  // 動かない。打ち直すたびに行が飛ぶと、↑↓ で隣の本へ移る操作が使えない
+  for (const found of booksBySource.values()) {
+    found.sort(
+      (a, b) =>
+        byName(sortName(a), sortName(b)) || byName(bookId(a), bookId(b)),
+    );
+  }
+  // 入れ物は、中で一番先に来る本の名前で並べる。本が無い入れ物は後ろへ
+  const firstName = (path: string) => {
+    const first = booksBySource.get(path)?.[0];
+    return first ? sortName(first) : undefined;
+  };
+  const byFirstName = (a: string, b: string) =>
+    byKey(firstName(a), firstName(b)) || byName(a, b);
   const booksOf = (
     path: string,
     level: number,
@@ -279,11 +295,16 @@ export function buildPlanRows(
       bookRow(book, level, ancestors),
     );
 
-  const rows: PlanRow[] = [];
+  // 放り込んだものごとの行のまとまり。最後にまとまりごと名前の順に並べる
+  const groups: { key: string | undefined; source: string; rows: PlanRow[] }[] =
+    [];
   for (const source of sources) {
-    const found = containers.filter(
-      (path) => path === source || isInside(source, path),
-    );
+    const rows: PlanRow[] = [];
+    const group = { key: firstName(source), source, rows };
+    groups.push(group);
+    const found = containers
+      .filter((path) => path === source || isInside(source, path))
+      .sort(byFirstName);
 
     if (found.length === 0 || found.includes(source)) {
       // 放り込んだものがそのまま入れ物。走査がまだのときもここに来る。
@@ -302,7 +323,8 @@ export function buildPlanRows(
       continue;
     }
 
-    // フォルダの中で見つかった入れ物。並びは走査が決めた処理順のまま
+    // フォルダの中で見つかった入れ物。中の本の名前の順に並べてある
+    group.key = firstName(found[0]!);
     const inside: PlanRow[] = [];
     for (const path of found) {
       const children = booksOf(path, 2, [source, path]);
@@ -328,7 +350,30 @@ export function buildPlanRows(
       ...inside,
     );
   }
-  return rows;
+  return groups
+    .sort((a, b) => byKey(a.key, b.key) || byName(a.source, b.source))
+    .flatMap((group) => group.rows);
+}
+
+/**
+ * 並べるときの名前。重なりを避ける ``_1`` などは外す。解析は読んだ順に
+ * ``_1`` を付けるので、付けたままだと並びが読んだ順に左右される。外せば
+ * 既に在る ``第001巻_1.zip`` も ``第001巻.zip`` の隣に来る
+ */
+function sortName(book: PlannedBook): string {
+  return book.output_name.replace(/_\d+(?=\.zip$)/, "");
+}
+
+/** 名前の並べ方。数字は桁ではなく値で比べる（第2巻を第10巻より先に） */
+function byName(a: string, b: string): number {
+  return a.localeCompare(b, "ja", { numeric: true });
+}
+
+/** 名前で並べる。名前が無いもの（本が無い入れ物）は後ろへ */
+function byKey(a: string | undefined, b: string | undefined): number {
+  if (a === undefined || b === undefined)
+    return a === b ? 0 : a === undefined ? 1 : -1;
+  return byName(a, b);
 }
 
 /**
@@ -659,6 +704,32 @@ export function outputNames(
     names.set(row.id, name);
   }
   return names;
+}
+
+/**
+ * 同じ巻の本の数（#162）。2 冊以上ある巻の本の行だけを載せる。
+ *
+ * チェックの有無に関わらず数える。外した方を数えないと、要らない方を外した
+ * 途端に、同じ巻が他にもあることが見えなくなる。巻数の読めない本（Unknown）は
+ * 数えない。そちらは「巻数が読めません」が既に言う。
+ */
+export function sameVolumeCounts(
+  rows: PlanRow[],
+  author: string,
+  title: string,
+): Map<string, number> {
+  const groups = new Map<string, string[]>();
+  for (const row of rows) {
+    if (row.kind !== "book" || row.volume === null) continue;
+    const base = baseNameOf(row, author, title);
+    groups.set(base, [...(groups.get(base) ?? []), row.id]);
+  }
+  const counts = new Map<string, number>();
+  for (const ids of groups.values()) {
+    if (ids.length < 2) continue;
+    for (const id of ids) counts.set(id, ids.length);
+  }
+  return counts;
 }
 
 /** 本の行の、``_1`` を足す前の名前 */

@@ -2,6 +2,7 @@ import {
   ArrowRight,
   BookMarked,
   CircleCheck,
+  Copy,
   Folder,
   Info,
   Package,
@@ -128,6 +129,8 @@ type PlanListProps = {
   onToggle: (rows: PlanRow[], keep: boolean) => void;
   /** 整理して出来た本の行の鍵 → 出来たファイル（#160）。整理の途中から増える */
   made: ReadonlyMap<string, string>;
+  /** 同じ巻の本が 2 冊以上ある行の鍵 → その冊数（#162） */
+  sameVolume: ReadonlyMap<string, number>;
   /** 整理済みの本を、そのまま次の画面へ読み込ませる */
   onOpenArchive: (path: string, mode: HandoffMode) => void;
   /** 本ごとの編集済みの種類。整理済みの行の近道に印を出す（#143） */
@@ -169,6 +172,7 @@ export function PlanList({
   locked,
   onToggle,
   made,
+  sameVolume,
   onOpenArchive,
   edits,
   corrected,
@@ -205,6 +209,7 @@ export function PlanList({
             key={row.id}
             row={row}
             madePath={madePath}
+            sameVolume={sameVolume.get(row.id)}
             state={checkStateOf(row, excluded)}
             name={names.get(row.id) ?? ""}
             outputDirectory={outputDirectory}
@@ -227,6 +232,8 @@ type PlanListRowProps = {
   row: PlanRow;
   /** 整理して出来たファイル。まだ出来ていなければ無い */
   madePath?: string;
+  /** 同じ巻の本の冊数。1 冊だけなら無い */
+  sameVolume?: number;
   state: CheckState;
   name: string;
   outputDirectory: string;
@@ -243,6 +250,7 @@ type PlanListRowProps = {
 function PlanListRow({
   row,
   madePath,
+  sameVolume,
   state,
   name,
   outputDirectory,
@@ -370,7 +378,13 @@ function PlanListRow({
           </span>
         </>
       )}
-      <RowBadges row={row} finished={finished} collided={collided} dim={dim} />
+      <RowBadges
+        row={row}
+        finished={finished}
+        sameVolume={sameVolume}
+        collided={collided}
+        dim={dim}
+      />
       {/*
         近道は印の右に置く。左へ割り込ませると整理済みの印が行の中ほどまで
         押し戻され、その行にすることが無いと一目で読めなくなる。
@@ -400,12 +414,14 @@ function PlanListRow({
 function RowBadges({
   row,
   finished,
+  sameVolume,
   collided,
   dim,
 }: {
   row: PlanRow;
   /** 整理済みか。整理して出来た本も含む（#160） */
   finished: boolean;
+  sameVolume?: number;
   collided: boolean;
   dim?: string;
 }) {
@@ -421,6 +437,18 @@ function RowBadges({
         <Badge tone="ok" data-testid="plan-row-state" title={ORGANIZED_TIP}>
           <CircleCheck className="size-3" />
           整理済み
+        </Badge>
+      ) : null}
+      {/* 同じ巻が他にもあることは、外した行でも読めるよう薄めない。
+          どれを残すか見比べるための印なので */}
+      {sameVolume ? (
+        <Badge
+          tone="neutral"
+          data-testid="plan-row-same"
+          title={`同じ巻の本が ${sameVolume} 冊あります`}
+        >
+          <Copy className="size-3" />
+          同じ巻 {sameVolume}
         </Badge>
       ) : null}
       {reasonBadge && !finished ? (

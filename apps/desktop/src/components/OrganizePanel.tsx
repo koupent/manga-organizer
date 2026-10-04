@@ -34,6 +34,7 @@ import {
   needsSeriesName,
   organizedSkippedCount,
   outputNames,
+  sameVolumeCounts,
   selectedBooks,
   toggleLeaves,
   toggleTargets,
@@ -444,6 +445,11 @@ export function OrganizePanel({
   const made = useMemo(
     () => new Map(finished.map((book) => [bookId(book), book.path])),
     [finished],
+  );
+  // 同じ巻の本の数（#162）。外した本も数える
+  const sameVolume = useMemo(
+    () => sameVolumeCounts(rows, author, title),
+    [rows, author, title],
   );
   // 作る本どうしで名前が重なる本。後ろの本は黙って _1 で出来てしまう
   const collided = useMemo(
@@ -958,6 +964,7 @@ export function OrganizePanel({
                 locked={running}
                 onToggle={toggleRows}
                 made={made}
+                sameVolume={sameVolume}
                 // 整理済みの行の近道は、いまディスク上に在るファイルを渡す。
                 // 整理して出来た本の行なら、出来たファイル
                 onOpenArchive={onOpenProduced}
