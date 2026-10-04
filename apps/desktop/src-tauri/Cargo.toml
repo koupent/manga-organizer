@@ -1,6 +1,6 @@
 [package]
 name = "manga-organizer-desktop"
-version = "4.8.0"
+version = "4.9.0"
 description = "漫画アーカイブの整理とページ順修正を行うデスクトップアプリ"
 edition = "2021"
 rust-version = "1.77"
