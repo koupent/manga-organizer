@@ -94,7 +94,8 @@ test.describe("ページ分割: 候補へ送る・割った印・左から右の
     const second = await card(page, 1).boundingBox();
     expect(first!.x, "1 枚目が 2 枚目より左に無い").toBeLessThan(second!.x);
 
-    // Act
+    // Act - 見つかった見開きを選んで確定する
+    await page.getByTestId("split-master").click();
     await page.getByTestId("split-confirm").click();
     await expect(page.getByTestId("split-status")).toContainText(
       "2 枚を分割しました",

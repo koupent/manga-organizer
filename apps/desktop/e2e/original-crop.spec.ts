@@ -357,16 +357,17 @@ test.describe("サムネイル作成: 切り抜きを広げる方向に戻せる
     await expect(page.getByTestId("cover-size")).toHaveText("1200×1200");
     expect(await shownImageSize(page)).toEqual([1200, 1200]);
 
-    // Assert - 枠は中央の既定。復元する範囲が無いのに枠が崩れない
+    // Assert - 枠は既定の、画像の全体が収まる 2:3（#141）。復元する範囲が
+    // 無いのに枠が崩れない
     const frame = await frameInImagePixels(page, [1200, 1200]);
-    expect(Math.abs(frame.left - 200)).toBeLessThan(FRAME_TOLERANCE);
-    expect(Math.abs(frame.width - 800)).toBeLessThan(FRAME_TOLERANCE);
+    expect(Math.abs(frame.left - 0)).toBeLessThan(FRAME_TOLERANCE);
+    expect(Math.abs(frame.width - 1200)).toBeLessThan(FRAME_TOLERANCE);
 
     // Act - 何も触らずに確定する
     await confirmThumbnail(page);
 
-    // Assert - 2:3 の中央が表紙になり、加工前の画像が同梱される
-    expect(coverPageSize(archive)).toEqual([800, 1200]);
+    // Assert - 上下に余白を足した 2:3 が表紙になり、加工前の画像が同梱される
+    expect(coverPageSize(archive)).toEqual([1200, 1800]);
     expect(storedOriginalsOf(archive).originals).toHaveLength(1);
   });
 });

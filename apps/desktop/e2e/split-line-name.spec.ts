@@ -141,6 +141,7 @@ test.describe("ページ分割: 分割線の読み上げ名", () => {
     // Arrange - 2 枚目と 4 枚目が見開き。番号は 1 / 2–3 / 4 / 5–6 / 7 になる
     const archive = writeTwoSpreadArchive("線の読み上げ名.zip");
     await openSplit(page, archive, 5);
+    await page.getByTestId("split-master").click();
     const chips = await chipsOf(page);
     expect(chips, "番号の並びが前提と違う").toEqual([
       "1",

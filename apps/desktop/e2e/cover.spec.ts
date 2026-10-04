@@ -985,19 +985,21 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     const second = writeSizedArchive("サムネイル選び直し 2.zip", "cover");
     await openCover(page, first);
 
-    // Arrange - 1 つ目で 2 枚目を選び、枠も動かして状態を作る
+    // Arrange - 1 つ目で 2 枚目を選び、枠も縮めて状態を作る。既定の枠は
+    // 画像の全体が収まる 2:3 で、それより広げも動かしもできない（#141）
     await page.getByTestId("choose-page").click();
     await page
       .locator('[data-testid="thumbnail-candidate"][data-name="page-b.jpg"]')
       .click();
     await expect(page.getByTestId("cover-name")).toHaveText("page-b.jpg");
     const moved = await frameBox(page);
+    const grip = (await page.getByTestId("crop-handle").first().boundingBox())!;
     await dragFrom(
       page,
-      { x: moved.x + moved.width / 2, y: moved.y + moved.height / 2 },
-      { x: moved.x + moved.width / 2 + 40, y: moved.y + moved.height / 2 },
+      { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 },
+      { x: grip.x + grip.width / 2 - 40, y: grip.y + grip.height / 2 - 60 },
     );
-    expect((await frameBox(page)).x).not.toBe(moved.x);
+    expect((await frameBox(page)).width).toBeLessThan(moved.width - 15);
 
     // Act - 2 つ目に選び直す
     await page.getByTestId("change-archive").click();

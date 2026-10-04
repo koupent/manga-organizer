@@ -7,7 +7,8 @@
     .manga-organizer/
       originals/
         <content hash>.jpg   加工前の画像そのもの
-      manifest.json          加工後のハッシュ -> 元 + 施した加工
+      manifest.json          加工後のハッシュ -> 元 + 施した加工、
+                             施した編集の種類（edits。#143）
 
 名前ではなく中身のハッシュで紐づけるのが要点。サムネイル作成もページ並べ替えも
 整理もエントリ名を変えるが、画像の中身は変えない。名前で紐づけると連番の
@@ -36,7 +37,7 @@ import hashlib
 import json
 import logging
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -68,6 +69,10 @@ _UNREADABLE_MESSAGE = "元画像を読み出せません"
 
 _ORIGINALS_KEY = "originals"
 _DERIVED_KEY = "derived"
+_EDITS_KEY = "edits"
+
+# 本に施した編集の種類（#143）。画面は整理の画面でこの名前ごとに印を出す
+EDIT_KINDS = ("thumbnail", "reorder", "split")
 _SOURCE_KEY = "source"
 _OPERATIONS_KEY = "operations"
 
@@ -242,7 +247,9 @@ def plan_manifest(
             ],
         }
 
-    extras[MANIFEST_ENTRY] = _dump_document(originals, derived)
+    extras[MANIFEST_ENTRY] = _dump_document(
+        originals, derived, document.get(_EDITS_KEY, ())
+    )
     _reject_page_entries(extras)
     return extras
 
@@ -270,10 +277,44 @@ def plan_original(
     originals[digest] = entry
     extras[entry] = source
     extras[MANIFEST_ENTRY] = _dump_document(
-        originals, dict(document.get(_DERIVED_KEY, {}))
+        originals,
+        dict(document.get(_DERIVED_KEY, {})),
+        document.get(_EDITS_KEY, ()),
     )
     _reject_page_entries(extras)
     return extras
+
+
+def plan_edit(
+    archive_path: Path, kind: str, planned: Mapping[str, bytes] | None = None
+) -> dict[str, bytes]:
+    """本に施した編集の種類を記録に足す（#143）。
+
+    整理の画面は、これを見てサムネイル・並べ替え・分割結合をした本に印を出す。
+    並べ替えは中身から見分けられないので、編集したこと自体を残すほかない。
+    本の中に残すので、整理で名前や置き場所が変わっても付いてくる。
+
+    planned は同じ書き直しで既に組み立てた extras。渡せば記録はそこから読み継ぐ。
+    """
+    if kind not in EDIT_KINDS:
+        raise ValueError(f"知らない編集の種類です: {kind}")
+    extras: dict[str, bytes] = dict(planned or {})
+    document = _planned_document(Path(archive_path), extras)
+    edits = set(document.get(_EDITS_KEY, ()))
+    if kind in edits:
+        return extras
+    extras[MANIFEST_ENTRY] = _dump_document(
+        dict(document.get(_ORIGINALS_KEY, {})),
+        dict(document.get(_DERIVED_KEY, {})),
+        edits | {kind},
+    )
+    _reject_page_entries(extras)
+    return extras
+
+
+def recorded_edits(archive_path: Path) -> tuple[str, ...]:
+    """本に施した編集の種類（#143）。記録が無い・読めない本は空"""
+    return tuple(_load_document(Path(archive_path)).get(_EDITS_KEY, ()))
 
 
 def _planned_document(archive_path: Path, extras: Mapping[str, bytes]) -> dict:
@@ -469,7 +510,13 @@ def _normalized(document: object) -> dict:
         for key, value in _as_dict(document.get(_DERIVED_KEY)).items()
         if isinstance(value, dict) and isinstance(value.get(_SOURCE_KEY), str)
     }
-    return {_ORIGINALS_KEY: originals, _DERIVED_KEY: derived}
+    raw_edits = document.get(_EDITS_KEY)
+    edits = sorted(
+        {kind for kind in raw_edits if kind in EDIT_KINDS}
+        if isinstance(raw_edits, list)
+        else ()
+    )
+    return {_ORIGINALS_KEY: originals, _DERIVED_KEY: derived, _EDITS_KEY: edits}
 
 
 def _as_dict(value: object) -> dict:
@@ -478,17 +525,22 @@ def _as_dict(value: object) -> dict:
 
 
 def _dump_document(
-    originals: Mapping[str, str], derived: Mapping[str, object]
+    originals: Mapping[str, str],
+    derived: Mapping[str, object],
+    edits: Iterable[str] = (),
 ) -> bytes:
     """manifest を書き出す。
 
     鍵を並べて書くのは、同じ内容なら同じバイト列にするため。差分が出ないと
-    アーカイブの中身が無用に変わらず、変更の追跡もしやすい。
+    アーカイブの中身が無用に変わらず、変更の追跡もしやすい。編集の種類は
+    1 つでもあるときだけ書く。無い本の記録は前と同じバイト列のまま。
     """
-    document = {
+    document: dict[str, object] = {
         "version": MANIFEST_VERSION,
         _ORIGINALS_KEY: dict(sorted(originals.items())),
         _DERIVED_KEY: dict(sorted(derived.items())),
     }
+    if kinds := sorted(set(edits)):
+        document[_EDITS_KEY] = kinds
     text = json.dumps(document, ensure_ascii=False, indent=2, sort_keys=False)
     return f"{text}\n".encode()

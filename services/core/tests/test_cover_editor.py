@@ -248,10 +248,20 @@ class PaddedCropTest(unittest.TestCase):
         self.assertEqual(_COLOR_SAMPLES["lime"], image.getpixel((10, 500)))
         self.assertEqual(_COLOR_SAMPLES["yellow"], image.getpixel((660, 500)))
 
-    def test_refuses_a_box_that_cuts_one_side_and_pads_the_other(self):
-        # Assert - はみ出すなら、その軸では画像を丸ごと含むこと
+    def test_cuts_one_side_and_pads_the_other(self):
+        # Act - 上へ 62 はみ出し、下は 900 で切る（#141）。画面は見えている
+        # 範囲の中で枠を自由に動かせるので、片側だけはみ出す枠も来る
+        image = self.crop((750, 1000), (0, -62, 750, 900))
+
+        # Assert - 上は辺の色で塗り、下は画像のまま切れている（下の帯は入らない）
+        self.assertEqual((750, 962), image.size)
+        self.assertEqual(_COLOR_SAMPLES["red"], image.getpixel((375, 10)))
+        self.assertEqual((128, 128, 128), image.getpixel((375, 955)))
+
+    def test_refuses_a_box_that_does_not_overlap_the_image(self):
+        # Assert - 塗っただけの表紙になる範囲は受けない
         with self.assertRaises(CoverEditError):
-            self.crop((750, 1000), (0, -62, 750, 900))
+            self.crop((750, 1000), (0, -300, 750, 0))
 
     def test_refuses_a_box_far_larger_than_the_image(self):
         # Assert - 桁違いの範囲 1 つで画素を確保させない

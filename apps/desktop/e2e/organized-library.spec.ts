@@ -1424,40 +1424,36 @@ test.describe("整理済みの行の仕上げ", () => {
       library.organized.split("/").pop(),
     );
 
-    // Assert - 出来たファイルの一覧（ProducedList）と同じ 2 つ。同じことを
-    // する近道が画面ごとに違う顔をしていると、押す前に読み直すことになる
-    for (const [testId, label, icon, tip] of [
-      [
-        "plan-to-thumbnail",
-        "サムネイル",
-        "svg.lucide-image",
-        `${name} のサムネイルを作る`,
-      ],
+    // Assert - 出来たファイルの一覧（ProducedList）と同じ 3 つ（#143）。同じ
+    // ことをする近道が画面ごとに違う顔をしていると、押す前に読み直すことになる。
+    // アイコンだけにして、何をするかは乗せたときの説明で伝える
+    for (const [testId, icon, tip] of [
+      ["plan-to-thumbnail", "svg.lucide-image", `${name} のサムネイルを作る`],
       [
         "plan-to-reorder",
-        "ページ",
         "svg.lucide-list-ordered",
         `${name} のページを並べ替える`,
       ],
+      [
+        "plan-to-split",
+        "svg.lucide-columns-2",
+        `${name} のページを分割・結合する`,
+      ],
     ] as const) {
       const button = row.getByTestId(testId);
-      await expect(button, `整理済みの行に ${label} の近道が無い`).toHaveCount(
-        1,
-      );
-      await expect(button, `${label} の近道の言葉が違う`).toContainText(label);
+      await expect(button, `整理済みの行に ${testId} が無い`).toHaveCount(1);
       await expect(
         button.locator(icon),
-        `${label} の近道の絵が ProducedList と違う`,
+        `${testId} の絵が ProducedList と違う`,
       ).toHaveCount(1);
       await expect(
         button,
-        `${label} の近道に、どの本を開くのかの説明が無い`,
+        `${testId} に、どの本を開くのかの説明が無い`,
       ).toHaveAttribute("title", tip);
       // 近道は薄めない。外れている行でも押せるものだと読めなくなる
-      expect(
-        await inDimmed(button),
-        `${label} の近道が薄める側に入っている`,
-      ).toBe(false);
+      expect(await inDimmed(button), `${testId} が薄める側に入っている`).toBe(
+        false,
+      );
     }
 
     // Assert - 整理済みでない本には出さない。その本はまだディスク上に無く、
@@ -1475,34 +1471,31 @@ test.describe("整理済みの行の仕上げ", () => {
         target.getByTestId("plan-to-reorder"),
         `${what}の行にまで近道が出ている`,
       ).toHaveCount(0);
+      await expect(
+        target.getByTestId("plan-to-split"),
+        `${what}の行にまで近道が出ている`,
+      ).toHaveCount(0);
     }
 
     // Assert - 一覧全体でも整理済みの冊数ちょうど。全部の行に付ける実装は
     // ここで落ちる
-    for (const testId of ["plan-to-thumbnail", "plan-to-reorder"] as const) {
+    for (const testId of [
+      "plan-to-thumbnail",
+      "plan-to-reorder",
+      "plan-to-split",
+    ] as const) {
       await expect(
         page.getByTestId(testId),
         `${testId} が整理済み以外の行にも出ている`,
       ).toHaveCount(ORGANIZED_COUNT);
     }
 
-    // Assert - 席は乗せる前から空けてある。見えるのは乗せている間だけだが、
-    // そのとき初めて置くと行の中身が押し出され、狙って押せなくなる
-    const shortcut = row.getByTestId("plan-to-thumbnail");
-    const reserved = await shortcut.boundingBox();
-    expect(reserved?.width ?? 0, "乗せる前に近道の席が無い").toBeGreaterThan(0);
-    expect(await opacityOf(shortcut), "乗せていないのに近道が見えている").toBe(
-      "0",
-    );
-    const before = (await row.getByTestId("plan-row-state").boundingBox())!;
-
-    // Act
-    await row.hover();
-
-    // Assert - 乗せると見える。席は動かない
-    expect(await opacityOf(shortcut), "行に乗せても近道が見えない").toBe(FULL);
-    const after = (await row.getByTestId("plan-row-state").boundingBox())!;
-    expect(after.x, "行に乗せると中身が押し出される").toBeCloseTo(before.x, 1);
+    // Assert - 乗せる前から見えている。編集済みの印は、整理済みの印と同じく
+    // 行を眺めただけで読めないと意味が無い（#143）
+    expect(
+      await opacityOf(row.getByTestId("plan-to-thumbnail")),
+      "乗せないと近道が見えない",
+    ).toBe(FULL);
   });
 
   test("整理済みの行の近道から、その本を読み込んだ画面へ移る", async ({

@@ -147,6 +147,7 @@ test.describe("ページ分割の確定と、ページ並べ替えの画面", ()
       BEFORE_PAGES,
       { timeout: 30_000 },
     );
+    await page.getByTestId("split-master").click();
     await page.getByTestId("split-confirm").click();
     await expect(page.getByTestId("split-status")).toHaveAttribute(
       "data-state",

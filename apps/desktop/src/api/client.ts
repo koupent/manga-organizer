@@ -46,6 +46,8 @@ type JobAccepted =
   paths["/api/jobs/reorder"]["post"]["responses"][202]["content"]["application/json"];
 export type SplitConfirmRequest =
   paths["/api/jobs/split"]["post"]["requestBody"]["content"]["application/json"];
+type EditsResponse =
+  paths["/api/edits"]["post"]["responses"][200]["content"]["application/json"];
 
 /**
  * 失敗の理由だけを取り出す。
@@ -164,6 +166,11 @@ export class SidecarClient {
   /** 割った結果を書き込む。行は差分ではなくページ順に全部を送る */
   applySplit(request: SplitConfirmRequest): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/split", request);
+  }
+
+  /** 本ごとに、サムネイル・並べ替え・分割結合のどれを施したか（#143） */
+  async edits(paths: string[]): Promise<EditsResponse["edits"]> {
+    return (await this.post<EditsResponse>("/api/edits", { paths })).edits;
   }
 
   /** ドロップされたファイルを実パスに結びつける */

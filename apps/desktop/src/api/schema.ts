@@ -64,6 +64,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/edits": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Edits
+     * @description 本ごとに、サムネイル・並べ替え・分割結合のどれを施したかを返す。
+     *
+     *     整理の画面が、近道のアイコンに編集済みの印を出すのに使う（#143）。
+     *     読むのは本の中の記録だけなので、一覧の冊数ぶんまとめて 1 回で返す。
+     */
+    post: operations["edits_api_edits_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/resolve": {
     parameters: {
       query?: never;
@@ -697,6 +720,30 @@ export interface components {
       /** Right */
       right: string;
     };
+    /**
+     * EditsRequest
+     * @description 編集済みの種類を知りたい本の一覧（#143）
+     */
+    EditsRequest: {
+      /**
+       * Paths
+       * @description アーカイブの絶対パス
+       */
+      paths: string[];
+    };
+    /**
+     * EditsView
+     * @description 本ごとの編集済みの種類（#143）
+     */
+    EditsView: {
+      /**
+       * Edits
+       * @description 受け取ったパスごとの編集の種類（thumbnail / reorder / split）。記録の無い本・読めない本は空
+       */
+      edits: {
+        [key: string]: string[];
+      };
+    };
     /** HTTPValidationError */
     HTTPValidationError: {
       /** Detail */
@@ -1224,6 +1271,42 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  edits_api_edits_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EditsRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EditsView"];
+        };
       };
       /** @description Validation Error */
       422: {

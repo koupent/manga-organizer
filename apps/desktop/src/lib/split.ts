@@ -77,7 +77,10 @@ export type SplitRow = {
   width: number;
   height: number;
   source: string;
-  /** 走査が見開きと判定した行。まとめて選ぶ・外すの対象はこれだけ */
+  /**
+   * 見開きと判定し、分割を勧める行。まとめて選ぶ・外す、前後の送りの対象は
+   * これだけ。見開きのまま残すと決めた行（kept_whole）は含めない
+   */
   detected: boolean;
   checked: boolean;
   /** 割る位置。元画像の画素で持ち、描画のときだけ割合に直す */
@@ -189,25 +192,25 @@ export function clampSplit(x: number, width: number): number {
 /**
  * 走査の行を、画面が持つ行へ直す。
  *
- * チェックは「既に割ってある」か「走査が見開きと判定した」かで入れる。判定から
- * 漏れた比のページに付けて回らないのは、割ってはいけない縦長が黙って 2 ページに
- * 割られるのを避けるため。逆に、既に割ってある行は比が閾値の下でもチェックを
- * 入れる。外れていたら、開き直しただけで「割る前へ戻します」になってしまう。
+ * チェックは既に割ってある行にだけ入れる。開いた時点では何も保留にしない
+ * （#142）。見開きと判定した行を分けるかどうかは利用者が選ぶ（まとめて選ぶ
+ * 操作もある）。黙ってチェックを入れておくと、気づかずに確定した見開きが
+ * 割れる。既に割ってある行は比が閾値の下でもチェックを入れる。外れていたら、
+ * 開き直しただけで「割る前へ戻します」になってしまう。
  *
- * 割ってから戻した・結合したページには、見開きでも入れない（#138 #139）。
- * 入れると、直後に読み直した画面でまた「割る」が保留になり、戻せなかった
- * ように見える。
+ * 割ってから戻した・結合したページ（#138 #139）は、見開きでも分割を勧めない。
+ * 「まとめて選ぶ」で、利用者が残すと決めた見開きをまた割る候補にしないため。
  */
 export function rowsFrom(result: SplitScanResult): SplitRow[] {
   return result.rows.map((row) => {
-    const checked = row.split !== null || (row.is_spread && !row.kept_whole);
+    const checked = row.split !== null;
     const x = row.split?.x ?? centerOf(row.width);
     return {
       names: row.names,
       width: row.width,
       height: row.height,
       source: row.source,
-      detected: row.is_spread,
+      detected: row.is_spread && !row.kept_whole,
       checked,
       x,
       displaced: row.displaced,
@@ -375,7 +378,13 @@ export function summaryOf(rows: SplitRow[]): string {
   if (joined > 0) parts.push(`離れた見開き ${joined} 組を隣り合わせに戻します`);
   if (merged > 0) parts.push(`${merged} 組を 1 ページに結合します`);
   if (parts.length === 0) {
-    return rows.some(isCandidate)
+    // 何も選んでいないときは、次に何をすればよいかを言う（#142）
+    const unchosen = rows.filter((row) => row.detected && !row.checked).length;
+    if (unchosen > 0) {
+      return `見開き ${unchosen} 枚が見つかりました。分けるページを選んでください`;
+    }
+    // 見開きのまま残すと決めた横長（kept_whole）は勧めないが、見開きはある
+    return rows.some((row) => isCandidate(row) || isWide(row))
       ? "変更はありません"
       : "見開きは見つかりませんでした";
   }
