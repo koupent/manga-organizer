@@ -8,6 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from manga_core.archive_handler import ArchiveHandler
+from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.organized_detector import judge_organized
 from manga_core.original_store import sidecar_members
 from manga_core.volume_detector import SeriesName, VolumeDetector
@@ -181,6 +182,9 @@ class FileOrganizer:
         同じフォルダの一時ファイルへ書き、読み直して壊れていないと確かめて
         から置き換える。元は展開済みなので、置き換えた後に読む物は無い。
         途中で失敗したら元には触れず、一時ファイルだけを消す。
+
+        ファイルの時刻は元のまま残す。蔵書の中の本を書き直す操作なので、
+        ページ並べ替えやサムネイル作成と同じく、日付で並べた蔵書の並びを崩さない。
         """
         handle, raw = tempfile.mkstemp(
             dir=archive_path.parent,
@@ -200,7 +204,9 @@ class FileOrganizer:
                     success=False,
                     error_message=error,
                 )
+            times = capture_file_times(archive_path)
             os.replace(temp_path, archive_path)
+            restore_file_times(archive_path, times)
         finally:
             temp_path.unlink(missing_ok=True)
         self._log(f"Rebuilt in place: {archive_path.name}")

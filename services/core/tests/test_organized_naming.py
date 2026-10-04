@@ -586,6 +586,7 @@ class SelfDestinationRebuildTest(NamingTestBase):
     def test_a_book_at_its_destination_with_wrong_pages_is_rebuilt_there(self):
         # Arrange
         library, here, contents = self.prepare()
+        before = here.stat()
         books = self.analyze([here], author=AUTHOR, title=TITLE)
         self.assertEqual("pages-mismatch", self.one(books, here)["organized_reason"])
 
@@ -610,6 +611,9 @@ class SelfDestinationRebuildTest(NamingTestBase):
         with zipfile.ZipFile(here) as archive:
             self.assertEqual(["001.jpg", "002.jpg", "003.jpg"], archive.namelist())
             self.assertEqual(contents, [archive.read(n) for n in archive.namelist()])
+
+        # Assert - 時刻は元のまま。日付で並べた蔵書の並びを崩さない
+        self.assertEqual(before.st_mtime_ns, here.stat().st_mtime_ns)
 
         # Assert - 解析し直すと整理済み。印が残り続けることはもう無い
         again = self.analyze([here], author=AUTHOR, title=TITLE)
