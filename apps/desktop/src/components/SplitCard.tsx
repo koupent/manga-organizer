@@ -1,6 +1,7 @@
 import { ZoomIn } from "lucide-react";
 import { cn } from "../lib/utils";
 import { fitInside } from "../lib/stage";
+import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
 import { SplitLine } from "./SplitLine";
 
@@ -11,6 +12,13 @@ type SplitCardProps = {
   label: string;
   /** 書き込む前と違うか */
   pending: boolean;
+  /**
+   * いま ZIP の中で 2 ページに割れているか（#132）。割った対は割る前の見開きの
+   * 絵で出すので、印が無いと割れたのかどうかが絵からは分からない
+   */
+  applied: boolean;
+  /** 前後の見開きへ送るボタンで、いま指している行か（#131） */
+  focused: boolean;
   checked: boolean;
   /** 2 列ぶんを占める横長か */
   wide: boolean;
@@ -41,6 +49,8 @@ export function SplitCard({
   index,
   label,
   pending,
+  applied,
+  focused,
   checked,
   wide,
   span,
@@ -70,11 +80,15 @@ export function SplitCard({
         "group flex flex-col overflow-hidden rounded-card border border-line",
         "bg-surface transition-colors hover:border-line-strong",
         span && "col-span-2",
+        focused && "border-brand ring-2 ring-brand/40",
       )}
+      // 格子は右綴じの並び（右から左）にするが、カードの中身は左から右のまま
+      dir="ltr"
       data-testid="split-card"
       data-index={index}
       data-checked={checked}
       data-wide={wide}
+      data-focused={focused}
     >
       <div
         className="flex flex-none cursor-zoom-in items-center justify-center bg-canvas"
@@ -127,6 +141,11 @@ export function SplitCard({
         >
           {label}
         </span>
+        {applied ? (
+          <Badge tone="ok" data-testid="split-applied">
+            分割済み
+          </Badge>
+        ) : null}
         <div className="flex-1" />
         <button
           type="button"

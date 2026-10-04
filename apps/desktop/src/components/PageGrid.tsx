@@ -85,6 +85,8 @@ function PageCard({
           : "border-line hover:border-line-strong",
       )}
       style={{ transform: CSS.Transform.toString(transform), transition }}
+      // 格子は右綴じの並び（右から左）にするが、カードの中身は左から右のまま
+      dir="ltr"
       data-testid="page-card"
       data-name={name}
       data-position={position}
@@ -438,7 +440,8 @@ export function PageGrid({
       }
       hint={
         <>
-          ドラッグで順番を入れ替え ・ <Key>Ctrl</Key>/<Key>Shift</Key>
+          右から左へ読む順に並びます ・ ドラッグで順番を入れ替え ・{" "}
+          <Key>Ctrl</Key>/<Key>Shift</Key>
           +クリックで複数選択 ・ <Key>Ctrl</Key>+<Key>Z</Key> で元に戻す ・
           虫眼鏡で原寸表示
         </>
@@ -453,7 +456,11 @@ export function PageGrid({
           onDragEnd={handleDragEnd}
         >
           <SortableContext items={order} strategy={rectSortingStrategy}>
+            {/* 右綴じの本と同じく右から左へ並べる（#132）。左から右へ並べると、
+                見開きを割った 2 ページ（右半分が先）が見開きと左右逆に並び、
+                割った向きが逆に見える */}
             <div
+              dir="rtl"
               className="grid gap-3"
               style={{
                 gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,

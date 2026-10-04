@@ -78,6 +78,10 @@ export function SplitEditor({
   } = useSplitJob({ client, archive, onArchiveChanged });
 
   const [overlay, setOverlay] = useState<number | null>(null);
+  // 前後の見開きへ送るボタンで指している行（#131）。数百ページの本で、候補を
+  // 探して格子をスクロールさせずに済むようにする。絞り込まないのは、前後の
+  // ページとのつながりが見えなくなるため
+  const [focus, setFocus] = useState<number | null>(null);
   const [cardWidth, setCardWidth] = useStoredNumber(
     CARD_WIDTH_KEY,
     CARD_WIDTH_DEFAULT,
@@ -89,6 +93,7 @@ export function SplitEditor({
   // 指したままにならないよう閉じる
   useEffect(() => {
     setOverlay(null);
+    setFocus(null);
   }, [reloadKey]);
 
   if (rows === null) {
@@ -158,19 +163,39 @@ export function SplitEditor({
     .filter((index) => index >= 0);
 
   /**
-   * 前後の候補へ移る。-1 が前、+1 が次。
+   * from の行から見て、前（-1）・次（+1）にある最初の候補。無ければ undefined。
    *
-   * 選ぶのは「開いている行より後ろ／前にある最初の候補」で、候補の並びの中での
-   * 位置ではない。候補でない行からも拡大表示は開くので、その行が候補の並びに
-   * 居ないことを勘定に入れないと、→ を押した利用者が本の先頭側へ飛ばされる。
+   * 選ぶのは「from より後ろ／前にある最初の候補」で、候補の並びの中での位置では
+   * ない。候補でない行からも拡大表示は開くので、その行が候補の並びに居ないことを
+   * 勘定に入れないと、→ を押した利用者が本の先頭側へ飛ばされる。
    */
+  const candidateFrom = (from: number, delta: number) => {
+    const behind = candidates.filter((index) => index < from);
+    const ahead = candidates.filter((index) => index > from);
+    return delta > 0 ? ahead[0] : behind[behind.length - 1];
+  };
+
+  /** 拡大表示の中で、前後の候補へ移る */
   const walk = (delta: number) => {
     if (overlay === null) return;
-    const behind = candidates.filter((index) => index < overlay);
-    const ahead = candidates.filter((index) => index > overlay);
-    const next = delta > 0 ? ahead[0] : behind[behind.length - 1];
+    const next = candidateFrom(overlay, delta);
     if (next !== undefined) setOverlay(next);
   };
+
+  // 見出しの送りボタンの起点。まだ何も指していなければ、本の端から数える
+  const focusFrom = (delta: number) => focus ?? (delta > 0 ? -1 : rows.length);
+  const previous = candidateFrom(focusFrom(-1), -1);
+  const following = candidateFrom(focusFrom(1), 1);
+
+  /** 前後の候補を指し、格子の中央まで送る */
+  const step = (target: number | undefined) => {
+    if (target === undefined) return;
+    setFocus(target);
+    document
+      .querySelector(`[data-testid="split-card"][data-index="${target}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
+  const focusedAt = focus === null ? -1 : candidates.indexOf(focus);
 
   const imageUrlOf = (row: SplitRow) =>
     `${
@@ -208,6 +233,32 @@ export function SplitEditor({
             >
               見開き {detected.length} 枚
             </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-1">
+            <Button
+              variant="secondary"
+              data-testid="split-previous"
+              title="前の見開きの候補を指す"
+              disabled={previous === undefined}
+              onClick={() => step(previous)}
+            >
+              前の見開き
+            </Button>
+            <span
+              className="tabular min-w-12 text-center text-[12px] text-ink-muted"
+              data-testid="split-focus-position"
+            >
+              {focusedAt < 0 ? "–" : focusedAt + 1} / {candidates.length}
+            </span>
+            <Button
+              variant="secondary"
+              data-testid="split-next"
+              title="次の見開きの候補を指す"
+              disabled={following === undefined}
+              onClick={() => step(following)}
+            >
+              次の見開き
+            </Button>
           </span>
           <label className="flex shrink-0 items-center gap-2 text-[12px] text-ink-muted">
             表示サイズ
@@ -262,45 +313,52 @@ export function SplitEditor({
           </Button>
         </>
       }
-      hint="チェックで分ける・分けないを選ぶ ・ 線を掴んで分割位置を動かす ・ 画像をクリックで大きく表示 ・ 右半分が先のページになります（右綴じ）"
+      hint="チェックで分ける・分けないを選ぶ ・ 線を掴んで分割位置を動かす ・ 画像をクリックで大きく表示 ・ 右から左へ読む順に並びます。右半分が先のページになります（右綴じ）"
     >
-      {/* スクロールするのはこの格子であって窓ではない。行の高さは中身に
-          合わせる（auto-rows-max）。auto のままだと、高さの決まった格子を
-          行数で割った高さへ押し込められる */}
-      <div
-        ref={gridRef}
-        data-testid="split-grid"
-        className="grid min-h-0 flex-1 auto-rows-max content-start gap-3 overflow-y-auto"
-        style={{
-          gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
-        }}
-      >
-        {columnWidth > 0
-          ? rows.map((row, index) => {
-              const wide = isWide(row);
-              const span = wide && columns >= 2;
-              return (
-                <SplitCard
-                  key={index}
-                  index={index}
-                  label={numberLabel(numbers[index])}
-                  pending={isPending(row)}
-                  checked={row.checked}
-                  wide={wide}
-                  span={span}
-                  boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
-                  boxHeight={pictureHeight}
-                  width={row.width}
-                  height={row.height}
-                  x={row.x}
-                  imageUrl={imageUrlOf(row)}
-                  onToggle={() => setChecked(index, !row.checked)}
-                  onMoveSplit={(x) => setSplit(index, x)}
-                  onZoom={() => setOverlay(index)}
-                />
-              );
-            })
-          : null}
+      {/* スクロールするのはこの箱であって窓ではない。中の格子は右綴じの本と
+          同じく右から左へ並べる（#132）。割った 2 ページが見開きと同じ左右で
+          隣り合う。格子そのものに右から左を当てると、スクロールバーまで左へ
+          移るので、スクロールする箱と並べる格子を分ける */}
+      <div data-testid="split-grid" className="min-h-0 flex-1 overflow-y-auto">
+        {/* 行の高さは中身に合わせる（auto-rows-max）。auto のままだと、
+            高さの決まった格子を行数で割った高さへ押し込められる */}
+        <div
+          ref={gridRef}
+          dir="rtl"
+          className="grid auto-rows-max content-start gap-3"
+          style={{
+            gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
+          }}
+        >
+          {columnWidth > 0
+            ? rows.map((row, index) => {
+                const wide = isWide(row);
+                const span = wide && columns >= 2;
+                return (
+                  <SplitCard
+                    key={index}
+                    index={index}
+                    label={numberLabel(numbers[index])}
+                    pending={isPending(row)}
+                    applied={row.stored.checked && row.checked}
+                    focused={focus === index}
+                    checked={row.checked}
+                    wide={wide}
+                    span={span}
+                    boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
+                    boxHeight={pictureHeight}
+                    width={row.width}
+                    height={row.height}
+                    x={row.x}
+                    imageUrl={imageUrlOf(row)}
+                    onToggle={() => setChecked(index, !row.checked)}
+                    onMoveSplit={(x) => setSplit(index, x)}
+                    onZoom={() => setOverlay(index)}
+                  />
+                );
+              })
+            : null}
+        </div>
       </div>
 
       {opened !== null && overlay !== null ? (

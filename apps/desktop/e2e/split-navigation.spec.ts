@@ -1,0 +1,127 @@
+import { expect, test, type Page } from "@playwright/test";
+import { runPython } from "./archive";
+import { startSidecar, type Sidecar } from "./sidecar";
+
+/**
+ * ページ分割で候補へ送る・割ったことが見える・右綴じの並びで出る（#131 #132）。
+ *
+ * - 数百ページの本でも、見開きの候補へスクロールせずに移れる（#131）
+ * - 割った対は割る前の見開きの絵で出るので、割れていることを印で示す（#132）
+ * - 格子は右から左へ並ぶ。左から右だと、割った 2 ページ（右半分が先）が
+ *   見開きと左右逆に並び、割った向きが逆に見える（#132）
+ */
+let sidecar: Sidecar;
+test.beforeAll(async () => {
+  sidecar = await startSidecar();
+});
+test.afterAll(() => sidecar?.stop());
+
+/** 2 枚目と 5 枚目が見開きの、7 ページの本 */
+function writeTwoSpreads(name: string): string {
+  const target = `${sidecar.workDir}/${name}`;
+  runPython(
+    `
+import io, sys, zipfile
+from PIL import Image
+
+def png(width, colour):
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, 900), colour).save(buffer, "PNG")
+    return buffer.getvalue()
+
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
+    for index in range(1, 8):
+        wide = index in (2, 5)
+        archive.writestr(f"{index:03d}.png", png(1200 if wide else 600, "#%02x8080" % (index * 30)))
+`,
+    target,
+  );
+  return target;
+}
+
+async function open(page: Page, archive: string, mode: "split" | "reorder") {
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await page.goto(
+    `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
+      `&mode=${mode}&archive=${encodeURIComponent(archive)}`,
+  );
+}
+
+const card = (page: Page, index: number) =>
+  page.locator(`[data-testid="split-card"][data-index="${index}"]`);
+
+test.describe("ページ分割: 候補へ送る・割った印・右綴じの並び", () => {
+  test("前後のボタンで、見開きの候補だけを順に指す", async ({ page }) => {
+    // Arrange
+    await open(page, writeTwoSpreads("送る.zip"), "split");
+    await expect(page.locator('[data-testid="split-card"]')).toHaveCount(7);
+    const position = page.getByTestId("split-focus-position");
+
+    // Assert - まだ何も指していない
+    await expect(position).toHaveText("– / 2");
+
+    // Act / Assert - 次へ送ると 1 つ目の見開き（2 枚目）を指す。その前に
+    // 候補は無いので、前へは送れない
+    await page.getByTestId("split-next").click();
+    await expect(card(page, 1)).toHaveAttribute("data-focused", "true");
+    await expect(position).toHaveText("1 / 2");
+    await expect(page.getByTestId("split-previous")).toBeDisabled();
+
+    // Act / Assert - 候補でないページは飛ばして、5 枚目の見開きへ
+    await page.getByTestId("split-next").click();
+    await expect(card(page, 4)).toHaveAttribute("data-focused", "true");
+    await expect(card(page, 1)).toHaveAttribute("data-focused", "false");
+    await expect(position).toHaveText("2 / 2");
+    await expect(page.getByTestId("split-next")).toBeDisabled();
+
+    // Act / Assert - 戻る
+    await page.getByTestId("split-previous").click();
+    await expect(card(page, 1)).toHaveAttribute("data-focused", "true");
+  });
+
+  test("割った行に「分割済み」が出て、格子は右から左へ並ぶ", async ({
+    page,
+  }) => {
+    // Arrange
+    await open(page, writeTwoSpreads("印.zip"), "split");
+    await expect(page.locator('[data-testid="split-card"]')).toHaveCount(7);
+
+    // Assert - 割る前は印が無い
+    await expect(page.getByTestId("split-applied")).toHaveCount(0);
+
+    // Assert - 1 枚目は 2 枚目より右にある
+    const first = await card(page, 0).boundingBox();
+    const second = await card(page, 1).boundingBox();
+    expect(first!.x, "1 枚目が 2 枚目より右に無い").toBeGreaterThan(second!.x);
+
+    // Act
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toContainText(
+      "2 枚を分割しました",
+      { timeout: 30_000 },
+    );
+
+    // Assert - 割った 2 行に印が出る。絵は割る前の見開きのままなので、
+    // 印が無いと割れたかどうかが分からない
+    await expect(card(page, 1).getByTestId("split-applied")).toHaveText(
+      "分割済み",
+    );
+    await expect(card(page, 4).getByTestId("split-applied")).toHaveCount(1);
+    await expect(page.getByTestId("split-applied")).toHaveCount(2);
+  });
+
+  test("ページ並べ替えも右から左へ並ぶ", async ({ page }) => {
+    // Arrange
+    await open(page, writeTwoSpreads("並べ替え.zip"), "reorder");
+    const cards = page.getByTestId("page-card");
+    await expect(cards).toHaveCount(7);
+
+    // Assert - 1 ページ目が右端。割った 2 ページ（右半分が先）が、見開きと
+    // 同じ左右で隣り合う並び
+    const first = await cards.nth(0).boundingBox();
+    const second = await cards.nth(1).boundingBox();
+    expect(first!.x, "1 ページ目が 2 ページ目より右に無い").toBeGreaterThan(
+      second!.x,
+    );
+  });
+});
