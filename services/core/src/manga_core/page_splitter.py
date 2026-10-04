@@ -8,6 +8,9 @@
 また 1 行の見開きとして現れ、割る位置を動かしたり、割る前へ戻したりできる。
 そのために、割る前の画像は #66 の仕組みで同じ ZIP に残す。
 
+対は中身のハッシュで記録から引くので、並びに頼らずに見つかる。ページ並べ替えで
+左右を入れ替えた対も、離れた位置へ動かした対も、同じ 1 行へ畳む（#133）。
+
 割る幾何（どちらが先か、どこで切るか）と、開き直したときに対を 1 行へ畳む
 規則は、すべてこのモジュールに閉じる。散らすと、割る側と畳む側の食い違いで
 半分が迷子になる。
@@ -71,6 +74,7 @@ _CHANGE_NONE = "none"
 _CHANGE_SPLIT = "split"
 _CHANGE_RESTORED = "restored"
 _CHANGE_ADJUSTED = "adjusted"
+_CHANGE_JOINED = "joined"
 
 
 class PageSplitError(RuntimeError):
@@ -89,9 +93,13 @@ class SplitRow:
     """画面に 1 行として出る単位。
 
     names は、この行が占める「いま存在するページ名」。割る前は 1 つ、割った
-    後の対は 2 つ（先に読む方、後に読む方の順）。
+    後の対は 2 つで、本の中で先に出てくる方から並ぶ。ふつうは右半分・左半分の
+    順だが、並べ替えで入れ替えられていれば左半分が先になる。
 
     width / height は source の画像の寸法で、split.x はこの座標で読む。
+
+    displaced は、対の 2 枚がいま隣り合っていないこと。行は先に出てくる方の
+    位置に置かれ、確定するとそこで 2 枚が隣り合う（#133）。
     """
 
     names: tuple[str, ...]
@@ -100,6 +108,7 @@ class SplitRow:
     height: int
     is_spread: bool
     split: SplitPosition | None
+    displaced: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,6 +144,8 @@ class SplitResult:
     split_count: int
     restored_count: int
     adjusted_count: int
+    # 離れていた対を、位置は変えずに隣り合わせへ戻した数（#133）
+    joined_count: int = 0
 
 
 def split_halves(image: Image.Image, x: int) -> tuple[Image.Image, Image.Image]:
@@ -223,15 +234,17 @@ def _tally(page_count: int, changes: Counter[str]) -> SplitResult:
     split = changes[_CHANGE_SPLIT]
     restored = changes[_CHANGE_RESTORED]
     adjusted = changes[_CHANGE_ADJUSTED]
+    joined = changes[_CHANGE_JOINED]
     return SplitResult(
         # 1 行も動いていない確定もありうる（画面が走査の結果をそのまま
         # 送り返したとき）。書き直したかどうかではなく、利用者の意図が
         # 何か効いたかどうかを返す
-        changed=bool(split or restored or adjusted),
+        changed=bool(split or restored or adjusted or joined),
         page_count=page_count,
         split_count=split,
         restored_count=restored,
         adjusted_count=adjusted,
+        joined_count=joined,
     )
 
 
@@ -306,37 +319,62 @@ def _split_marks(ref: OriginalRef | None) -> tuple[str | None, int | None]:
 
 
 def _fold_pairs(path: Path, facts: Sequence[_PageFacts]) -> tuple[SplitRow, ...]:
-    """割った対だけを 1 行へ畳む。
+    """割った対を 1 行へ畳む。行は対のうち先に出てくる方の位置に置く。
 
-    前から順に見て、対になったら 2 枚まとめて進める。これで「どちらも
-    まだ他の行に取られていない」が自然に守られる。
+    並びには頼らない（#133）。ページ並べ替えで左右を入れ替えた対や、離れた
+    位置へ動かした対を畳まずにおくと、どちらもただのページとして並び、ZIP に
+    元画像が残っているのに戻す手立てが無くなる。
     """
-    rows: list[SplitRow] = []
-    index = 0
-    while index < len(facts):
-        pair = (
-            _folded_row(path, facts[index], facts[index + 1])
-            if index + 1 < len(facts)
-            else None
+    folded: dict[int, tuple[int, SplitRow]] = {}
+    for first, second in _matched_halves(facts):
+        row = _folded_row(
+            path, facts[first], facts[second], displaced=second != first + 1
         )
-        if pair is not None:
-            rows.append(pair)
-            index += 2
+        if row is not None:
+            folded[first] = (second, row)
+    consumed = {second for second, _ in folded.values()}
+
+    rows: list[SplitRow] = []
+    for index, fact in enumerate(facts):
+        if index in consumed:
             continue
-        rows.append(_plain_row(facts[index]))
-        index += 1
+        if index in folded:
+            rows.append(folded[index][1])
+            continue
+        rows.append(_plain_row(fact))
     return tuple(rows)
 
 
-def _folded_row(path: Path, earlier: _PageFacts, later: _PageFacts) -> SplitRow | None:
-    """隣り合う 2 枚が同じ元から割られた対なら、1 行に畳んで返す。
+def _matched_halves(facts: Sequence[_PageFacts]) -> list[tuple[int, int]]:
+    """同じ元を同じ位置で割った 2 枚の組を、本の中で先に出てくる順に拾う。
+
+    1 枚目は相手が来るまで待たせておき、相手が来たら組にする。どの 2 枚が
+    組になるかは記録（元画像と割った位置）で決まり、並びでは決まらない。
+    """
+    waiting: dict[tuple[str, int], int] = {}
+    pairs: list[tuple[int, int]] = []
+    for index, fact in enumerate(facts):
+        if fact.ref is None or fact.side is None or fact.x is None:
+            continue
+        key = (fact.ref.hash, fact.x)
+        earlier = waiting.get(key)
+        if earlier is None:
+            waiting[key] = index
+        elif _split_pair(facts[earlier], fact) is not None:
+            pairs.append((earlier, index))
+            del waiting[key]
+    return pairs
+
+
+def _folded_row(
+    path: Path, first: _PageFacts, second: _PageFacts, displaced: bool
+) -> SplitRow | None:
+    """2 枚が同じ元から割られた対なら、1 行に畳んで返す。
 
     条件を 1 つでも緩めると、たまたま同じ元から出た無関係な 2 枚が 1 行に
-    まとめられ、片方を割り直したつもりでもう片方が消える。離れた 2 枚や
-    右左が逆の 2 枚を畳まないのは、利用者が意図して動かした並びを、次の
-    書き込みで黙って戻さないため。
+    まとめられ、片方を割り直したつもりでもう片方が消える。
     """
-    pair = _split_pair(earlier, later)
+    pair = _split_pair(first, second)
     if pair is None:
         return None
     try:
@@ -348,12 +386,13 @@ def _folded_row(path: Path, earlier: _PageFacts, later: _PageFacts) -> SplitRow 
     if not 0 < pair.x < width:
         return None
     return SplitRow(
-        names=(earlier.name, later.name),
+        names=(first.name, second.name),
         source=SOURCE_ORIGINAL,
         width=width,
         height=height,
         is_spread=is_spread(width, height),
         split=SplitPosition(x=pair.x),
+        displaced=displaced,
     )
 
 
@@ -361,27 +400,32 @@ def _folded_row(path: Path, earlier: _PageFacts, later: _PageFacts) -> SplitRow 
 class _SplitPair:
     """同じ元を同じ位置で割った対だと確かめられた 2 枚。
 
-    確かめた結果そのもの（どの元画像を、どこで割ったか）を持つ。呼び出し側が
-    改めて片方から引き直すと、確かめた対象とずれる余地が残る。
+    確かめた結果そのもの（どの元画像を、どこで割ったか、どちらが先に並んで
+    いるか）を持つ。呼び出し側が改めて片方から引き直すと、確かめた対象と
+    ずれる余地が残る。
     """
 
     ref: OriginalRef
     x: int
+    # 先に並んでいる方が右半分か。並べ替えで入れ替えられていれば False
+    right_first: bool
 
 
-def _split_pair(earlier: _PageFacts, later: _PageFacts) -> _SplitPair | None:
-    """隣り合う 2 枚が同じ元を同じ位置で割った対なら、その元と位置を返す。
+def _split_pair(first: _PageFacts, second: _PageFacts) -> _SplitPair | None:
+    """2 枚が同じ元を同じ位置で割った右半分と左半分なら、その元と位置を返す。
 
     条件を 1 つでも緩めると、たまたま同じ元から出た無関係な 2 枚が 1 行に
-    まとめられ、片方を割り直したつもりでもう片方が消える。右左が逆の 2 枚を
-    対にしないのは、利用者が意図して入れ替えた並びを、次の書き込みで黙って
+    まとめられ、片方を割り直したつもりでもう片方が消える。
+
+    並び順は問わない（#133）。どちらが先かは返す値に持たせ、割り直すときも
+    その並びを保つ。利用者が意図して入れ替えた並びを、次の書き込みで黙って
     戻さないため。
 
     ただ 1 つだけ緩める。左右がまったく同じバイト列になった対（一色の章扉や
     左右対称の見返しを中央で割った場合）は、記録の鍵が中身のハッシュである
     以上 1 件しか持てず、後から書いた側が前を上書きする。両方が同じ side を
-    指すので、右・左の順という条件は原理的に満たせない。そこで、2 枚の中身が
-    同じで、同じ元から出た同じ 1 件の split の記録に行き着くときに限り、
+    指すので、右と左の 1 枚ずつという条件は原理的に満たせない。そこで、2 枚の
+    中身が同じで、同じ元から出た同じ 1 件の split の記録に行き着くときに限り、
     その記録の x で対とみなす。塞いだままにすると、真っ白な見開きだけが
     二度と割り位置を直せなくなる。ページは残るので、壊れたようには見えない
     ぶん気づけない。
@@ -389,21 +433,21 @@ def _split_pair(earlier: _PageFacts, later: _PageFacts) -> _SplitPair | None:
     記録の形は変えない。derived を 1 つのハッシュに複数件持てる形へ広げると、
     #66 と共有している manifest の形式が変わる。
     """
-    if earlier.ref is None or later.ref is None:
+    if first.ref is None or second.ref is None:
         return None
-    if earlier.ref.hash != later.ref.hash:
+    if first.ref.hash != second.ref.hash:
         return None
-    if earlier.x is None or earlier.x != later.x:
+    if first.x is None or first.x != second.x:
         return None
-    if earlier.side is None or later.side is None:
+    if first.side is None or second.side is None:
         return None
-    # 中身が同じ 2 枚は同じ 1 件の記録に行き着くので、side はどちらも同じ値に
-    # なる。右・左の順という条件は原理的に満たせず、見るだけ無駄になる
-    if earlier.digest != later.digest and (
-        earlier.side != _SIDE_EARLIER or later.side != _SIDE_LATER
-    ):
+    if first.digest == second.digest:
+        # 中身が同じ 2 枚は同じ 1 件の記録に行き着くので、side はどちらも同じ
+        # 値になる。どちらが先かは見分けられず、見分ける意味も無い
+        return _SplitPair(ref=first.ref, x=first.x, right_first=True)
+    if {first.side, second.side} != {_SIDE_EARLIER, _SIDE_LATER}:
         return None
-    return _SplitPair(ref=earlier.ref, x=earlier.x)
+    return _SplitPair(ref=first.ref, x=first.x, right_first=first.side == _SIDE_EARLIER)
 
 
 def _plain_row(fact: _PageFacts) -> SplitRow:
@@ -490,9 +534,11 @@ def _rewrite_pair(
 
     どちらも相手は同梱された元画像。保存済みの半分を相手にすると、動かす
     たびに前回捨てた画素が戻らず、JPEG なら劣化も積み上がる。
+
+    書き出すのはこの行の位置。離れていた対は、ここで 2 枚が隣り合う（#133）。
     """
-    earlier_name, later_name = row.names
-    facts = _revalidated_pair(editor, path, row.names)
+    first_name, second_name = row.names
+    facts, displaced = _revalidated_pair(editor, path, row.names)
     pair = _split_pair(*facts)
     if pair is None:
         raise PageSplitError(
@@ -512,10 +558,10 @@ def _rewrite_pair(
         # 戻した直後にもう一度割ったとき、元の画素をもう引けない。ただし
         # 元画像の形式が書き戻し先の拡張子と食い違うとき（viewer が読めない
         # BMP の元画像は、戻り先の名前が .png になる）だけは書き直す
-        restored = _bytes_matching_suffix(original, earlier_name)
+        restored = _bytes_matching_suffix(original, first_name)
         return _RowPlan(
-            outputs=(OutputPage(earlier_name, restored),),
-            dropped=(later_name,),
+            outputs=(OutputPage(first_name, restored),),
+            dropped=(second_name,),
             extras=plan_manifest(
                 path,
                 source=original,
@@ -527,54 +573,62 @@ def _rewrite_pair(
             change=_CHANGE_RESTORED,
         )
 
-    earlier, later = _halves_of(original, earlier_name, row.split.x)
+    right, left = _halves_of(original, first_name, row.split.x)
+    # いまの並び（どちらが先か）を保つ。入れ替えた並びを黙って右・左へ戻さない
+    ahead, behind = (right, left) if pair.right_first else (left, right)
+    if row.split.x != pair.x:
+        change = _CHANGE_ADJUSTED
+    elif displaced:
+        change = _CHANGE_JOINED
+    else:
+        # 同じ位置で送り返された対は、画面が走査の結果をそのまま返しただけ。
+        # 動かしたと数えると、1 か所を割っただけの確定が「10 か所動かした」と
+        # 報告される
+        change = _CHANGE_NONE
     return _RowPlan(
         outputs=(
-            OutputPage(earlier_name, earlier.data),
-            OutputPage(later_name, later.data),
+            OutputPage(first_name, ahead.data),
+            OutputPage(second_name, behind.data),
         ),
         dropped=(),
         extras=plan_manifest(
             path,
             source=original,
             source_name=pair.ref.entry,
-            derivations=(earlier.derivation, later.derivation),
+            derivations=(right.derivation, left.derivation),
             superseded=superseded,
             planned=extras,
         ),
-        # 同じ位置で送り返された対は、画面が走査の結果をそのまま返しただけ。
-        # 動かしたと数えると、1 か所を割っただけの確定が「10 か所動かした」と
-        # 報告される
-        change=_CHANGE_NONE if row.split.x == pair.x else _CHANGE_ADJUSTED,
+        change=change,
     )
 
 
 def _revalidated_pair(
     editor: ZipPageEditor, path: Path, names: tuple[str, ...]
-) -> tuple[_PageFacts, _PageFacts]:
-    """名前を 2 つ持つ行が、いまも隣り合う 2 枚を指しているか確かめ直す。
+) -> tuple[tuple[_PageFacts, _PageFacts], bool]:
+    """名前を 2 つ持つ行が、いまも割った対の 2 枚を指しているか確かめ直す。
 
     行は画面から戻ってくるもので、走査した時点のアーカイブしか映していない。
     確定までに別のタブが同じ本を書き換えれば、行は古い名前を指したまま届く。
-    1 枚目だけを見て書くと、2 枚目に指名された無関係なページが「割る前へ
-    戻す」の巻き添えで落とされる。apply_pages は名指しされた落としを通すので、
-    止められるのはここだけ。書き直しの計画を組む前に断ることで、アーカイブは
-    1 バイトも変わらない。
+    名前だけを見て書くと、2 枚目に指名された無関係なページが「割る前へ戻す」の
+    巻き添えで落とされる。apply_pages は名指しされた落としを通すので、
+    止められるのはここだけ。2 枚の中身を読み、同じ元を割った対であることを
+    呼び出し側（``_split_pair``）が確かめる。書き直しの計画を組む前に断る
+    ことで、アーカイブは 1 バイトも変わらない。
 
-    隣り合っているかまで見るのは、離れた 2 枚を対として書き直すと、利用者が
-    意図して動かした並びが黙って元へ戻るため。畳む側と同じ規則で確かめる。
+    2 枚がいま隣り合っているかも返す。隣り合っていない対は、この行の位置で
+    隣り合わせへ戻る（#133）。
     """
     order = {page.name: position for position, page in enumerate(editor.pages)}
     missing = [name for name in names if name not in order]
     if missing:
         raise PageSplitError(f"アーカイブに存在しないページです: {missing}")
-    earlier_name, later_name = names
-    if order[later_name] != order[earlier_name] + 1:
-        raise PageSplitError(f"割った対が隣り合っていません: {names}")
-    return (
-        _page_facts(path, earlier_name, editor.read_entry(earlier_name)),
-        _page_facts(path, later_name, editor.read_entry(later_name)),
+    first_name, second_name = names
+    facts = (
+        _page_facts(path, first_name, editor.read_entry(first_name)),
+        _page_facts(path, second_name, editor.read_entry(second_name)),
     )
+    return facts, order[second_name] != order[first_name] + 1
 
 
 @dataclass(frozen=True)

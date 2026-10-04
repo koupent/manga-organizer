@@ -38,6 +38,8 @@ export type SplitScanRow = {
   source: string;
   is_spread: boolean;
   split: { x: number } | null;
+  /** 割った対の 2 枚がいま隣り合っていないか（#133） */
+  displaced: boolean;
 };
 
 /** 走査ジョブの結果（manga_api.split_job.SplitScanView） */
@@ -55,6 +57,7 @@ export type SplitConfirmResult = {
   split_count: number;
   restored_count: number;
   adjusted_count: number;
+  joined_count: number;
 };
 
 /**
@@ -73,6 +76,12 @@ export type SplitRow = {
   checked: boolean;
   /** 割る位置。元画像の画素で持ち、描画のときだけ割合に直す */
   x: number;
+  /**
+   * 割った対の 2 枚が、ページ並べ替えで離れた位置にある（#133）。行は先に
+   * 出てくる方の位置に置かれ、確定するとそこで 2 枚が隣り合う。黙って動かさない
+   * よう、開いた時点から保留として数える
+   */
+  displaced: boolean;
   stored: { checked: boolean; x: number };
 };
 
@@ -116,6 +125,7 @@ export function scanResultOf(value: unknown): SplitScanResult {
       source: typeof row.source === "string" ? row.source : "page",
       is_spread: row.is_spread === true,
       split: positionOf(row.split),
+      displaced: row.displaced === true,
     };
   });
   return {
@@ -140,6 +150,7 @@ export function confirmResultOf(value: unknown): SplitConfirmResult {
     split_count: count("split_count"),
     restored_count: count("restored_count"),
     adjusted_count: count("adjusted_count"),
+    joined_count: count("joined_count"),
   };
 }
 
@@ -182,6 +193,7 @@ export function rowsFrom(result: SplitScanResult): SplitRow[] {
       detected: row.is_spread,
       checked,
       x,
+      displaced: row.displaced,
       stored: { checked: row.split !== null, x },
     };
   });
@@ -192,11 +204,16 @@ export function isWide(row: SplitRow): boolean {
   return row.width / row.height >= SPREAD_RATIO;
 }
 
-/** 書き込む前と違うか。番号を青くするのも主操作を押せるのもこれで決まる */
+/**
+ * 書き込む前と違うか。番号を青くするのも主操作を押せるのもこれで決まる。
+ *
+ * 離れた対は、割ったままでも確定すれば隣り合わせに動く。触っていなくても
+ * 保留として数え、動くことを利用者に見せる（#133）。
+ */
 export function isPending(row: SplitRow): boolean {
   return (
     row.checked !== row.stored.checked ||
-    (row.checked && row.x !== row.stored.x)
+    (row.checked && (row.x !== row.stored.x || row.displaced))
   );
 }
 
@@ -259,11 +276,19 @@ export function summaryOf(rows: SplitRow[]): string {
   const reverted = rows.filter(
     (row) => !row.checked && row.stored.checked,
   ).length;
+  const joined = rows.filter(
+    (row) =>
+      row.checked &&
+      row.stored.checked &&
+      row.x === row.stored.x &&
+      row.displaced,
+  ).length;
 
   const parts: string[] = [];
   if (fresh > 0) parts.push(`${fresh} 枚を 2 ページに分けます`);
   if (moved > 0) parts.push(`${moved} 枚の分割位置を直します`);
   if (reverted > 0) parts.push(`${reverted} 枚を 1 ページに戻します`);
+  if (joined > 0) parts.push(`離れた見開き ${joined} 組を隣り合わせに戻します`);
   if (parts.length === 0) {
     return rows.some(isCandidate)
       ? "変更はありません"
@@ -293,6 +318,11 @@ export function doneMessage(result: SplitConfirmResult): string {
   }
   if (result.restored_count > 0) {
     parts.push(`${result.restored_count} 枚を 1 ページに戻しました`);
+  }
+  if (result.joined_count > 0) {
+    parts.push(
+      `離れた見開き ${result.joined_count} 組を隣り合わせに戻しました`,
+    );
   }
   if (parts.length === 0) return "変更はありませんでした";
   return `${parts.join(" · ")}（全 ${result.page_count} ページ）`;

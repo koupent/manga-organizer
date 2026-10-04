@@ -108,7 +108,7 @@ PAGE_HEIGHT = 1800
 
 # 走査が返す 1 行の形。鍵が欠けると画面は「割れない行」と「載せ忘れ」を
 # 区別できないので、集合ごと固定する
-ROW_KEYS = {"names", "width", "height", "source", "is_spread", "split"}
+ROW_KEYS = {"names", "width", "height", "source", "is_spread", "split", "displaced"}
 SCAN_KEYS = {"archive", "page_count", "token", "rows"}
 CONFIRM_KEYS = {
     "changed",
@@ -116,6 +116,7 @@ CONFIRM_KEYS = {
     "split_count",
     "restored_count",
     "adjusted_count",
+    "joined_count",
 }
 
 THUMBNAIL_WIDTH = 240
@@ -619,6 +620,60 @@ class SplitRestoreTest(SplitApiTestBase):
         self.assertEqual((SPREAD_WIDTH, SPREAD_HEIGHT), size_of(page))
         self.assertEqual(RED, colour_at(page, 400, 900), "左半分が戻っていない")
         self.assertEqual(BLUE, colour_at(page, 2300, 900), "右半分が戻っていない")
+
+
+class SeparatedPairTest(SplitApiTestBase):
+    """6. ページ並べ替えで離れた対を、割る画面から戻せること（#133）"""
+
+    def separate_the_pair(self) -> None:
+        """見開きを割ったあと、左半分（3 ページ目）を末尾へ動かす"""
+        from manga_core.page_reorder import ZipPageEditor
+
+        self.split_the_spread()
+        editor = ZipPageEditor(self.archive)
+        names = [page.name for page in editor.pages]
+        editor.apply_order([names[0], names[1], names[3], names[4], names[2]])
+        editor.close()
+
+    def test_a_separated_pair_is_folded_and_can_be_restored(self):
+        # Arrange
+        self.separate_the_pair()
+
+        # Act
+        scanned = self.scan(self.archive)
+
+        # Assert - 右半分の位置に 1 行で畳まれ、離れていることが画面に伝わる
+        self.assertEqual(4, len(scanned["rows"]), scanned["rows"])
+        pair = scanned["rows"][1]
+        self.assertEqual(2, len(pair["names"]), pair)
+        self.assertIs(True, pair["displaced"], pair)
+
+        # Act - 走査の行をそのまま、割る前へ戻すだけ変えて送る。行の名前を
+        # 並べたものはいまのページ順と違うが、違うのは対の 2 枚目だけ
+        result = self.confirmed(
+            self.archive, scanned["token"], self.rows_for(scanned, {1: None})
+        )
+
+        # Assert - 見開きが 2 ページ目に戻る
+        self.assertEqual(1, result["restored_count"], result)
+        self.assertEqual(4, result["page_count"], result)
+        page = entry_data(self.archive, self.scan(self.archive)["rows"][1]["names"][0])
+        self.assertEqual((SPREAD_WIDTH, SPREAD_HEIGHT), size_of(page))
+
+    def test_other_reorderings_are_still_refused(self):
+        # Arrange - 対を畳んだうえで、関係の無い行まで入れ替える
+        self.separate_the_pair()
+        scanned = self.scan(self.archive)
+        rows = self.rows_for(scanned)
+        rows[2], rows[3] = rows[3], rows[2]
+        before = self.archive.read_bytes()
+
+        # Act
+        refused = self.submit_confirm(self.archive, scanned["token"], rows)
+
+        # Assert - 寄せてよいのは対の 2 枚目だけ。ほかの並べ替えは別の経路の仕事
+        self.assertEqual(400, refused.status_code, refused.text)
+        self.assertEqual(before, self.archive.read_bytes(), "断ったのに書き換えている")
 
 
 class SplitScanSecurityTest(SplitApiTestBase):
