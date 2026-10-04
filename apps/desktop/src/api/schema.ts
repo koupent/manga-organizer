@@ -662,6 +662,7 @@ export interface components {
       is_spread: boolean;
       /** Target Aspect Ratio */
       target_aspect_ratio: number;
+      edge_colors: components["schemas"]["EdgeColorsView"];
       /** @description 加工前の画像。一度も加工していなければ null */
       original: components["schemas"]["OriginalView"] | null;
     };
@@ -677,6 +678,24 @@ export interface components {
        * @default 0
        */
       size: number;
+    };
+    /**
+     * EdgeColorsView
+     * @description 画像の 4 辺の縁の色（#rrggbb）。
+     *
+     *     切り抜き枠が画像の外へはみ出した所は、サイドカーがこの色で塗る。画面は
+     *     同じ色で見本を描くので、確定する前に仕上がりが見える（#130）。向きは
+     *     回す前の画像のもの。
+     */
+    EdgeColorsView: {
+      /** Top */
+      top: string;
+      /** Bottom */
+      bottom: string;
+      /** Left */
+      left: string;
+      /** Right */
+      right: string;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -888,6 +907,7 @@ export interface components {
       height: number;
       /** Operations */
       operations: components["schemas"]["OperationView"][];
+      edge_colors: components["schemas"]["EdgeColorsView"];
     };
     /**
      * OutputRootRequest

@@ -20,7 +20,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageStat
 
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.original_store import (
@@ -53,6 +53,15 @@ COVER_ASPECT_RATIO = 2 / 3
 SPREAD_RATIO_THRESHOLD = 1.2
 
 QUARTER_TURNS = (0, 90, 180, 270)
+
+# 縁の色を拾う帯の太さ（その辺に直交する寸法に対する割合）。1 本の線だけを
+# 見ると、表紙の縁取りや走査の汚れ 1 本で色が決まってしまう
+EDGE_STRIP_FRACTION = 0.01
+
+# 枠の外を塗る余白の上限（画像の長い辺に対する倍率）。画面は「画像の全体が
+# ちょうど収まる 2:3」までしか広げないので、普通の依頼はこの内側に収まる。
+# 届いた数のまま画素を確保すると、桁違いの範囲 1 つでサイドカーが詰まる
+MAX_CANVAS_SCALE = 2
 TEMP_PREFIX = ".cover-"
 TEMP_SUFFIX = ".tmp"
 
@@ -68,6 +77,16 @@ class CoverTransform:
     split: str | None = None
     crop: tuple[int, int, int, int] | None = None
     rotate: int = 0
+
+
+@dataclass(frozen=True)
+class EdgeColors:
+    """画像の 4 辺の縁の色（RGB）。枠が画像の外へはみ出した所を、その辺の色で塗る"""
+
+    top: tuple[int, int, int]
+    bottom: tuple[int, int, int]
+    left: tuple[int, int, int]
+    right: tuple[int, int, int]
 
 
 @dataclass(frozen=True)
@@ -100,16 +119,79 @@ def _split_half(image: Image.Image, side: str) -> Image.Image:
     return image.crop(box)
 
 
+def edge_colors(image: Image.Image) -> EdgeColors:
+    """4 辺それぞれの縁の色。辺に沿った細い帯の中央値で決める。
+
+    平均ではなく中央値にするのは、縁に沿った細い線（枠線や走査の影）に
+    引きずられないため。辺ごとに分けるのは、上が濃く下が白い表紙のように、
+    辺によって地の色が違うことがあるため（#130）。
+    """
+    rgb = image.convert("RGB")
+    width, height = rgb.size
+    across = max(1, round(height * EDGE_STRIP_FRACTION))
+    along = max(1, round(width * EDGE_STRIP_FRACTION))
+
+    def median(box: tuple[int, int, int, int]) -> tuple[int, int, int]:
+        red, green, blue = ImageStat.Stat(rgb.crop(box)).median
+        return int(red), int(green), int(blue)
+
+    return EdgeColors(
+        top=median((0, 0, width, across)),
+        bottom=median((0, height - across, width, height)),
+        left=median((0, 0, along, height)),
+        right=median((width - along, 0, width, height)),
+    )
+
+
+def _fits_axis(start: int, end: int, size: int) -> bool:
+    """1 つの軸で、範囲が画像の内側にあるか、画像を丸ごと含むか。
+
+    片側だけはみ出す範囲（片方を切り、もう片方に余白を足す）は受けない。
+    画面は画像を丸ごと含むときにしか枠を外へ出さない。
+    """
+    inside = 0 <= start and end <= size
+    covering = start <= 0 and end >= size
+    return inside or covering
+
+
 def _crop(image: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
-    """指定範囲を切り出す"""
+    """指定範囲を切り出す。
+
+    範囲は画像の外へはみ出してよい（#130）。2:3 に収まらない画像を切らずに
+    表紙にするため。はみ出せるのは 1 つの軸だけで、その軸では画像を丸ごと
+    含むこと。はみ出した所は、その辺の縁の色で塗る。
+    """
     left, upper, right, lower = box
+    width, height = image.size
     if right <= left or lower <= upper:
         raise CoverEditError(f"切り抜き範囲が空です: {box}")
-    if left < 0 or upper < 0 or right > image.width or lower > image.height:
-        raise CoverEditError(
-            f"切り抜き範囲が画像の外です: {box} (画像は {image.width}x{image.height})"
-        )
-    return image.crop(box)
+    outside = CoverEditError(
+        f"切り抜き範囲が画像の外です: {box} (画像は {width}x{height})"
+    )
+    if not (_fits_axis(left, right, width) and _fits_axis(upper, lower, height)):
+        raise outside
+    widened = left < 0 or right > width
+    heightened = upper < 0 or lower > height
+    if widened and heightened:
+        raise outside
+    if not (widened or heightened):
+        return image.crop(box)
+    if max(right - left, lower - upper) > MAX_CANVAS_SCALE * max(width, height):
+        raise outside
+
+    colors = edge_colors(image)
+    canvas = Image.new("RGB", (right - left, lower - upper))
+    if widened:
+        canvas.paste(colors.left, (0, 0, -left, canvas.height))
+        canvas.paste(colors.right, (width - left, 0, canvas.width, canvas.height))
+    else:
+        canvas.paste(colors.top, (0, 0, canvas.width, -upper))
+        canvas.paste(colors.bottom, (0, height - upper, canvas.width, canvas.height))
+    inner = image.crop(
+        (max(left, 0), max(upper, 0), min(right, width), min(lower, height))
+    )
+    canvas.paste(inner, (max(-left, 0), max(-upper, 0)))
+    return canvas
 
 
 def _rotate(image: Image.Image, degrees: int) -> Image.Image:

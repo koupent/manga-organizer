@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from manga_api import thumbnails
 from manga_api.analysis_job import AnalyzeRequest, analysis_work
 from manga_api.cover_job import CoverRequest, cover_work
-from manga_api.cover_views import CoverView, describe_original
+from manga_api.cover_views import CoverView, describe_edges, describe_original
 from manga_api.drop_scan import walk_shallow_first
 from manga_api.http_images import (
     THUMBNAIL_MEDIA_TYPE,
@@ -597,12 +597,14 @@ def create_app(
             editor.close()
         with Image.open(io.BytesIO(body)) as image:
             width, height = image.size
+            edges = describe_edges(image)
         return CoverView(
             name=target,
             width=width,
             height=height,
             is_spread=is_spread(width, height),
             target_aspect_ratio=COVER_ASPECT_RATIO,
+            edge_colors=edges,
             original=describe_original(path, body),
         )
 

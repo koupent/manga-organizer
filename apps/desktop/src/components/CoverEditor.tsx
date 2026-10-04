@@ -15,6 +15,7 @@ import { CoverPreview } from "./CoverPreview";
 import {
   CropFrame,
   TARGET_RATIO,
+  canvasOf,
   defaultCrop,
   nextTurn,
   oppositeTurn,
@@ -22,7 +23,9 @@ import {
   rotateCrop,
   rotatedSize,
   toCropBox,
+  turnedEdges,
   type CropRect,
+  type EdgeColors,
   type ImageSize,
   type Operation,
   type QuarterTurn,
@@ -39,10 +42,11 @@ const FRAME_BORDER = 1;
 /** viewer での見え方に使う幅。2:3 なので高さは 300px になる */
 const PREVIEW_WIDTH = 200;
 
+/** 枠を置く相手。寸法と、外へ広げた所を塗る縁の色 */
+type CoverSource = ImageSize & { edge_colors: EdgeColors };
+
 /** いま保存されている 1 枚の、加工前の姿 */
-type CoverOriginal = {
-  width: number;
-  height: number;
+type CoverOriginal = CoverSource & {
   operations: Operation[];
 };
 
@@ -52,6 +56,7 @@ type Cover = {
   height: number;
   is_spread: boolean;
   target_aspect_ratio: number;
+  edge_colors: EdgeColors;
   /** 加工前の画像。一度も加工していなければ null */
   original: CoverOriginal | null;
 };
@@ -64,7 +69,7 @@ type Cover = {
  * 動かせない。利用者から見れば同じ 1 枚で、「元画像」と「加工後」の区別は
  * 画面に出さない。
  */
-function sourceOf(cover: Cover): ImageSize {
+function sourceOf(cover: Cover): CoverSource {
   return cover.original ?? cover;
 }
 
@@ -252,13 +257,27 @@ export function CoverEditor({
       : client.imageUrl(archive, cover.name)
   }&v=${reloadKey}`;
 
-  // 絵は枠線の内側に入る。枠線のぶんを先に引いてから収める大きさを決める
-  const display = fitInside(shown, {
+  // 枠を置ける範囲。見開きでなければ画像より広く、外へ広げた枠もここに描く
+  const canvas = canvasOf(shown);
+  // 外へ広げた所を塗る色。回した後の向きの辺へ移しておく
+  const edges = turnedEdges(source.edge_colors, angle);
+  // 範囲は枠線の内側に入る。枠線のぶんを先に引いてから収める大きさを決める
+  const display = fitInside(canvas, {
     width: stage.width - FRAME_BORDER * 2,
     height: stage.height - FRAME_BORDER * 2,
   });
+  // 範囲の中で絵が占める所。絵は範囲の真ん中に置かれる
+  const scale = canvas.width > 0 ? display.width / canvas.width : 0;
+  const picture = {
+    left: -canvas.x * scale,
+    top: -canvas.y * scale,
+    width: shown.width * scale,
+    height: shown.height * scale,
+  };
   // 回す前の描画寸法。90 度と 270 度では縦横が入れ替わる
-  const upright = rotatedSize(display, oppositeTurn(angle));
+  const upright = rotatedSize(picture, oppositeTurn(angle));
+  // 画像の外まで枠を広げられるか。説明の文を変える
+  const paddable = canvas.width > shown.width || canvas.height > shown.height;
 
   return (
     /*
@@ -307,7 +326,9 @@ export function CoverEditor({
             すぐ上に出す。枠が退いている間は言っても指す先が無い */}
           {choosing ? null : (
             <span className="shrink-0 text-[12px] text-ink-faint">
-              枠を掴んで動かせます（2:3 固定）
+              {paddable
+                ? "枠を掴んで動かせます（2:3 固定。画像の外へ広げた所は縁の色で塗ります）"
+                : "枠を掴んで動かせます（2:3 固定）"}
             </span>
           )}
           <div className="flex-1" />
@@ -344,7 +365,7 @@ export function CoverEditor({
               ref={stageRef}
               className="flex min-h-0 flex-1 justify-center overflow-hidden"
             >
-              {/* 枠の位置を画像そのものに合わせるため、枠線は外側の箱に持たせる */}
+              {/* 枠の位置を範囲そのものに合わせるため、枠線は外側の箱に持たせる */}
               <div
                 className="relative self-start overflow-hidden rounded border border-line"
                 style={{
@@ -352,6 +373,42 @@ export function CoverEditor({
                   height: display.height + FRAME_BORDER * 2,
                 }}
               >
+                {/* 絵の外の余白は、その辺の縁の色で塗っておく。枠を広げたときの
+                    仕上がりがそのまま見える。枠の外は枠の影で暗くなる */}
+                {canvas.y < 0 ? (
+                  <>
+                    <div
+                      data-testid="cover-pad"
+                      className="absolute inset-x-0 top-0"
+                      style={{ height: picture.top, background: edges.top }}
+                    />
+                    <div
+                      data-testid="cover-pad"
+                      className="absolute inset-x-0 bottom-0"
+                      style={{
+                        height: display.height - picture.top - picture.height,
+                        background: edges.bottom,
+                      }}
+                    />
+                  </>
+                ) : null}
+                {canvas.x < 0 ? (
+                  <>
+                    <div
+                      data-testid="cover-pad"
+                      className="absolute inset-y-0 left-0"
+                      style={{ width: picture.left, background: edges.left }}
+                    />
+                    <div
+                      data-testid="cover-pad"
+                      className="absolute inset-y-0 right-0"
+                      style={{
+                        width: display.width - picture.left - picture.width,
+                        background: edges.right,
+                      }}
+                    />
+                  </>
+                ) : null}
                 {/*
                   回転は保留なので、原稿ではなく見え方だけを回す。回す前の
                   寸法で置いてから中心で回すと、外側の箱にちょうど収まる。
@@ -367,8 +424,8 @@ export function CoverEditor({
                     width: upright.width,
                     height: upright.height,
                     maxWidth: "none",
-                    left: (display.width - upright.width) / 2,
-                    top: (display.height - upright.height) / 2,
+                    left: picture.left + (picture.width - upright.width) / 2,
+                    top: picture.top + (picture.height - upright.height) / 2,
                     transform: `rotate(${angle}deg)`,
                   }}
                   src={imageUrl}
@@ -415,6 +472,7 @@ export function CoverEditor({
                 image={source}
                 angle={angle}
                 crop={frame}
+                edges={edges}
                 width={PREVIEW_WIDTH}
               />
             </div>

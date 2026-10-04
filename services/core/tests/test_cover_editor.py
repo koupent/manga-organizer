@@ -20,6 +20,7 @@ from manga_core.cover_editor import (  # noqa: E402
     CoverEditError,
     CoverTransform,
     apply_to_archive,
+    edge_colors,
     is_spread,
     transform_image,
 )
@@ -196,6 +197,77 @@ class TransformImageTest(unittest.TestCase):
         # Assert
         with Image.open(io.BytesIO(transformed)) as image:
             self.assertEqual("PNG", image.format)
+
+
+def banded_png(size: tuple[int, int], bands: dict[str, str]) -> bytes:
+    """4 辺に色の帯を引いた画像。帯の太さは辺の 1 割、真ん中は灰色。
+
+    PNG にするのは、JPEG だと境目の色がにじんで、塗った色の比較が当てに
+    ならないため。
+    """
+    width, height = size
+    canvas = Image.new("RGB", size, "gray")
+    band_y, band_x = height // 10, width // 10
+    canvas.paste(bands["top"], (0, 0, width, band_y))
+    canvas.paste(bands["bottom"], (0, height - band_y, width, height))
+    canvas.paste(bands["left"], (0, band_y, band_x, height - band_y))
+    canvas.paste(bands["right"], (width - band_x, band_y, width, height - band_y))
+    buffer = io.BytesIO()
+    canvas.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+BANDS = {"top": "red", "bottom": "blue", "left": "lime", "right": "yellow"}
+
+
+class PaddedCropTest(unittest.TestCase):
+    """2:3 に収まらない画像を、枠を外へ広げて切らずに表紙にする（#130）"""
+
+    def crop(self, size, box) -> Image.Image:
+        produced = transform_image(
+            banded_png(size, BANDS), CoverTransform(crop=box), name="001.png"
+        )
+        return Image.open(io.BytesIO(produced)).convert("RGB")
+
+    def test_pads_above_and_below_with_each_edge_colour(self):
+        # Act - 750x1000 は 2:3 より横に広い。幅いっぱいの 2:3 は高さ 1125
+        image = self.crop((750, 1000), (0, -62, 750, 1063))
+
+        # Assert - 足した余白はそれぞれの辺の色、元の絵は真ん中にそのまま
+        self.assertEqual((750, 1125), image.size)
+        self.assertEqual(_COLOR_SAMPLES["red"], image.getpixel((375, 10)))
+        self.assertEqual(_COLOR_SAMPLES["blue"], image.getpixel((375, 1115)))
+        self.assertEqual((128, 128, 128), image.getpixel((375, 562)))
+
+    def test_pads_left_and_right_with_each_edge_colour(self):
+        # Act - 500x1000 は 2:3 より縦に長い。高さいっぱいの 2:3 は幅 667
+        image = self.crop((500, 1000), (-83, 0, 584, 1000))
+
+        # Assert
+        self.assertEqual((667, 1000), image.size)
+        self.assertEqual(_COLOR_SAMPLES["lime"], image.getpixel((10, 500)))
+        self.assertEqual(_COLOR_SAMPLES["yellow"], image.getpixel((660, 500)))
+
+    def test_refuses_a_box_that_cuts_one_side_and_pads_the_other(self):
+        # Assert - はみ出すなら、その軸では画像を丸ごと含むこと
+        with self.assertRaises(CoverEditError):
+            self.crop((750, 1000), (0, -62, 750, 900))
+
+    def test_refuses_a_box_far_larger_than_the_image(self):
+        # Assert - 桁違いの範囲 1 つで画素を確保させない
+        with self.assertRaises(CoverEditError):
+            self.crop((750, 1000), (0, -5000, 750, 6000))
+
+    def test_edge_colours_ignore_a_thin_line_at_the_very_edge(self):
+        # Arrange - 赤い地の外周に 1px の黒い線
+        canvas = Image.new("RGB", (600, 900), "red")
+        for box in ((0, 0, 600, 1), (0, 899, 600, 900)):
+            canvas.paste("black", box)
+
+        # Assert - 線 1 本では色が変わらない
+        colours = edge_colors(canvas)
+        self.assertEqual(_COLOR_SAMPLES["red"], colours.top)
+        self.assertEqual(_COLOR_SAMPLES["red"], colours.bottom)
 
 
 class ApplyToArchiveTest(unittest.TestCase):
