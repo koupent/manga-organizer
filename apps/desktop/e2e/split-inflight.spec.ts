@@ -201,7 +201,7 @@ test.describe("ページ分割: 書き込みの最中に触る", () => {
       await route.continue();
     });
     await openSplit(page, archive, BEFORE_PAGES);
-    await page.getByTestId("split-accept-all").click();
+    await page.getByTestId("split-all").click();
 
     // Arrange - 見張りを立て、「押せる」を実際に観測できることを確かめる。
     // ここが取れないと、以降の「一度も押せなかった」は見張りが壊れている
@@ -359,7 +359,7 @@ test.describe("ページ分割: 見捨てた走査", () => {
     });
 
     await openSplit(page, archive, BEFORE_PAGES);
-    await page.getByTestId("split-accept-all").click();
+    await page.getByTestId("split-all").click();
 
     // Act - 割る。確定の後、画面は走査をやり直す（2 本目）
     await page.getByTestId("split-confirm").click();

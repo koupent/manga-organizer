@@ -52,7 +52,8 @@ export type SplitJob = {
   editRows: (next: SplitRow[]) => void;
   /** 保留を全部捨て、開いたときの姿へ戻す */
   restore: () => void;
-  confirm: () => Promise<void>;
+  /** 保留を書き込む。書き込めたかを返す（①から②へ進むかを決める） */
+  confirm: () => Promise<boolean>;
 };
 
 export function useSplitJob({
@@ -163,7 +164,7 @@ export function useSplitJob({
   };
 
   const confirm = async () => {
-    if (!rows || busy) return;
+    if (!rows || busy) return false;
     // 押した瞬間から立てる。書き込みが終わって新しい行が並ぶまで降ろさない
     setBusy(true);
     setReport({ state: "running", message: "保存しています..." });
@@ -187,11 +188,13 @@ export function useSplitJob({
       // 割った対はまた 1 行に畳まれて戻ってくる。読み直して、確定した直後と
       // 開き直したときが同じ画面になるようにする
       setReloadKey((key) => key + 1);
+      return true;
     } catch (error: unknown) {
       // 断られた確定は 1 バイトも書いていない。保留中のチェックと線は
       // そのまま残し、直して押し直せるようにする
       setReport({ state: "error", message: sidecarReason(error) });
       setBusy(false);
+      return false;
     }
   };
 

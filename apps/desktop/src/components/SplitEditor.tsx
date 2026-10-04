@@ -1,16 +1,25 @@
 import {
-  CheckCheck,
   ChevronLeft,
   ChevronRight,
+  Link2,
   Loader2,
   Save,
+  Scissors,
   Undo2,
 } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import type { SidecarClient } from "../api/client";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "./ui/dialog";
 import { Empty } from "./ui/empty";
+import { Segmented } from "./ui/segmented";
 import { EditorLayout } from "./EditorLayout";
+import { MergeCard } from "./MergeCard";
 import { SplitCard } from "./SplitCard";
 import { SplitDialog } from "./SplitDialog";
 import { useStoredNumber } from "../lib/setting";
@@ -18,19 +27,22 @@ import { useSplitJob } from "../lib/split-job";
 import { useBoxSize } from "../lib/stage";
 import { cn } from "../lib/utils";
 import {
-  acceptedAll,
-  answeredRows,
   canMergeNext,
+  firstStep,
+  isAbsorbed,
   isCandidate,
+  isMergeCandidate,
   isPending,
+  isSplitTarget,
   isWide,
+  mergeAll,
   numberLabel,
   pageNumbers,
-  proposalOf,
   replaceRow,
+  splitAll,
   summaryOf,
-  type Answer,
   type SplitRow,
+  type Step,
 } from "../lib/split";
 
 /**
@@ -53,6 +65,14 @@ const GRID_GAP = 12;
 /** 絵の箱の高さ／列の幅。縦長ページ（2:3）がちょうど収まる比 */
 const PICTURE_RATIO = 1.5;
 
+/** ステップごとの説明。見出しの下に 1 行で出す */
+const GUIDES: Record<Step, string> = {
+  split:
+    "横長のページを 2 ページに分けます ・ 線を掴むと分ける位置を動かせます ・ 画像をクリックで大きく表示",
+  merge:
+    "端の絵がつながる 2 ページを候補にしています ・ 「結合」で 1 枚の見開きにします",
+};
+
 type SplitEditorProps = {
   client: SidecarClient;
   archive: string;
@@ -60,21 +80,31 @@ type SplitEditorProps = {
   onArchiveChanged?: () => void;
 };
 
+/** ステップの切り替えに出す名前と、残りの件数 */
+function StepLabel({ text, count }: { text: string; count: number }) {
+  return (
+    <>
+      {text}
+      {count > 0 ? (
+        <span className="tabular ml-1.5 opacity-75">{count}</span>
+      ) : null}
+    </>
+  );
+}
+
 /**
- * ページ分割・結合の画面（#58 段階 3、#139）。
+ * ページ分割・結合の画面（#58 段階 3、#139、#153）。
  *
- * 横長 1 枚に入った見開きを 2 ページへ割る。隣り合う単ページ 2 枚を 1 枚の
- * 見開きへ結合することもできる。**利用者に見せるのは「その見開きが
- * 何ページ目になるか」だけ**で、割る前の画像と割った半分の区別は最後まで出さない。
- * 一度割った本を開き直しても、その対は 1 枚の見開きとしていまの分割位置とともに
- * 現れ、線を動かす・割る前へ戻すがそのまま続けられる。
+ * 作業を 2 つのステップに分ける。①で全ページを単ページにし（横長を分ける）、
+ * ②で見開きで見たいものを結合する。画面にはいまのステップの操作だけを出す。
  *
- * 変更はすべて保留にし、確定したときに 1 回だけ書き込む。押すたびに書き込む
- * 作りでは、位置を直すたびに割り直した半分がさらに割られる。
+ * **利用者に見せるのは「そのページが何ページ目になるか」だけ**で、割る前の
+ * 画像と割った半分の区別は最後まで出さない。
  *
- * ページは 1 枚ずつそのまま並べ、横長には分割を、端の色がつながる 2 枚には
- * 結合を提案する（#151）。提案は同じ形の札で示し、「採用」「このまま」で
- * 答える。まとめて採用することも、キーで 1 件ずつ答えることもできる。
+ * 変更はすべて保留にし、保存したときに 1 回だけ書き込む。押すたびに書き込む
+ * 作りでは、位置を直すたびに割り直した半分がさらに割られる。②の候補は①の
+ * 分割を本に書いた後でないと判定できないので、保存していない変更があるまま
+ * ステップを切り替えるときは確かめる。
  */
 export function SplitEditor({
   client,
@@ -93,10 +123,14 @@ export function SplitEditor({
     confirm,
   } = useSplitJob({ client, archive, onArchiveChanged });
 
+  // 利用者が選んだステップ。選ぶまでは、開いた本の中身から決める（firstStep）
+  const [chosen, setChosen] = useState<Step | null>(null);
+  // 保存していない変更があるまま切り替えようとした先。確認の枠を出す
+  const [switchTo, setSwitchTo] = useState<Step | null>(null);
   const [overlay, setOverlay] = useState<number | null>(null);
-  // 前後の提案へ送るボタンで指している行（#131 #151）。数百ページの本で、
-  // 提案を探して格子をスクロールさせずに済むようにする。絞り込まないのは、
-  // 前後のページとのつながりが見えなくなるため
+  // 前後の送りボタンで指している行（#131）。数百ページの本で、対象を探して
+  // 格子をスクロールさせずに済むようにする。絞り込まないのは、前後の
+  // ページとのつながりが見えなくなるため
   const [focus, setFocus] = useState<number | null>(null);
   const [cardWidth, setCardWidth] = useStoredNumber(
     CARD_WIDTH_KEY,
@@ -140,24 +174,22 @@ export function SplitEditor({
     );
   }
 
+  const step = chosen ?? firstStep(rows);
   const numbers = pageNumbers(rows);
-  // 分割・結合の提案（#151）。答えても提案の有無は変わらないので、送りの
-  // 並びは開いている間ずっと同じ
-  const proposals = rows.map((_, index) => proposalOf(rows, index));
-  const splitCount = proposals.filter((item) => item?.kind === "split").length;
-  const mergeCount = proposals.filter((item) => item?.kind === "merge").length;
-  const openCount = proposals.filter((item) => item?.state === "open").length;
-  const proposalText =
-    splitCount + mergeCount === 0
-      ? "提案はありません"
-      : [
-          splitCount > 0 ? `分割 ${splitCount}` : "",
-          mergeCount > 0 ? `結合 ${mergeCount}` : "",
-        ]
-          .filter(Boolean)
-          .join("・") + " の提案";
   const pending = rows.some(isPending);
   const status = report.state === "idle" ? summaryOf(rows) : report.message;
+
+  // ステップごとの対象。送りボタンはこれを辿る。件数は本に書かれている状態で
+  // 数えるので、選んでも減らない
+  const splitTargets = rows
+    .map((row, index) => (isSplitTarget(row) ? index : -1))
+    .filter((index) => index >= 0);
+  const mergeTargets = rows
+    .map((_, index) => (isMergeCandidate(rows, index) ? index : -1))
+    .filter((index) => index >= 0);
+  const targets = step === "split" ? splitTargets : mergeTargets;
+  const canSplitAll = splitTargets.some((index) => !rows[index].checked);
+  const canMergeAll = mergeTargets.some((index) => !rows[index].mergeNext);
 
   // 列の幅は auto-fill が決める。同じ規則で数えてから、絵の箱をそこへ合わせる
   const columns = Math.max(
@@ -170,40 +202,59 @@ export function SplitEditor({
       : 0;
   const pictureHeight = columnWidth * PICTURE_RATIO;
 
-  // 手で切り替えたら、その行の提案への「このまま」は取り消す
   const setChecked = (index: number, checked: boolean) =>
-    editRows(replaceRow(rows, index, { checked, declined: false }));
+    editRows(replaceRow(rows, index, { checked }));
 
   const setSplit = (index: number, x: number) =>
     editRows(replaceRow(rows, index, { x }));
 
   const setMerge = (index: number, mergeNext: boolean) =>
-    editRows(replaceRow(rows, index, { mergeNext, declined: false }));
-
-  const answer = (index: number, choice: Answer) =>
-    editRows(answeredRows(rows, index, choice));
-
-  /** 行の番号のうち、条件に合うものだけ */
-  const indicesWhere = (accept: (index: number) => boolean) =>
-    rows.map((_, index) => index).filter(accept);
-  // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ。見出しの
-  // 送りボタンは提案（#151）を辿る
-  const candidates = indicesWhere((index) => isCandidate(rows[index]));
-  const targets = indicesWhere((index) => proposals[index] !== null);
+    editRows(replaceRow(rows, index, { mergeNext }));
 
   /**
-   * 結合した後の姿で描く行か。結合する行と、結合を提案している（まだ答えて
-   * いない）行。次の行はこのカードに吸い込まれて格子から消える
+   * ステップを移る。保存していない変更があれば、先に確かめる。書き込みと
+   * 読み直しの最中は移らない。並んでいるのはまだ書き込む前の行で、保留に
+   * 見えてしまう
    */
-  const joined = (index: number) =>
-    rows[index]?.mergeNext === true ||
-    (proposals[index]?.kind === "merge" && proposals[index]?.state === "open");
+  const requestStep = (next: Step) => {
+    if (next === step || busy) return;
+    if (pending) {
+      setSwitchTo(next);
+      return;
+    }
+    setChosen(next);
+    setFocus(null);
+  };
+
+  const saveAndSwitch = async () => {
+    const next = switchTo;
+    setSwitchTo(null);
+    if (next !== null && (await confirm())) setChosen(next);
+  };
+
+  const discardAndSwitch = () => {
+    const next = switchTo;
+    setSwitchTo(null);
+    restore();
+    if (next !== null) setChosen(next);
+    setFocus(null);
+  };
+
+  /** 保存する。①では保存できたら②へ進む */
+  const save = async () => {
+    if ((await confirm()) && step === "split") setChosen("merge");
+  };
+
+  // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ
+  const candidates = rows
+    .map((row, index) => (isCandidate(row) ? index : -1))
+    .filter((index) => index >= 0);
 
   /**
-   * from の行から見て、前（-1）・次（+1）にある最初の候補。無ければ undefined。
+   * from の行から見て、前（-1）・次（+1）にある最初の対象。無ければ undefined。
    *
-   * 選ぶのは「from より後ろ／前にある最初の候補」で、候補の並びの中での位置では
-   * ない。候補でない行からも拡大表示は開くので、その行が候補の並びに居ないことを
+   * 選ぶのは「from より後ろ／前にある最初の対象」で、対象の並びの中での位置では
+   * ない。対象でない行からも拡大表示は開くので、その行が対象の並びに居ないことを
    * 勘定に入れないと、→ を押した利用者が本の先頭側へ飛ばされる。
    */
   const candidateFrom = (list: number[], from: number, delta: number) => {
@@ -225,37 +276,45 @@ export function SplitEditor({
   const following = candidateFrom(targets, focusFrom(1), 1);
 
   /**
-   * 前後の提案を指し、格子の中央まで送る。カードへフォーカスも移すので、
-   * そのまま Enter・Backspace で答えられる
+   * 前後の対象を指し、格子の中央まで送る。カードへフォーカスも移すので、
+   * そのまま Enter で切り替えられる
    */
-  const step = (target: number | undefined) => {
+  const pointAt = (target: number | undefined) => {
     if (target === undefined) return;
     setFocus(target);
     const card = document.querySelector<HTMLElement>(
-      `[data-testid="split-card"][data-index="${target}"]`,
+      `[data-index="${target}"][tabindex]`,
     );
     card?.focus({ preventScroll: true });
     card?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
   const focusedAt = focus === null ? -1 : targets.indexOf(focus);
 
+  /** 指した対象を切り替える。①は分ける・分けない、②は結合する・しない */
+  const toggleTarget = (index: number) =>
+    step === "split"
+      ? setChecked(index, !rows[index].checked)
+      : setMerge(index, !rows[index].mergeNext);
+
   /**
-   * 指したカードでのキー操作（#151）。Enter で採用、Backspace で「このまま」と
-   * 答えて次の提案へ進む。← → で前後の提案へ送る。カードの中のボタンや
-   * 線を掴んでいるときは、その部品の操作を優先する
+   * 指したカードでのキー操作。Enter で切り替えて次の対象へ進む。← → で前後の
+   * 対象へ送る。カードの中のボタンや線を掴んでいるときは、その部品の操作を
+   * 優先する
    */
   const onCardKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const card = event.target as HTMLElement;
-    if (card.dataset.testid !== "split-card" || busy) return;
+    if (!card.hasAttribute("tabindex") || busy) return;
     const index = Number(card.dataset.index);
-    if (event.key === "Enter" || event.key === "Backspace") {
-      if (proposals[index] === null) return;
+    if (event.key === "Enter") {
+      if (!targets.includes(index)) return;
       event.preventDefault();
-      answer(index, event.key === "Enter" ? "accept" : "decline");
-      step(candidateFrom(targets, index, 1));
+      toggleTarget(index);
+      pointAt(candidateFrom(targets, index, 1));
     } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       event.preventDefault();
-      step(candidateFrom(targets, index, event.key === "ArrowRight" ? 1 : -1));
+      pointAt(
+        candidateFrom(targets, index, event.key === "ArrowRight" ? 1 : -1),
+      );
     }
   };
 
@@ -266,47 +325,154 @@ export function SplitEditor({
         : client.imageUrl(archive, row.names[0])
     }&v=${reloadKey}`;
 
+  const pictureOf = (row: SplitRow) => ({
+    imageUrl: imageUrlOf(row),
+    width: row.width,
+    height: row.height,
+  });
+
+  /**
+   * ②で結合した後の姿で描く行か。結合すると決めた行と、まだ結合していない
+   * 候補。次の行はこのカードに吸い込まれて格子から消える
+   */
+  const joined = (index: number) =>
+    rows[index]?.mergeNext === true || isMergeCandidate(rows, index);
+
   const opened = overlay === null ? null : (rows[overlay] ?? null);
+
+  const renderSplitCard = (row: SplitRow, index: number) => {
+    // ①では結合の保留は無い（切り替える前に保存か破棄をしている）。保存済みの
+    // 結合は 1 枚の横長として並ぶ
+    if (isAbsorbed(rows, index)) return null;
+    const wide = isWide(row);
+    const span = wide && columns >= 2;
+    return (
+      <SplitCard
+        key={index}
+        index={index}
+        label={numberLabel(numbers[index])}
+        pending={isPending(row)}
+        applied={row.stored.checked && row.checked}
+        focused={focus === index}
+        checked={row.checked}
+        target={isSplitTarget(row)}
+        keptWhole={row.keptWhole}
+        wide={wide}
+        span={span}
+        boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
+        boxHeight={pictureHeight}
+        width={row.width}
+        height={row.height}
+        x={row.x}
+        imageUrl={imageUrlOf(row)}
+        onToggle={() => setChecked(index, !row.checked)}
+        onMoveSplit={(x) => setSplit(index, x)}
+        onZoom={() => setOverlay(index)}
+      />
+    );
+  };
+
+  const renderMergeCard = (row: SplitRow, index: number) => {
+    if (index > 0 && joined(index - 1)) return null;
+    const partner = joined(index) ? rows[index + 1] : null;
+    const kind = row.mergeNext ? "joined" : partner ? "candidate" : "page";
+    const span = (isWide(row) || partner !== null) && columns >= 2;
+    return (
+      <MergeCard
+        key={index}
+        index={index}
+        // 候補はまだ 2 ページのまま
+        label={
+          kind === "candidate"
+            ? numberLabel([numbers[index][0], numbers[index + 1][0]])
+            : numberLabel(numbers[index])
+        }
+        pending={isPending(row)}
+        focused={focus === index}
+        kind={kind}
+        span={span}
+        boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
+        boxHeight={pictureHeight}
+        page={pictureOf(row)}
+        partner={partner ? pictureOf(partner) : undefined}
+        applied={row.stored.checked && row.checked}
+        keptWhole={row.keptWhole}
+        onMerge={kind === "candidate" ? () => setMerge(index, true) : undefined}
+        onUnmerge={kind === "joined" ? () => setMerge(index, false) : undefined}
+        onMergeNext={
+          kind === "page" && canMergeNext(rows, index)
+            ? () => setMerge(index, true)
+            : undefined
+        }
+      />
+    );
+  };
 
   return (
     <EditorLayout
       toolbar={
         <>
-          <span
-            className="tabular shrink-0 text-[12px] text-ink-faint"
-            data-testid="split-page-count"
-          >
-            {pageCount} ページ
-          </span>
-          {/* 提案の入口（#151）。開いた時点では何も採用しないので、ここか
-              カードの「採用」が分割・結合の始まりになる */}
-          <span
-            className="tabular shrink-0 text-[12px] text-ink-muted"
-            data-testid="split-proposals"
-          >
-            {proposalText}
-          </span>
-          <Button
-            variant="secondary"
-            className="shrink-0"
-            data-testid="split-accept-all"
-            title="まだ答えていない提案を、すべて採用する"
-            disabled={openCount === 0 || busy}
-            onClick={() => editRows(acceptedAll(rows))}
-          >
-            <CheckCheck />
-            すべて採用
-          </Button>
+          <Segmented<Step>
+            items={[
+              {
+                id: "split",
+                label: (
+                  <StepLabel
+                    text="① 単ページにする"
+                    count={splitTargets.length}
+                  />
+                ),
+                testId: "split-step-split",
+              },
+              {
+                id: "merge",
+                label: (
+                  <StepLabel
+                    text="② 見開きにする"
+                    count={mergeTargets.length}
+                  />
+                ),
+                testId: "split-step-merge",
+              },
+            ]}
+            value={step}
+            onChange={requestStep}
+          />
+          {step === "split" ? (
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              data-testid="split-all"
+              title="まだ分けていない横長のページを、すべて中央で分ける"
+              disabled={!canSplitAll || busy}
+              onClick={() => editRows(splitAll(rows))}
+            >
+              <Scissors />
+              すべて分割
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              data-testid="merge-all"
+              title="結合の候補を、すべて 1 枚の見開きにする"
+              disabled={!canMergeAll || busy}
+              onClick={() => editRows(mergeAll(rows))}
+            >
+              <Link2 />
+              候補をすべて結合
+            </Button>
+          )}
           <span className="flex shrink-0 items-center gap-1">
             <Button
               variant="secondary"
               size="icon"
               className="size-7"
               data-testid="split-previous"
-              title="前の提案を指す"
-              aria-label="前の提案を指す"
+              title="前の対象を指す"
+              aria-label="前の対象を指す"
               disabled={previous === undefined}
-              onClick={() => step(previous)}
+              onClick={() => pointAt(previous)}
             >
               <ChevronLeft />
             </Button>
@@ -321,29 +487,14 @@ export function SplitEditor({
               size="icon"
               className="size-7"
               data-testid="split-next"
-              title="次の提案を指す"
-              aria-label="次の提案を指す"
+              title="次の対象を指す"
+              aria-label="次の対象を指す"
               disabled={following === undefined}
-              onClick={() => step(following)}
+              onClick={() => pointAt(following)}
             >
               <ChevronRight />
             </Button>
           </span>
-          {/* 見出しの文字は置かない。提案の操作でツールバーが詰まり、状態欄の
-              文が切れるため（#151） */}
-          <label className="flex shrink-0 items-center" title="表示サイズ">
-            <input
-              type="range"
-              aria-label="表示サイズ"
-              min={CARD_WIDTH_MIN}
-              max={CARD_WIDTH_MAX}
-              step={CARD_WIDTH_STEP}
-              value={cardWidth}
-              data-testid="split-card-width"
-              onChange={(event) => setCardWidth(Number(event.target.value))}
-              className="h-1 w-28 cursor-pointer accent-brand"
-            />
-          </label>
           <div className="flex-1" />
           <span
             role="status"
@@ -358,15 +509,16 @@ export function SplitEditor({
             {status}
           </span>
           <Button
-            variant="secondary"
-            className="shrink-0"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
             data-testid="split-reset"
-            title="提案への答え・チェック・分割位置を開いたときの状態に戻す"
+            title="変更を戻す（開いたときの状態に戻す）"
+            aria-label="変更を戻す"
             disabled={!pending || busy}
             onClick={restore}
           >
             <Undo2 />
-            変更を戻す
           </Button>
           {/* 書き込みが終わって新しい行が並ぶまで押させない。報告が done に
               なった時点で押せるようにすると、読み直しの最中に 2 つ目の指示が
@@ -378,14 +530,36 @@ export function SplitEditor({
             className="shrink-0"
             data-testid="split-confirm"
             disabled={!pending || busy}
-            onClick={confirm}
+            onClick={() => void save()}
           >
             <Save />
-            この内容で保存する
+            {step === "split" ? "保存して②へ" : "保存"}
           </Button>
         </>
       }
-      hint="提案は「採用」で反映、「このまま」で見送り ・ ‹ › で提案を指し、Enter で採用・Backspace でこのまま ・ 提案に無い分割・結合はカードを指すと出ます ・ 線を掴んで分割位置を動かす ・ 画像をクリックで大きく表示"
+      hint={
+        <span className="flex items-center gap-3">
+          <span className="min-w-0 flex-1 truncate">{GUIDES[step]}</span>
+          <span
+            className="tabular shrink-0 text-ink-muted"
+            data-testid="split-page-count"
+          >
+            {pageCount} ページ
+          </span>
+          <input
+            type="range"
+            min={CARD_WIDTH_MIN}
+            max={CARD_WIDTH_MAX}
+            step={CARD_WIDTH_STEP}
+            value={cardWidth}
+            title="表示サイズ"
+            aria-label="表示サイズ"
+            data-testid="split-card-width"
+            onChange={(event) => setCardWidth(Number(event.target.value))}
+            className="h-1 w-24 shrink-0 cursor-pointer accent-brand"
+          />
+        </span>
+      }
     >
       {/* スクロールするのはこの箱であって窓ではない */}
       <div data-testid="split-grid" className="min-h-0 flex-1 overflow-y-auto">
@@ -402,63 +576,16 @@ export function SplitEditor({
           onKeyDown={onCardKey}
         >
           {columnWidth > 0
-            ? rows.map((row, index) => {
-                // 結合される（結合を提案されている）行は、吸い込んだ行の
-                // カードに一緒に描く（#139 #151）
-                if (index > 0 && joined(index - 1)) return null;
-                const partner = joined(index) ? rows[index + 1] : null;
-                const wide = isWide(row) || partner !== null;
-                const span = wide && columns >= 2;
-                // 結合を提案しているだけの 2 枚は、まだ 2 ページのまま
-                const label =
-                  partner && !row.mergeNext
-                    ? numberLabel([numbers[index][0], numbers[index + 1][0]])
-                    : numberLabel(numbers[index]);
-                return (
-                  <SplitCard
-                    key={index}
-                    index={index}
-                    label={label}
-                    pending={isPending(row)}
-                    applied={row.stored.checked && row.checked}
-                    focused={focus === index}
-                    checked={row.checked}
-                    proposal={proposals[index]}
-                    keptWhole={row.keptWhole}
-                    wide={wide}
-                    span={span}
-                    boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
-                    boxHeight={pictureHeight}
-                    width={row.width}
-                    height={row.height}
-                    x={row.x}
-                    imageUrl={imageUrlOf(row)}
-                    partner={
-                      partner
-                        ? {
-                            imageUrl: imageUrlOf(partner),
-                            width: partner.width,
-                            height: partner.height,
-                          }
-                        : undefined
-                    }
-                    onMergeNext={
-                      row.mergeNext || canMergeNext(rows, index)
-                        ? () => setMerge(index, !row.mergeNext)
-                        : undefined
-                    }
-                    onAnswer={(choice) => answer(index, choice)}
-                    onToggle={() => setChecked(index, !row.checked)}
-                    onMoveSplit={(x) => setSplit(index, x)}
-                    onZoom={() => setOverlay(index)}
-                  />
-                );
-              })
+            ? rows.map((row, index) =>
+                step === "split"
+                  ? renderSplitCard(row, index)
+                  : renderMergeCard(row, index),
+              )
             : null}
         </div>
       </div>
 
-      {opened !== null && overlay !== null ? (
+      {step === "split" && opened !== null && overlay !== null ? (
         <SplitDialog
           label={numberLabel(numbers[overlay])}
           numbers={numbers[overlay]}
@@ -473,6 +600,50 @@ export function SplitEditor({
           onWalk={walk}
         />
       ) : null}
+
+      <Dialog
+        open={switchTo !== null}
+        onOpenChange={(open) => {
+          if (!open) setSwitchTo(null);
+        }}
+      >
+        <DialogContent
+          data-testid="step-switch-dialog"
+          className="w-[min(28rem,92vw)] gap-3 p-4"
+        >
+          <DialogTitle className="text-[14px] font-semibold">
+            保存していない変更があります
+          </DialogTitle>
+          <DialogDescription className="text-[12.5px] text-ink-muted">
+            このまま切り替えると、変更は消えます。
+          </DialogDescription>
+          {/* 先頭の「保存して切り替える」に最初のフォーカスが当たる。並びは
+              右から左にして、主操作を右端に置く */}
+          <div className="flex flex-row-reverse gap-2">
+            <Button
+              variant="primary"
+              data-testid="step-switch-save"
+              onClick={() => void saveAndSwitch()}
+            >
+              保存して切り替える
+            </Button>
+            <Button
+              variant="secondary"
+              data-testid="step-switch-discard"
+              onClick={discardAndSwitch}
+            >
+              保存せずに切り替える
+            </Button>
+            <Button
+              variant="ghost"
+              data-testid="step-switch-cancel"
+              onClick={() => setSwitchTo(null)}
+            >
+              やめる
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </EditorLayout>
   );
 }

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 /** モードの切り替え。現在地と押せる範囲を一目で分かるようにする */
@@ -6,7 +7,7 @@ export function Segmented<T extends string>({
   value,
   onChange,
 }: {
-  items: { id: T; label: string; testId?: string }[];
+  items: { id: T; label: ReactNode; testId?: string }[];
   value: T;
   onChange: (id: T) => void;
 }) {
