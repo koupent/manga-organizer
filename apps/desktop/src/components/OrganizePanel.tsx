@@ -138,6 +138,9 @@ export function OrganizePanel({
 
   // 解析で分かったこと。走査が終わるまでは入れ物も空
   const [analysis, setAnalysis] = useState<Analysis>(IDLE_ANALYSIS);
+  // 解析をやり直させる合図。投入が同じでも、整理が本をその場で作り直したら
+  // 一覧の判定は古くなる（#127）
+  const [analysisRound, setAnalysisRound] = useState(0);
 
   // 利用者がチェックを触った行だけの台帳。既定（整理済みの本はオフ）は覚えず、
   // 行から毎回導き直す。画面が推し量った値まで覚えると、解析で行が組み直される
@@ -306,7 +309,7 @@ export function OrganizePanel({
     // 打つたびに目次を読み直しに行く。exhaustive-deps は「読んでいる値は
     // すべて切っ掛け」としか言えないため、ここでは規則の側が合わない
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, sources]);
+  }, [client, sources, analysisRound]);
 
   /**
    * 窓のどこに落としても投入に入れる。
@@ -561,6 +564,8 @@ export function OrganizePanel({
     // 差し替わっても、この監視を終わらせるかどうかは掴んだ方で決める
     const signal = paused.current?.signal;
     const stopped = () => isGone() || signal?.aborted === true;
+    // 投入した本の入れ物。整理が本をその場で作り直したかを、終わってから見分ける
+    const analyzed = new Set(analysis.books.map((book) => book.source));
 
     try {
       const job = await client.waitForJob(
@@ -588,6 +593,12 @@ export function OrganizePanel({
       const outcome = organizeResult(job.result);
       setProduced(outcome.produced);
       setFailures(outcome.failed);
+      // 投入した本そのものが作り直された（行き先が自分自身だった）なら、
+      // 一覧はまだ作り直す前の判定を見せている。解析し直して新しい姿にする。
+      // それ以外の実行では投入は変わっていないので、読み直さない
+      if (outcome.produced.some((path) => analyzed.has(path))) {
+        setAnalysisRound((round) => round + 1);
+      }
       setStatus(
         organizeSummary(outcome.produced.length, outcome.failed.length),
       );
