@@ -31,6 +31,7 @@ from manga_api.jobs import ProgressReporter
 from manga_api.thumbnails import ThumbnailCache
 from manga_core.page_reorder import PageEntry, ZipPageEditor
 from manga_core.page_splitter import (
+    MergeIntent,
     SplitIntent,
     SplitPosition,
     SplitResult,
@@ -57,7 +58,7 @@ class SplitPositionView(BaseModel):
 
 
 class SplitIntentRowView(BaseModel):
-    """画面が送り返す 1 行。名前と割る位置の 2 つきり。
+    """画面が送り返す 1 行。名前と割る位置（と結合するか）だけ。
 
     寸法や出どころは受け取らない。受け取ると、画面が抱えている古い寸法で
     切られる余地が残る。
@@ -70,6 +71,13 @@ class SplitIntentRowView(BaseModel):
     # 「割らない」と「言い忘れた」を受け取る側が区別できなくなる
     split: SplitPositionView | None = Field(
         description="割る位置。割らない（割る前へ戻す）なら null"
+    )
+    merge: bool = Field(
+        default=False,
+        description=(
+            "隣り合う 2 ページ（names の 2 つ）を 1 枚の見開きへ結合するか。"
+            "split は null にする"
+        ),
     )
 
 
@@ -104,6 +112,12 @@ class SplitRowView(BaseModel):
             "置かれ、確定するとそこで 2 枚が隣り合う"
         )
     )
+    kept_whole: bool = Field(
+        description=(
+            "見開きのまま残すと決めたページか（割ってから戻した・2 ページを結合した）。"
+            "見開きと判定しても既定のチェックを入れない"
+        )
+    )
 
 
 class SplitScanView(BaseModel):
@@ -129,6 +143,9 @@ class SplitResultView(BaseModel):
     adjusted_count: int
     joined_count: int = Field(
         description="離れていた対を、分割位置は変えずに隣り合わせへ戻した数"
+    )
+    merged_count: int = Field(
+        description="隣り合う 2 ページを 1 枚の見開きへ結合した数"
     )
 
 
@@ -181,21 +198,37 @@ def intent_rows(
 
     ただ 1 つ、割った対の 2 枚目だけは今の位置を離れてよい。走査は離れた対を
     1 枚目の位置へ畳むので（#133）、行の上では 2 枚目が 1 枚目の直後に来る。
-    2 枚が本当に割った対かどうかは、コアが中身で確かめ直す。
+    2 枚が本当に割った対かどうかは、コアが中身で確かめ直す。結合する 2 枚
+    （#139）は離れてよい対に含めない。隣り合っていなければここで断る。
     """
+    if any(row.merge and (len(row.names) != 2 or row.split) for row in rows):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="結合する行は、割る位置を持たない 2 ページでなければなりません",
+        )
     submitted = [name for row in rows for name in row.names]
     current = _with_pairs_joined(
         [page.name for page in pages],
-        {row.names[0]: row.names[1] for row in rows if len(row.names) == 2},
+        {
+            row.names[0]: row.names[1]
+            for row in rows
+            if len(row.names) == 2 and not row.merge
+        },
     )
     if submitted != current:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="行の名前を並べたものが、いまのページ順と一致しません",
         )
-    return tuple(
-        SplitIntent(names=tuple(row.names), split=_position(row.split)) for row in rows
-    )
+    return tuple(_intent(row) for row in rows)
+
+
+def _intent(row: SplitIntentRowView) -> SplitIntent | MergeIntent:
+    """画面の 1 行を、コアの意図へ直す"""
+    if row.merge:
+        first, second = row.names
+        return MergeIntent(names=(first, second))
+    return SplitIntent(names=tuple(row.names), split=_position(row.split))
 
 
 def _with_pairs_joined(order: list[str], partners: dict[str, str]) -> list[str]:
@@ -239,7 +272,7 @@ def scan_work(path: Path) -> Callable[[ProgressReporter], dict[str, Any]]:
 
 
 def confirm_work(
-    path: Path, rows: Sequence[SplitIntent], thumbnails: ThumbnailCache
+    path: Path, rows: Sequence[SplitIntent | MergeIntent], thumbnails: ThumbnailCache
 ) -> Callable[[ProgressReporter], dict[str, Any]]:
     """確定ジョブの中身を組み立てる"""
 
@@ -282,6 +315,7 @@ def _row_view(row: SplitRow) -> SplitRowView:
         is_spread=row.is_spread,
         split=None if row.split is None else SplitPositionView(x=row.split.x),
         displaced=row.displaced,
+        kept_whole=row.kept_whole,
     )
 
 
@@ -294,4 +328,5 @@ def _result_view(result: SplitResult) -> SplitResultView:
         restored_count=result.restored_count,
         adjusted_count=result.adjusted_count,
         joined_count=result.joined_count,
+        merged_count=result.merged_count,
     )

@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { version } from "./package.json";
 
 // サイドカーの待ち受け先。開発時は固定ポートで起動しておく
 const sidecarPort = process.env.MANGA_API_PORT ?? "8765";
@@ -25,6 +26,9 @@ const proxy = {
 // 手動確認用の dev server と E2E を同時に動かせるようにするため。
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // 設定に出すアプリの版（#136）。4 か所の版は Release の前に揃っていることを
+  // 確かめているので、画面と同じ package.json から取る
+  define: { __APP_VERSION__: JSON.stringify(version) },
   server: {
     host: "0.0.0.0",
     port: 5173,

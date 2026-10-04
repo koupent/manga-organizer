@@ -4,6 +4,7 @@ import { firstImageGeneration } from "./utils";
 import {
   confirmResultOf,
   doneMessage,
+  intentRows,
   restoredRows,
   rowsFrom,
   scanResultOf,
@@ -143,7 +144,7 @@ export function useSplitJob({
    * 「5 枚を分割しました」と出たままチェックを変えられ、いま押すと何が
    * 起きるのかが読めなくなる。
    *
-   * ただし走っている最中の報告は消さない。消すと「分割しています...」が
+   * ただし走っている最中の報告は消さない。消すと「保存しています...」が
    * 途中で引っ込み、走っていないように見える。
    */
   const editRows = (next: SplitRow[]) => {
@@ -165,21 +166,18 @@ export function useSplitJob({
     if (!rows || busy) return;
     // 押した瞬間から立てる。書き込みが終わって新しい行が並ぶまで降ろさない
     setBusy(true);
-    setReport({ state: "running", message: "分割しています..." });
+    setReport({ state: "running", message: "保存しています..." });
     try {
       const accepted = await client.applySplit({
         archive,
         token: scan.token,
         // 行は差分ではなくページ順に全部を送る。サイドカーが
         // 「名前を並べたもの＝いまのページ順」を照合できる
-        rows: rows.map((row) => ({
-          names: row.names,
-          split: row.checked ? { x: row.x } : null,
-        })),
+        rows: intentRows(rows),
       });
       const job = await client.waitForJob(accepted.id);
       if (job.state !== "succeeded") {
-        throw new Error(job.error ?? "分割に失敗しました");
+        throw new Error(job.error ?? "保存に失敗しました");
       }
       setReport({
         state: "done",

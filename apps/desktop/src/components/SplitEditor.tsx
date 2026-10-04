@@ -1,4 +1,4 @@
-import { Loader2, Scissors, Undo2 } from "lucide-react";
+import { Loader2, Save, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import { Button } from "./ui/button";
@@ -12,6 +12,8 @@ import { useSplitJob } from "../lib/split-job";
 import { useBoxSize } from "../lib/stage";
 import { cn } from "../lib/utils";
 import {
+  canMergeNext,
+  isAbsorbed,
   isCandidate,
   isPending,
   isWide,
@@ -50,9 +52,10 @@ type SplitEditorProps = {
 };
 
 /**
- * ページ分割の画面（#58 段階 3）。
+ * ページ分割・結合の画面（#58 段階 3、#139）。
  *
- * 横長 1 枚に入った見開きを 2 ページへ割る。**利用者に見せるのは「その見開きが
+ * 横長 1 枚に入った見開きを 2 ページへ割る。隣り合う単ページ 2 枚を 1 枚の
+ * 見開きへ結合することもできる。**利用者に見せるのは「その見開きが
  * 何ページ目になるか」だけ**で、割る前の画像と割った半分の区別は最後まで出さない。
  * 一度割った本を開き直しても、その対は 1 枚の見開きとしていまの分割位置とともに
  * 現れ、線を動かす・割る前へ戻すがそのまま続けられる。
@@ -148,6 +151,9 @@ export function SplitEditor({
 
   const setSplit = (index: number, x: number) =>
     editRows(replaceRow(rows, index, { x }));
+
+  const setMerge = (index: number, mergeNext: boolean) =>
+    editRows(replaceRow(rows, index, { mergeNext }));
 
   /** 判定した行をまとめて選ぶ・外す */
   const toggleAll = () => {
@@ -308,23 +314,19 @@ export function SplitEditor({
             disabled={!pending || busy}
             onClick={confirm}
           >
-            <Scissors />
-            この内容で分割する
+            <Save />
+            この内容で保存する
           </Button>
         </>
       }
-      hint="チェックで分ける・分けないを選ぶ ・ 線を掴んで分割位置を動かす ・ 画像をクリックで大きく表示 ・ 右から左へ読む順に並びます。右半分が先のページになります（右綴じ）"
+      hint="チェックで分ける・分けないを選ぶ ・ 線を掴んで分割位置を動かす ・ 「次と結合」で 2 ページを 1 枚の見開きにする ・ 画像をクリックで大きく表示"
     >
-      {/* スクロールするのはこの箱であって窓ではない。中の格子は右綴じの本と
-          同じく右から左へ並べる（#132）。割った 2 ページが見開きと同じ左右で
-          隣り合う。格子そのものに右から左を当てると、スクロールバーまで左へ
-          移るので、スクロールする箱と並べる格子を分ける */}
+      {/* スクロールするのはこの箱であって窓ではない */}
       <div data-testid="split-grid" className="min-h-0 flex-1 overflow-y-auto">
         {/* 行の高さは中身に合わせる（auto-rows-max）。auto のままだと、
             高さの決まった格子を行数で割った高さへ押し込められる */}
         <div
           ref={gridRef}
-          dir="rtl"
           className="grid auto-rows-max content-start gap-3"
           style={{
             gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
@@ -332,7 +334,10 @@ export function SplitEditor({
         >
           {columnWidth > 0
             ? rows.map((row, index) => {
-                const wide = isWide(row);
+                // 結合される行は、吸い込んだ行のカードに一緒に描く（#139）
+                if (isAbsorbed(rows, index)) return null;
+                const partner = row.mergeNext ? rows[index + 1] : null;
+                const wide = isWide(row) || partner !== null;
                 const span = wide && columns >= 2;
                 return (
                   <SplitCard
@@ -351,6 +356,20 @@ export function SplitEditor({
                     height={row.height}
                     x={row.x}
                     imageUrl={imageUrlOf(row)}
+                    partner={
+                      partner
+                        ? {
+                            imageUrl: imageUrlOf(partner),
+                            width: partner.width,
+                            height: partner.height,
+                          }
+                        : undefined
+                    }
+                    onMergeNext={
+                      row.mergeNext || canMergeNext(rows, index)
+                        ? () => setMerge(index, !row.mergeNext)
+                        : undefined
+                    }
                     onToggle={() => setChecked(index, !row.checked)}
                     onMoveSplit={(x) => setSplit(index, x)}
                     onZoom={() => setOverlay(index)}

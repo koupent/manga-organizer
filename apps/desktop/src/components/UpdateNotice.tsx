@@ -1,5 +1,5 @@
 import { Download, RefreshCw, TriangleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { isTauri } from "../connection";
 import { Alert } from "./ui/alert";
@@ -8,36 +8,33 @@ import { Button } from "./ui/button";
 type Phase = "offered" | "downloading" | "installing" | "failed";
 
 /**
+ * 新しい版があるか確かめる。無ければ null。
+ *
+ * 最新の Release の latest.json を読むのは updater プラグイン。起動したときと、
+ * 設定の「更新を確認」（#136）から呼ぶ。ブラウザ（開発と e2e）では確かめない。
+ */
+export async function findUpdate(): Promise<Update | null> {
+  if (!isTauri()) return null;
+  const { check } = await import("@tauri-apps/plugin-updater");
+  return check();
+}
+
+type UpdateNoticeProps = {
+  update: Update;
+  /** 「あとで」。設定の「更新を確認」から、また出し直せる */
+  onDismiss: () => void;
+};
+
+/**
  * 新しい版を知らせ、利用者が受け入れたら入れ替える。
  *
- * 起動したときに 1 回だけ確かめる。最新の Release の latest.json を読み、
  * 署名を確かめてから入れ替えるのは updater プラグイン。Windows では
  * インストーラを起こした時点でアプリが閉じ、入れ替わった版が起ち上がり直す。
- * ブラウザ（開発と e2e）では何もしない。
  */
-export function UpdateNotice() {
-  const [update, setUpdate] = useState<Update | null>(null);
+export function UpdateNotice({ update, onDismiss }: UpdateNoticeProps) {
   const [phase, setPhase] = useState<Phase>("offered");
   const [received, setReceived] = useState({ done: 0, total: 0 });
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    let cancelled = false;
-    import("@tauri-apps/plugin-updater")
-      .then(({ check }) => check())
-      .then((found) => {
-        if (!cancelled && found) setUpdate(found);
-      })
-      // 確かめられなくても今の版は使い続けられる。オフラインのたびに
-      // 失敗を知らせても、利用者にできることが無い
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!update) return null;
 
   const apply = async () => {
     setPhase("downloading");
@@ -109,7 +106,7 @@ export function UpdateNotice() {
             <RefreshCw />
             更新する
           </Button>
-          <Button variant="ghost" onClick={() => setUpdate(null)}>
+          <Button variant="ghost" onClick={onDismiss}>
             あとで
           </Button>
         </div>
