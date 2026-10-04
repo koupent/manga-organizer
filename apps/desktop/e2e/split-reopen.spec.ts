@@ -433,12 +433,13 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     );
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
-    // Assert - 開き直しても同じ
+    // Assert - 開き直しても同じ。戻した見開きは、割っていない見開きとして
+    // 数える（#148）
     await page.reload();
     await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4);
     await expect(cardAt(page, 2)).toHaveAttribute("data-checked", "false");
     await expect(page.getByTestId("split-status")).toHaveText(
-      "変更はありません",
+      "見開き 1 枚が見つかりました。分けるページを選んでください",
     );
 
     await page.context().close();

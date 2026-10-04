@@ -359,17 +359,6 @@ def find_original(archive_path: Path, image: bytes) -> OriginalRef | None:
     return OriginalRef(hash=current, entry=entry, operations=tuple(operations))
 
 
-def stored_original_hashes(archive_path: Path) -> frozenset[str]:
-    """同梱してある元画像の中身のハッシュ。
-
-    ページの中身がこのどれかと同じなら、そのページは利用者が手を入れたうえで
-    その形に残すと決めたもの。見開きの分割を戻したページ（#138）は元画像の
-    バイト列をそのまま書き戻し、2 ページを結合したページ（#139）は結合した
-    1 枚を元画像として同梱するので、どちらも必ず当たる。
-    """
-    return frozenset(_load_document(Path(archive_path)).get(_ORIGINALS_KEY, {}))
-
-
 def read_original(archive_path: Path, ref: OriginalRef) -> bytes:
     """元画像そのもののバイト列を読み出す。
 

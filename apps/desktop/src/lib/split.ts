@@ -40,11 +40,8 @@ export type SplitScanRow = {
   split: { x: number } | null;
   /** 割った対の 2 枚がいま隣り合っていないか（#133） */
   displaced: boolean;
-  /**
-   * 見開きのまま残すと決めたページか。割ってから戻した（#138）・2 ページを
-   * 結合した（#139）ページ。見開きでも既定のチェックを入れない
-   */
-  kept_whole: boolean;
+  /** 次の行と継ぎ目の色がつながっていて、2 枚で 1 枚の見開きらしいか（#149） */
+  merge_suggested: boolean;
 };
 
 /** 走査ジョブの結果（manga_api.split_job.SplitScanView） */
@@ -77,10 +74,7 @@ export type SplitRow = {
   width: number;
   height: number;
   source: string;
-  /**
-   * 見開きと判定し、分割を勧める行。まとめて選ぶ・外す、前後の送りの対象は
-   * これだけ。見開きのまま残すと決めた行（kept_whole）は含めない
-   */
+  /** 見開きと判定した行。まとめて選ぶ・外す、前後の送りの対象になる */
   detected: boolean;
   checked: boolean;
   /** 割る位置。元画像の画素で持ち、描画のときだけ割合に直す */
@@ -96,6 +90,11 @@ export type SplitRow = {
    * 書き込まない。結合される次の行は、この行に吸い込まれて格子から消える
    */
   mergeNext: boolean;
+  /**
+   * 次の行との結合を勧める（#149）。継ぎ目の色がつながっている 2 枚。示す
+   * だけで保留にはしない。開いた時点で何も選ばないのは分割と同じ（#142）
+   */
+  suggested: boolean;
   stored: { checked: boolean; x: number };
 };
 
@@ -140,7 +139,7 @@ export function scanResultOf(value: unknown): SplitScanResult {
       is_spread: row.is_spread === true,
       split: positionOf(row.split),
       displaced: row.displaced === true,
-      kept_whole: row.kept_whole === true,
+      merge_suggested: row.merge_suggested === true,
     };
   });
   return {
@@ -198,8 +197,8 @@ export function clampSplit(x: number, width: number): number {
  * 割れる。既に割ってある行は比が閾値の下でもチェックを入れる。外れていたら、
  * 開き直しただけで「割る前へ戻します」になってしまう。
  *
- * 割ってから戻した・結合したページ（#138 #139）は、見開きでも分割を勧めない。
- * 「まとめて選ぶ」で、利用者が残すと決めた見開きをまた割る候補にしないため。
+ * 割ってから戻した・結合した見開きも、ほかの見開きと同じに見開きとして扱う
+ * （#148）。
  */
 export function rowsFrom(result: SplitScanResult): SplitRow[] {
   return result.rows.map((row) => {
@@ -210,11 +209,12 @@ export function rowsFrom(result: SplitScanResult): SplitRow[] {
       width: row.width,
       height: row.height,
       source: row.source,
-      detected: row.is_spread && !row.kept_whole,
+      detected: row.is_spread,
       checked,
       x,
       displaced: row.displaced,
       mergeNext: false,
+      suggested: row.merge_suggested,
       stored: { checked: row.split !== null, x },
     };
   });
@@ -264,6 +264,14 @@ export function canMergeNext(rows: SplitRow[], index: number): boolean {
     !next.mergeNext &&
     !isAbsorbed(rows, index)
   );
+}
+
+/**
+ * index の行を次の行と結合するよう勧めるか（#149）。勧めていても、いま結合
+ * できない組（前の行に吸い込まれた・割ると決めた）は勧めない
+ */
+export function isSuggested(rows: SplitRow[], index: number): boolean {
+  return rows[index].suggested && canMergeNext(rows, index);
 }
 
 /** 分割の対象になりうる行。判定に漏れても、手で入れれば対象になる */
@@ -378,13 +386,21 @@ export function summaryOf(rows: SplitRow[]): string {
   if (joined > 0) parts.push(`離れた見開き ${joined} 組を隣り合わせに戻します`);
   if (merged > 0) parts.push(`${merged} 組を 1 ページに結合します`);
   if (parts.length === 0) {
-    // 何も選んでいないときは、次に何をすればよいかを言う（#142）
+    // 何も選んでいないときは、次に何をすればよいかを言う（#142 #149）
     const unchosen = rows.filter((row) => row.detected && !row.checked).length;
+    const suggested = rows.filter((_, index) =>
+      isSuggested(rows, index),
+    ).length;
+    if (unchosen > 0 && suggested > 0) {
+      return `見開き ${unchosen} 枚と、結合の候補 ${suggested} 組が見つかりました`;
+    }
     if (unchosen > 0) {
       return `見開き ${unchosen} 枚が見つかりました。分けるページを選んでください`;
     }
-    // 見開きのまま残すと決めた横長（kept_whole）は勧めないが、見開きはある
-    return rows.some((row) => isCandidate(row) || isWide(row))
+    if (suggested > 0) {
+      return `結合の候補が ${suggested} 組見つかりました。「次と結合」で 1 枚にできます`;
+    }
+    return rows.some(isCandidate)
       ? "変更はありません"
       : "見開きは見つかりませんでした";
   }

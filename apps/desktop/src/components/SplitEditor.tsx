@@ -16,6 +16,7 @@ import {
   isAbsorbed,
   isCandidate,
   isPending,
+  isSuggested,
   isWide,
   numberLabel,
   pageNumbers,
@@ -163,10 +164,15 @@ export function SplitEditor({
     );
   };
 
-  /** 分割の対象になりうる行だけを、前後に辿れるようにする */
-  const candidates = rows
-    .map((row, index) => (isCandidate(row) ? index : -1))
-    .filter((index) => index >= 0);
+  /** 行の番号のうち、条件に合うものだけ */
+  const indicesWhere = (accept: (index: number) => boolean) =>
+    rows.map((_, index) => index).filter(accept);
+  // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ。見出しの
+  // 送りボタンは結合の候補（#149）にも止まる
+  const candidates = indicesWhere((index) => isCandidate(rows[index]));
+  const targets = indicesWhere(
+    (index) => isCandidate(rows[index]) || isSuggested(rows, index),
+  );
 
   /**
    * from の行から見て、前（-1）・次（+1）にある最初の候補。無ければ undefined。
@@ -175,23 +181,23 @@ export function SplitEditor({
    * ない。候補でない行からも拡大表示は開くので、その行が候補の並びに居ないことを
    * 勘定に入れないと、→ を押した利用者が本の先頭側へ飛ばされる。
    */
-  const candidateFrom = (from: number, delta: number) => {
-    const behind = candidates.filter((index) => index < from);
-    const ahead = candidates.filter((index) => index > from);
+  const candidateFrom = (list: number[], from: number, delta: number) => {
+    const behind = list.filter((index) => index < from);
+    const ahead = list.filter((index) => index > from);
     return delta > 0 ? ahead[0] : behind[behind.length - 1];
   };
 
   /** 拡大表示の中で、前後の候補へ移る */
   const walk = (delta: number) => {
     if (overlay === null) return;
-    const next = candidateFrom(overlay, delta);
+    const next = candidateFrom(candidates, overlay, delta);
     if (next !== undefined) setOverlay(next);
   };
 
   // 見出しの送りボタンの起点。まだ何も指していなければ、本の端から数える
   const focusFrom = (delta: number) => focus ?? (delta > 0 ? -1 : rows.length);
-  const previous = candidateFrom(focusFrom(-1), -1);
-  const following = candidateFrom(focusFrom(1), 1);
+  const previous = candidateFrom(targets, focusFrom(-1), -1);
+  const following = candidateFrom(targets, focusFrom(1), 1);
 
   /** 前後の候補を指し、格子の中央まで送る */
   const step = (target: number | undefined) => {
@@ -201,7 +207,7 @@ export function SplitEditor({
       .querySelector(`[data-testid="split-card"][data-index="${target}"]`)
       ?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
-  const focusedAt = focus === null ? -1 : candidates.indexOf(focus);
+  const focusedAt = focus === null ? -1 : targets.indexOf(focus);
 
   const imageUrlOf = (row: SplitRow) =>
     `${
@@ -256,7 +262,7 @@ export function SplitEditor({
               className="tabular min-w-12 text-center text-[12px] text-ink-muted"
               data-testid="split-focus-position"
             >
-              {focusedAt < 0 ? "–" : focusedAt + 1} / {candidates.length}
+              {focusedAt < 0 ? "–" : focusedAt + 1} / {targets.length}
             </span>
             <Button
               variant="secondary"
@@ -350,6 +356,7 @@ export function SplitEditor({
                     applied={row.stored.checked && row.checked}
                     focused={focus === index}
                     checked={row.checked}
+                    suggested={isSuggested(rows, index)}
                     wide={wide}
                     span={span}
                     boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}

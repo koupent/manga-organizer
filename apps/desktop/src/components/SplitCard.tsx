@@ -20,6 +20,11 @@ type SplitCardProps = {
   /** 前後の見開きへ送るボタンで、いま指している行か（#131） */
   focused: boolean;
   checked: boolean;
+  /**
+   * 次のページとの結合を勧めるか（#149）。継ぎ目の色がつながっている。
+   * 結合の操作を隠さずに出し、目立たせる
+   */
+  suggested: boolean;
   /** 2 列ぶんを占める横長か */
   wide: boolean;
   /** 実際に 2 列を跨がせるか。1 列しか無い窓では跨がせられない */
@@ -59,6 +64,7 @@ export function SplitCard({
   applied,
   focused,
   checked,
+  suggested,
   wide,
   span,
   boxWidth,
@@ -92,7 +98,9 @@ export function SplitCard({
   const zoomLabel = `${label} ページを大きく表示`;
   const mergeLabel = partner
     ? `${label} ページの結合をやめる`
-    : `${label} ページを次のページと結合する`;
+    : suggested
+      ? `端の色がつながっています。${label} ページを次のページと結合する`
+      : `${label} ページを次のページと結合する`;
 
   return (
     <div
@@ -108,6 +116,7 @@ export function SplitCard({
       data-wide={wide}
       data-focused={focused}
       data-merging={partner !== undefined}
+      data-suggested={suggested}
     >
       <div
         className={cn(
@@ -192,11 +201,14 @@ export function SplitCard({
             aria-label={mergeLabel}
             aria-pressed={partner !== undefined}
             className={cn(
-              "flex items-center gap-1 rounded px-1 py-0.5 text-[11px] transition-colors hover:bg-surface-2",
-              // 単ページの数だけ並ぶので、普段は隠して指したカードにだけ出す
+              "flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1 py-0.5 text-[11px] transition-colors hover:bg-surface-2",
+              // 単ページの数だけ並ぶので、普段は隠して指したカードにだけ出す。
+              // 勧める組（#149）では隠さない
               partner
                 ? "text-brand"
-                : "text-ink-faint opacity-0 hover:text-ink group-hover:opacity-100 focus-visible:opacity-100",
+                : suggested
+                  ? "bg-brand/10 font-semibold text-brand hover:bg-brand/20"
+                  : "text-ink-faint opacity-0 hover:text-ink group-hover:opacity-100 focus-visible:opacity-100",
             )}
             onClick={onMergeNext}
           >
