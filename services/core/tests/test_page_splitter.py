@@ -594,7 +594,7 @@ class RestoresTheOriginalTest(SplitFixture):
         # もう一度割ったとき、元の画素をもう引けない
         self.assertEqual(1, len(originals_of(self.archive_path)))
 
-    def test_a_restored_spread_is_a_spread_again(self):
+    def test_a_restored_spread_is_marked_kept_whole(self):
         # Arrange - 割ってから戻す
         self.build_four_pages()
         self.split_row(self.archive_path, 1, SPLIT_X)
@@ -610,9 +610,27 @@ class RestoresTheOriginalTest(SplitFixture):
         # Act
         reopened = self.splitter.scan_rows(self.archive_path)
 
-        # Assert - 戻した見開きは、割っていない見開きとして出る（#148）
+        # Assert - 戻した見開きは見開きのまま、残すと決めた印が付く（#138）。
+        # 印が無いと、画面は戻したばかりの見開きにまた分割を提案する（#151）
         self.assertTrue(reopened[1].is_spread)
         self.assertIsNone(reopened[1].split)
+        self.assertTrue(reopened[1].kept_whole)
+        self.assertEqual(
+            [False, False, False],
+            [row.kept_whole for index, row in enumerate(reopened) if index != 1],
+        )
+
+    def test_a_spread_that_was_never_split_is_not_marked(self):
+        # Arrange
+        self.build_four_pages()
+
+        # Act
+        rows = self.splitter.scan_rows(self.archive_path)
+
+        # Assert - 割ったことの無い見開きには印を付けない。付けると、分割の
+        # 提案が出ず、見開きを割り漏らす
+        self.assertTrue(rows[1].is_spread)
+        self.assertFalse(rows[1].kept_whole)
 
 
 class SplitsSeveralSpreadsAtOnceTest(SplitFixture):
@@ -1149,13 +1167,15 @@ class MergesTwoPagesTest(SplitFixture):
             ],
         )
 
-        # Assert - 結合した 1 枚は元画像として残り、開き直すと割っていない
-        # 見開きとして出る（#148）
+        # Assert - 結合した 1 枚は元画像として残り、開き直すと見開きのまま
+        # 残すページとして出る。印が無いと、画面は結合したばかりの見開きに
+        # 分割を提案する（#151）
         self.assertIn(content_hash(merged), originals_of(self.archive_path))
         rows = self.splitter.scan_rows(self.archive_path)
         self.assertEqual(3, len(rows))
         self.assertTrue(rows[1].is_spread)
         self.assertIsNone(rows[1].split)
+        self.assertTrue(rows[1].kept_whole)
 
     def test_pages_of_different_heights_are_scaled_to_the_taller(self):
         # Arrange - 1200x1800 と 400x600。低い方を 3 倍して高さを揃える

@@ -39,6 +39,7 @@ from manga_core.original_store import (
     plan_manifest,
     plan_original,
     read_original,
+    stored_original_hashes,
 )
 from manga_core.page_reorder import (
     OutputPage,
@@ -123,8 +124,13 @@ class SplitRow:
     displaced は、対の 2 枚がいま隣り合っていないこと。行は先に出てくる方の
     位置に置かれ、確定するとそこで 2 枚が隣り合う（#133）。
 
+    kept_whole は、見開きのまま残すと利用者が決めたページであること。割って
+    から戻したページ（#138）と、2 ページを結合したページ（#139）がこれに当たる。
+    画面はこの行に分割を提案しない（#151）。自分で結合した見開きを、また
+    分けるよう勧めることになる。
+
     merge_suggested は、この行と次の行の継ぎ目の色がつながっていて、2 枚で
-    1 枚の見開きらしいこと（#149）。画面は結合の候補として示すだけで、保留には
+    1 枚の見開きらしいこと（#149）。画面は結合の提案として示すだけで、保留には
     しない。
     """
 
@@ -135,6 +141,7 @@ class SplitRow:
     is_spread: bool
     split: SplitPosition | None
     displaced: bool = False
+    kept_whole: bool = False
     merge_suggested: bool = False
 
 
@@ -219,7 +226,9 @@ def scan_rows(
         facts, edges = _scan_pages(editor, path, progress)
     finally:
         editor.close()
-    return _suggest_merges(_fold_pairs(path, facts), edges)
+    return _suggest_merges(
+        _fold_pairs(path, facts, stored_original_hashes(path)), edges
+    )
 
 
 def apply_rows(
@@ -376,12 +385,19 @@ def _split_marks(ref: OriginalRef | None) -> tuple[str | None, int | None]:
     return side, x if isinstance(x, int) and not isinstance(x, bool) else None
 
 
-def _fold_pairs(path: Path, facts: Sequence[_PageFacts]) -> tuple[SplitRow, ...]:
+def _fold_pairs(
+    path: Path, facts: Sequence[_PageFacts], originals: frozenset[str]
+) -> tuple[SplitRow, ...]:
     """割った対を 1 行へ畳む。行は対のうち先に出てくる方の位置に置く。
 
     並びには頼らない（#133）。ページ並べ替えで左右を入れ替えた対や、離れた
     位置へ動かした対を畳まずにおくと、どちらもただのページとして並び、ZIP に
     元画像が残っているのに戻す手立てが無くなる。
+
+    originals は同梱した元画像のハッシュ。中身がそれと同じページは、見開きの
+    まま残すと決めたものとして印を付ける（#138 #139）。割ってから戻したページは
+    元画像のバイト列そのものを書き戻し、結合したページは結合した 1 枚を元画像
+    として同梱するので、どちらも必ず当たる。
     """
     folded: dict[int, tuple[int, SplitRow]] = {}
     for first, second in _matched_halves(facts):
@@ -399,7 +415,7 @@ def _fold_pairs(path: Path, facts: Sequence[_PageFacts]) -> tuple[SplitRow, ...]
         if index in folded:
             rows.append(folded[index][1])
             continue
-        rows.append(_plain_row(fact))
+        rows.append(_plain_row(fact, kept_whole=fact.digest in originals))
     return tuple(rows)
 
 
@@ -508,7 +524,7 @@ def _split_pair(first: _PageFacts, second: _PageFacts) -> _SplitPair | None:
     return _SplitPair(ref=first.ref, x=first.x, right_first=first.side == _SIDE_EARLIER)
 
 
-def _plain_row(fact: _PageFacts) -> SplitRow:
+def _plain_row(fact: _PageFacts, kept_whole: bool) -> SplitRow:
     """まだ割られていない 1 ページぶんの行"""
     return SplitRow(
         names=(fact.name,),
@@ -517,6 +533,7 @@ def _plain_row(fact: _PageFacts) -> SplitRow:
         height=fact.height,
         is_spread=is_spread(fact.width, fact.height),
         split=None,
+        kept_whole=kept_whole,
     )
 
 
