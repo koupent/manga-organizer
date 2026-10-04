@@ -972,5 +972,38 @@ class NoExternalToolTest(TocFormatTestBase):
         self.assertEqual([], tree_snapshot(temp_root), "一時領域に展開物が出来た")
 
 
+class RarReadProgressTest(TocFormatTestBase):
+    """5. RAR の目次を、どこまで読んだかを知らせながら読む（#157）
+
+    大きな RAR を遅い置き場所から読むと、目次だけで数分かかる。そのあいだ
+    件数の進捗は 0 から動かないので、書庫の中のどこまで来たかを知らせる。
+    """
+
+    def test_reports_how_far_into_the_archive_it_has_read(self):
+        # Arrange
+        archive = self.fixture("作品.rar", FIXTURES / "rar5-subdirs.rar")
+        seen: list[float] = []
+
+        # Act
+        toc_analyzer.locate_books(archive, progress=seen.append)
+
+        # Assert - 見出しを読むたびに、0 から 1 の間で前へ進む
+        self.assertGreater(len(seen), 1, f"知らせが来ない: {seen}")
+        self.assertEqual(sorted(seen), seen, f"進みが後戻りする: {seen}")
+        self.assertTrue(all(0 <= value <= 1 for value in seen), seen)
+        self.assertGreater(seen[-1], 0.5, f"最後まで読んだのに進みが小さい: {seen}")
+
+    def test_a_zip_does_not_report(self):
+        # Arrange - ZIP の目次は末尾にまとまっていて一息で読める
+        archive = zip_with(self.work_dir / "作品.zip", pages())
+        seen: list[float] = []
+
+        # Act
+        toc_analyzer.locate_books(archive, progress=seen.append)
+
+        # Assert
+        self.assertEqual([], seen)
+
+
 if __name__ == "__main__":
     unittest.main()

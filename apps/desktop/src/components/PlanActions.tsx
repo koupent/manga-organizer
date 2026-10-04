@@ -22,6 +22,11 @@ type PlanActionsProps = {
   issues: { issue: string; count: number }[];
   /** サイドカーが報告した進み具合。総数が 0 の間は件数を出さない */
   progress: { current: number; total: number };
+  /**
+   * いま処理している 1 件の中の進み（0〜1）。件数だけでは、大きな 1 件の
+   * 処理中に進捗が止まって見える（#157）
+   */
+  partial?: number;
   running: boolean;
   /** 主操作を押せないか。理由は status に出す */
   blocked: boolean;
@@ -44,6 +49,7 @@ export function PlanActions({
   statusTitle,
   issues,
   progress,
+  partial = 0,
   running,
   blocked,
   onToggleAll,
@@ -52,18 +58,29 @@ export function PlanActions({
 }: PlanActionsProps) {
   const master = masterCheckState(rows, excluded);
   const percent =
-    progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
+    progress.total > 0
+      ? Math.min(100, ((progress.current + partial) / progress.total) * 100)
+      : 0;
 
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
-        <Checkbox
-          data-testid="plan-master-check"
-          checked={master}
-          disabled={running || rows.length === 0}
-          aria-label="全部の対象を選ぶ"
-          onCheckedChange={() => onToggleAll(master !== true)}
-        />
+        {/* 言葉を添える。チェックだけだと状態の文の飾りに見え、まとめて
+            外せることに気づかれない */}
+        <label
+          className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted"
+          title="全部の対象をまとめて選ぶ・外す"
+        >
+          <Checkbox
+            data-testid="plan-master-check"
+            checked={master}
+            disabled={running || rows.length === 0}
+            aria-label="全部の対象を選ぶ"
+            onCheckedChange={() => onToggleAll(master !== true)}
+          />
+          すべて
+        </label>
+        <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
         <span
           className="truncate text-[12px] text-ink-muted"
           data-testid="organize-status"
@@ -89,8 +106,11 @@ export function PlanActions({
             ))}
         <div className="flex-1" />
         {progress.total > 0 ? (
-          <span className="tabular shrink-0 whitespace-nowrap text-[12px] text-ink-faint">
-            {progress.current} / {progress.total}
+          <span
+            className="tabular shrink-0 whitespace-nowrap text-[12px] text-ink-faint"
+            data-testid="progress-count"
+          >
+            {progress.current} / {progress.total} · {Math.floor(percent)}%
           </span>
         ) : null}
         {running ? (

@@ -124,7 +124,8 @@ type PlanListProps = {
   outputDirectory: string;
   /** 実行中は選び直せない。再実行で `_1` が二重に付くのを防ぐ */
   locked: boolean;
-  onToggle: (row: PlanRow, keep: boolean) => void;
+  /** 行のチェックを付け外しする。Shift で押すと、範囲の行がまとめて来る */
+  onToggle: (rows: PlanRow[], keep: boolean) => void;
   /** 整理済みの本を、そのまま次の画面へ読み込ませる */
   onOpenArchive: (path: string, mode: HandoffMode) => void;
   /** 本ごとの編集済みの種類。整理済みの行の近道に印を出す（#143） */
@@ -172,6 +173,23 @@ export function PlanList({
   onCorrect,
   onFill,
 }: PlanListProps) {
+  // Shift で押したときの範囲の起点。最後に押した行（#158）。行は解析の途中で
+  // 増えるので、位置ではなく鍵で覚える
+  const anchor = useRef<string | null>(null);
+
+  /** 押した行を切り替える。Shift なら起点からその行までを同じ状態にそろえる */
+  const toggle = (row: PlanRow, keep: boolean, range: boolean) => {
+    const to = rows.indexOf(row);
+    const from = range
+      ? rows.findIndex((item) => item.id === anchor.current)
+      : -1;
+    anchor.current = row.id;
+    onToggle(
+      from < 0 ? [row] : rows.slice(Math.min(from, to), Math.max(from, to) + 1),
+      keep,
+    );
+  };
+
   return (
     <ul
       className="min-h-0 flex-1 divide-y divide-line/60 overflow-y-auto p-1"
@@ -185,7 +203,7 @@ export function PlanList({
           name={names.get(row.id) ?? ""}
           outputDirectory={outputDirectory}
           locked={locked}
-          onToggle={onToggle}
+          onToggle={toggle}
           onOpenArchive={onOpenArchive}
           edited={edits[row.source] ?? []}
           corrected={corrected.has(row.id)}
@@ -204,7 +222,7 @@ type PlanListRowProps = {
   name: string;
   outputDirectory: string;
   locked: boolean;
-  onToggle: (row: PlanRow, keep: boolean) => void;
+  onToggle: (row: PlanRow, keep: boolean, range: boolean) => void;
   onOpenArchive: (path: string, mode: HandoffMode) => void;
   edited: readonly string[];
   corrected: boolean;
@@ -269,7 +287,13 @@ function PlanListRow({
         checked={state}
         disabled={locked}
         aria-label={row.kind === "book" ? name : row.path}
-        onCheckedChange={() => onToggle(row, state !== true)}
+        title="Shift を押しながら押すと、前に押した行からここまでをまとめて切り替えます"
+        // Shift で押すと、文字の選択が前に押した所まで伸びてしまう。押し下げで止める
+        onMouseDown={(event) => {
+          if (event.shiftKey) event.preventDefault();
+        }}
+        // Shift を読むために onClick で受ける。Space で押しても click が来る
+        onClick={(event) => onToggle(row, state !== true, event.shiftKey)}
       />
       <RowIcon kind={row.kind} dim={dim} />
       {correctable ? (

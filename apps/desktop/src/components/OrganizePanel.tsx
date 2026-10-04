@@ -99,6 +99,11 @@ let problemSeq = 0;
 const problemKey = () => `problem-${++problemSeq}`;
 
 /** パスの末尾。赤い行には名前だけを出す */
+/** 経過時間を「分:秒」で書く */
+function elapsedLabel(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 function baseName(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
 }
@@ -147,6 +152,10 @@ export function OrganizePanel({
   // 解析をやり直させる合図。投入が同じでも、整理が本をその場で作り直したら
   // 一覧の判定は古くなる（#127）
   const [analysisRound, setAnalysisRound] = useState(0);
+  // 解析を始めた時刻と、1 秒ごとに進める時計（#157）。経過時間が進むことで、
+  // 大きなアーカイブを読んでいる間も止まっていないと分かる
+  const [analysisStarted, setAnalysisStarted] = useState(0);
+  const [clock, setClock] = useState(0);
 
   // 利用者がチェックを触った行だけの台帳。既定（整理済みの本はオフ）は覚えず、
   // 行から毎回導き直す。画面が推し量った値まで覚えると、解析で行が組み直される
@@ -242,6 +251,11 @@ export function OrganizePanel({
     // 投入した瞬間から解析中。往復を待つ間に主操作を押せてしまわないよう、
     // ジョブの番号が返るより先に立てる
     setAnalysis({ ...IDLE_ANALYSIS, running: true });
+    // 前の整理の件数を出したままにしない
+    setProgress({ current: 0, total: 0 });
+    const startedAt = Date.now();
+    setAnalysisStarted(startedAt);
+    setClock(startedAt);
     // 前と同じ応答は、行を組み直さずに見送る
     let seen = "";
 
@@ -365,6 +379,13 @@ export function OrganizePanel({
       setBrowserDragging(false);
     };
   }, [active]);
+
+  // 解析の間だけ時計を進める
+  useEffect(() => {
+    if (!analysis.running) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [analysis.running]);
 
   const analyzedRows = useMemo(
     () =>
@@ -542,16 +563,14 @@ export function OrganizePanel({
   ]);
 
   /** チェックを付け外しする。親を触ったら下の葉をまとめて動かす */
-  const toggleRow = (row: PlanRow, keep: boolean) => {
-    setDecisions((current) => toggleLeaves(current, toggleTargets(row), keep));
+  const toggleRows = (targets: PlanRow[], keep: boolean) => {
+    setDecisions((current) =>
+      toggleLeaves(current, targets.flatMap(toggleTargets), keep),
+    );
   };
 
   /** 一覧ごとまとめて付け外しする。主操作の行の全体チェックが使う */
-  const toggleAll = (keep: boolean) => {
-    setDecisions((current) =>
-      toggleLeaves(current, rows.flatMap(toggleTargets), keep),
-    );
-  };
+  const toggleAll = (keep: boolean) => toggleRows(rows, keep);
 
   /**
    * 巻数を直す。自動で読んだ値と同じにしたら、直していないことに戻す。
@@ -743,10 +762,20 @@ export function OrganizePanel({
    * 足りない入力があるときも同じで、押せる見た目のまま何も起きないより、
    * 押せないうえで理由を出す。
    */
+  // 解析中に出す 1 行（#157）。何を読んでいるかと経過時間を言う。走査が
+  // 終わっていれば、読み終えた数の次の入れ物がいま読んでいるもの
+  const reading = analysis.containers[progress.current];
+  const analysisStatus =
+    `解析しています… ${
+      reading
+        ? `${baseName(reading)} を読んでいます`
+        : "投入したものを調べています"
+    } · 経過 ` +
+    elapsedLabel(Math.max(0, Math.floor((clock - analysisStarted) / 1000)));
   const blockedBy = running
     ? "実行中です"
     : analysis.running
-      ? "解析しています..."
+      ? analysisStatus
       : problems.join(" / ");
   const blocked = blockedBy !== "";
 
@@ -883,6 +912,7 @@ export function OrganizePanel({
             statusTitle={hasOrganized ? ORGANIZED_STATUS_TIP : undefined}
             issues={issues}
             progress={progress}
+            partial={analysis.running ? analysis.reading : 0}
             running={running}
             blocked={blocked}
             onToggleAll={toggleAll}
@@ -917,7 +947,7 @@ export function OrganizePanel({
                 names={names}
                 outputDirectory={outputDirectory}
                 locked={running}
-                onToggle={toggleRow}
+                onToggle={toggleRows}
                 // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
                 // 通る。行が渡すのは、いまディスク上に在る元のファイル
                 onOpenArchive={onOpenProduced}

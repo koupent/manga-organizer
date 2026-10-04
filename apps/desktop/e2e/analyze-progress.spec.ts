@@ -84,6 +84,10 @@ type Phase = {
   scanned: boolean;
   containers: string[];
   books: Book[];
+  /** 目次を読み終えた入れ物の数。省くと本があれば 1、無ければ 0 */
+  current?: number;
+  /** いま読んでいる入れ物の進み（0〜1）（#157） */
+  reading?: number;
 };
 
 /** 整理済みの本が持っている、自分の著者と作品名。左の列とはわざと違える */
@@ -150,7 +154,7 @@ function jobBody(id: string, phase: Phase) {
     id,
     kind: "analyze",
     state: phase.state,
-    current: phase.books.length > 0 ? 1 : 0,
+    current: phase.current ?? (phase.books.length > 0 ? 1 : 0),
     total: phase.scanned ? phase.containers.length : 0,
     message: "",
     result: {
@@ -158,6 +162,7 @@ function jobBody(id: string, phase: Phase) {
       containers: phase.containers,
       books: phase.books,
       unreadable: [],
+      reading: phase.reading ?? 0,
     },
     error: null,
     created_at: "2026-01-01T00:00:00+00:00",
@@ -325,6 +330,49 @@ async function waitForSubmission(script: Script, count: number) {
 }
 
 test.describe("解析の途中経過", () => {
+  test("読んでいるアーカイブの名前・経過時間・中の進みが出る（#157）", async ({
+    page,
+  }) => {
+    // Arrange - 2 つのうち 1 つ目の目次を半分まで読んだ局面
+    const title = "進みの作品";
+    const name = "進み";
+    const output = join(sidecar.workDir, `out-${name}`);
+    mkdirSync(output, { recursive: true });
+    const { compound, single } = makeFolder(name);
+    const script = await scriptAnalysis(page, [
+      {
+        state: "running",
+        scanned: true,
+        containers: [compound, single],
+        books: [],
+        current: 0,
+        reading: 0.5,
+      },
+    ]);
+    await openOrganize(page, output);
+    await fillMangaInfo(page, title);
+
+    // Act
+    await addFolder(page, name);
+    await waitForSubmission(script, 1);
+
+    // Assert - 何を読んでいるかと経過時間を言う。件数が 0 のままでも、
+    // 時間が進むので止まっていないと分かる
+    const status = page.getByTestId("organize-status");
+    await expect(status).toContainText("合本.zip を読んでいます");
+    await expect(status).toContainText("経過 0:0");
+
+    // Assert - 割合は、読んでいる途中の進みも含める（0 件 + 半分 / 2 件）
+    await expect(page.getByTestId("progress-count")).toHaveText("0 / 2 · 25%");
+    await expect(page.getByTestId("progress")).toHaveAttribute(
+      "aria-valuenow",
+      "25",
+    );
+
+    // Assert - 経過時間は進む
+    await expect(status).toContainText("経過 0:02", { timeout: 5_000 });
+  });
+
   test("走査が終わった時点で、アーカイブの行だけが並ぶ", async ({ page }) => {
     // Arrange - 走査だけが終わった局面。入れ物は出そろい、本はまだ 0 冊
     const title = "走査の作品";

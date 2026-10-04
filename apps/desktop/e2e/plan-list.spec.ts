@@ -426,6 +426,45 @@ test.describe("解析した本の一覧", () => {
     await expect(page.getByTestId("plan-row")).toHaveCount(before);
   });
 
+  test("Shift を押しながら押すと、前に押した行からそこまでをまとめて切り替える（#158）", async ({
+    page,
+  }) => {
+    // Arrange - 本の行を一覧に並んだ順で取る。間に入れ物の行が挟まってもよい
+    await preparePlan(page, "範囲", "範囲の作品");
+    const books = page.locator('[data-testid="plan-row"][data-kind="book"]');
+    await expect(books).toHaveCount(3);
+    const [first, second, third] = [0, 1, 2].map((index) =>
+      checkOf(books.nth(index)),
+    );
+
+    // Act - 1 冊目を外してから、3 冊目を Shift で押す
+    await first.click();
+    await third.click({ modifiers: ["Shift"] });
+
+    // Assert - 間の 2 冊目も外れる。押した 2 行だけを切り替える実装では残る
+    for (const [label, check] of [
+      ["1 冊目", first],
+      ["2 冊目", second],
+      ["3 冊目", third],
+    ] as const) {
+      await expect(check, `${label} が外れていない`).toHaveAttribute(
+        "aria-checked",
+        "false",
+      );
+    }
+
+    // Act - 次は 3 冊目が起点になる。外れている 2 冊目を Shift で押すと付く方へそろう
+    await second.click({ modifiers: ["Shift"] });
+
+    // Assert - 2 冊目から 3 冊目までが付き、範囲の外の 1 冊目は外れたまま
+    await expect(second).toHaveAttribute("aria-checked", "true");
+    await expect(third).toHaveAttribute("aria-checked", "true");
+    await expect(first).toHaveAttribute("aria-checked", "false");
+
+    // Assert - Shift で押しても、一覧の文字が選ばれた状態にならない
+    expect(await page.evaluate(() => String(window.getSelection()))).toBe("");
+  });
+
   test("外した本は作られない", async ({ page }) => {
     // Arrange - 3 冊のうち、2 冊入り ZIP の 2 冊目だけを外す。アーカイブの
     // 単位でしか外せない実装では、この外し方が表現できない

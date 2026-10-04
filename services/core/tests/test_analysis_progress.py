@@ -552,6 +552,55 @@ class GrowingAnalysisResultTest(AnalysisJobTestBase):
         self.assertEqual(containers, opened, f"対照でも読み切っていない: {opened}")
 
 
+class ReadingProgressTest(AnalysisJobTestBase):
+    """3b. 入れ物 1 つの中の進みを、途中経過に載せる（#157）
+
+    大きな RAR 1 つを投入すると、読み終えるまで件数は「0 / 1」のまま動かない。
+    画面が「止まっていない」ことを示せるよう、読んでいる途中の進みを返す。
+    """
+
+    inline = False
+
+    def test_the_progress_inside_one_archive_is_visible(self):
+        # Arrange - 目次を半分まで読んだと知らせたところで止める
+        archive = self.write_archive(self.work_dir / "大きな.zip")
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        original = toc_analyzer.locate_books
+
+        def halfway(archive_path: Path, checkpoint, progress=None):
+            progress(0.5)
+            gate.wait(10)
+            return original(archive_path, checkpoint, progress)
+
+        patcher = mock.patch.object(toc_analyzer, "locate_books", halfway)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        # Act
+        job_id = self.accepted_id([archive])
+
+        # Assert - 件数はまだ 0 で、中の進みが見える。走査が終わるまでは
+        # 途中経過そのものがまだ無い（None）
+        self.assertTrue(
+            wait_until(
+                lambda: (self.job(job_id)["result"] or {}).get("reading") == 0.5
+            ),
+            f"読んでいる途中の進みが出ない: {self.job(job_id)}",
+        )
+        self.assertEqual(0, self.job(job_id)["current"])
+
+        # Act / Assert - 読み終えると件数が進み、中の進みは 0 に戻る
+        gate.set()
+        self.assertTrue(
+            wait_until(lambda: self.job(job_id)["state"] == "succeeded"),
+            f"解放しても終わらない: {self.job(job_id)}",
+        )
+        finished = self.job(job_id)
+        self.assertEqual(1, finished["current"])
+        self.assertEqual(0.0, finished["result"]["reading"])
+
+
 class SilentlySkippedArchiveTest(AnalysisJobTestBase):
     """4. 本を 1 冊も持たないアーカイブを、黙って落とさない（意図した振る舞いの変更）"""
 
