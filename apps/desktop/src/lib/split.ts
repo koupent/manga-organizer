@@ -47,6 +47,8 @@ export type SplitScanRow = {
   kept_whole: boolean;
   /** 次の行と継ぎ目の色がつながっていて、2 枚で 1 枚の見開きらしいか（#149） */
   merge_suggested: boolean;
+  /** 割った対の 2 枚の継ぎ目がつながっていて、戻せば見開きらしいか（#154） */
+  rejoin_suggested: boolean;
 };
 
 /** 走査ジョブの結果（manga_api.split_job.SplitScanView） */
@@ -102,6 +104,8 @@ export type SplitRow = {
    * だけで保留にはしない。開いた時点で何も選ばないのは分割と同じ（#142）
    */
   suggested: boolean;
+  /** 割った対を、割る前の 1 枚へ戻すよう勧める（#154） */
+  rejoin: boolean;
   stored: { checked: boolean; x: number };
 };
 
@@ -148,6 +152,7 @@ export function scanResultOf(value: unknown): SplitScanResult {
       displaced: row.displaced === true,
       kept_whole: row.kept_whole === true,
       merge_suggested: row.merge_suggested === true,
+      rejoin_suggested: row.rejoin_suggested === true,
     };
   });
   return {
@@ -224,6 +229,7 @@ export function rowsFrom(result: SplitScanResult): SplitRow[] {
       displaced: row.displaced,
       mergeNext: false,
       suggested: row.merge_suggested,
+      rejoin: row.rejoin_suggested,
       stored: { checked: row.split !== null, x },
     };
   });
@@ -298,6 +304,19 @@ export function isMergeCandidate(rows: SplitRow[], index: number): boolean {
 }
 
 /**
+ * ②で、割った対を割る前の 1 枚へ戻す候補（#154）。2 枚の継ぎ目の色が
+ * つながっている対。①で全部の横長を分けたあと、本当の見開きだけを戻す
+ */
+export function isRejoinCandidate(row: SplitRow): boolean {
+  return row.names.length === 2 && row.rejoin && row.stored.checked;
+}
+
+/** ②の候補（送りボタンが辿り、Enter で切り替える行） */
+export function isMergeTarget(rows: SplitRow[], index: number): boolean {
+  return isMergeCandidate(rows, index) || isRejoinCandidate(rows[index]);
+}
+
+/**
  * 開いたときのステップ。①の対象があれば①から始める。中身が全部見開きの本は
  * ①から、ふつうの本や仕上げた本は②から始まる。
  *
@@ -318,15 +337,141 @@ export function splitAll(rows: SplitRow[]): SplitRow[] {
   );
 }
 
-/** ②の候補をすべて結合する */
+/** ②の候補をすべて結合する。割った対の候補は割る前へ戻す */
 export function mergeAll(rows: SplitRow[]): SplitRow[] {
   let next = rows;
   for (let index = 0; index < next.length; index += 1) {
     if (isMergeCandidate(next, index) && !next[index].mergeNext) {
       next = replaceRow(next, index, { mergeNext: true });
+    } else if (isRejoinCandidate(next[index]) && next[index].checked) {
+      next = replaceRow(next, index, { checked: false });
     }
   }
   return next;
+}
+
+/** ②で解ける見開きがあるか。すべて解くを押せるかを決める */
+export function canUnmerge(row: SplitRow): boolean {
+  return (
+    row.mergeNext ||
+    (row.names.length === 2 && !row.checked) ||
+    (row.names.length === 1 && isWide(row) && !row.checked)
+  );
+}
+
+/**
+ * ②の見開きをすべて解く（#154）。結合すると決めた 2 枚はやめ、割る前へ戻すと
+ * 決めた対は割ったままにし、横長のページは中央で分ける。解く対象は縦横比
+ * （横長かどうか）だけで決める
+ */
+export function unmergeAll(rows: SplitRow[]): SplitRow[] {
+  return rows.map((row) =>
+    !canUnmerge(row)
+      ? row
+      : row.mergeNext
+        ? { ...row, mergeNext: false }
+        : { ...row, checked: true },
+  );
+}
+
+/**
+ * ②で格子に並べる 1 枚ぶん（#154）。
+ *
+ * ②はページ単位で並べる。割った対は 2 枚の単ページとして出し、継ぎ目が
+ * つながる対だけを、割る前の 1 枚（結合の候補）として出す。
+ */
+export type MergeUnit = {
+  /** 格子の中で 1 つに決まる名前。割った対の半分は行の番号と part で分ける */
+  key: string;
+  /**
+   * - page: 1 ページ
+   * - candidate: 結合の候補。結合した後の姿で出す
+   * - joined: 結合すると決めた 2 枚
+   * - spread: 横長のページ（見開き）。✂ で解ける
+   */
+  kind: "page" | "candidate" | "joined" | "spread";
+  /** 先頭の行 */
+  row: number;
+  /** 割った対の半分のとき、先（0）か後（1）か */
+  part?: 0 | 1;
+  /** 結合の手段。merge は次の行と貼り合わせる、rejoin は割った対を戻す */
+  via?: "merge" | "rejoin";
+};
+
+/** 行から②の並びを組み立てる */
+export function mergeUnits(rows: SplitRow[]): MergeUnit[] {
+  const units: MergeUnit[] = [];
+  rows.forEach((row, index) => {
+    const previous = index - 1;
+    // 結合する・結合の候補の 2 枚目は、1 枚目のカードに一緒に描く
+    if (
+      previous >= 0 &&
+      (rows[previous].mergeNext || isMergeCandidate(rows, previous))
+    ) {
+      return;
+    }
+    const key = String(index);
+    if (row.names.length === 2) {
+      if (!row.checked) {
+        units.push({ key, kind: "joined", row: index, via: "rejoin" });
+      } else if (isRejoinCandidate(row)) {
+        units.push({ key, kind: "candidate", row: index, via: "rejoin" });
+      } else {
+        units.push({ key: `${key}:0`, kind: "page", row: index, part: 0 });
+        units.push({ key: `${key}:1`, kind: "page", row: index, part: 1 });
+      }
+    } else if (isWide(row)) {
+      units.push({ key, kind: "spread", row: index });
+    } else if (row.mergeNext) {
+      units.push({ key, kind: "joined", row: index, via: "merge" });
+    } else if (isMergeCandidate(rows, index)) {
+      units.push({ key, kind: "candidate", row: index, via: "merge" });
+    } else {
+      units.push({ key, kind: "page", row: index });
+    }
+  });
+  return units;
+}
+
+/**
+ * 「結合…」で相手に選べる 1 枚（#154）。格子は左から右へ、見開きは右から左へ
+ * 読むので、「次」「前」と向きを言わずに相手そのものを押させる。
+ *
+ * 割った対の半分は、もう半分とだけ結合できる（割る前へ戻す）。ほかの単ページは、
+ * 隣り合う単ページと結合できる。
+ */
+export function partnersOf(
+  rows: SplitRow[],
+  units: MergeUnit[],
+  unit: MergeUnit,
+): string[] {
+  if (unit.kind !== "page") return [];
+  if (unit.part !== undefined) return [`${unit.row}:${1 - unit.part}`];
+  const pages = new Set(
+    units
+      .filter((item) => item.kind === "page" && item.part === undefined)
+      .map((item) => item.key),
+  );
+  const partners: string[] = [];
+  const before = unit.row - 1;
+  const after = unit.row + 1;
+  if (pages.has(String(before)) && canMergeNext(rows, before)) {
+    partners.push(String(before));
+  }
+  if (pages.has(String(after)) && canMergeNext(rows, unit.row)) {
+    partners.push(String(after));
+  }
+  return partners;
+}
+
+/** 2 枚を結合した一覧。a・b は partnersOf で選べる組であること */
+export function joinedRows(
+  rows: SplitRow[],
+  a: MergeUnit,
+  b: MergeUnit,
+): SplitRow[] {
+  if (a.part !== undefined) return replaceRow(rows, a.row, { checked: false });
+  return replaceRow(rows, Math.min(a.row, b.row), { mergeNext: true });
 }
 
 /** 分割の対象になりうる行。判定に漏れても、手で入れれば対象になる */

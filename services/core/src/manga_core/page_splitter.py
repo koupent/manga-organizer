@@ -126,12 +126,16 @@ class SplitRow:
 
     kept_whole は、見開きのまま残すと利用者が決めたページであること。割って
     から戻したページ（#138）と、2 ページを結合したページ（#139）がこれに当たる。
-    画面はこの行に分割を提案しない（#151）。自分で結合した見開きを、また
-    分けるよう勧めることになる。
+    画面は①の「すべて分割」からこの行を外す（#151 #153）。外さないと、②で
+    結合した見開きを①の一括操作が壊す。
 
     merge_suggested は、この行と次の行の継ぎ目の色がつながっていて、2 枚で
-    1 枚の見開きらしいこと（#149）。画面は結合の提案として示すだけで、保留には
+    1 枚の見開きらしいこと（#149）。画面は結合の候補として示すだけで、保留には
     しない。
+
+    rejoin_suggested は、割った対の 2 枚の継ぎ目の色がつながっていて、割る前の
+    1 枚に戻せば見開きらしいこと（#154）。①で全部の横長を分けたあと、②で
+    本当の見開きだけを戻せるようにする。
     """
 
     names: tuple[str, ...]
@@ -143,6 +147,7 @@ class SplitRow:
     displaced: bool = False
     kept_whole: bool = False
     merge_suggested: bool = False
+    rejoin_suggested: bool = False
 
 
 @dataclass(frozen=True)
@@ -544,13 +549,23 @@ def _suggest_merges(
 
     前から順に拾い、組にしたページは次の組に使わない。画面も 3 枚以上を
     数珠つなぎには結合しない。
+
+    割った対の 2 枚どうしも比べ、つながっていれば戻す候補の印を付ける（#154）。
+    離れた対は比べない。2 枚の間に別のページが挟まっている。
     """
-    marked = list(rows)
+    marked = [
+        replace(row, rejoin_suggested=True)
+        if len(row.names) == 2
+        and not row.displaced
+        and _seam_continues(row.names[0], row.names[1], edges)
+        else row
+        for row in rows
+    ]
     index = 0
     while index + 1 < len(rows):
         earlier, later = rows[index], rows[index + 1]
         if _looks_joined(earlier, later, edges):
-            marked[index] = replace(earlier, merge_suggested=True)
+            marked[index] = replace(marked[index], merge_suggested=True)
             index += 2
         else:
             index += 1
@@ -562,14 +577,23 @@ def _looks_joined(
 ) -> bool:
     """2 行が、1 枚の見開きを 2 ページに分けて入れたものに見えるか。
 
-    右綴じの見開きは先のページが右に来るので、先のページの左端と次のページの
-    右端が接する。割った対（名前が 2 つ）と横長のページ（端を取っていない）は
-    比べない。
+    割った対（名前が 2 つ）と横長のページ（端を取っていない）は比べない。
     """
     if len(earlier.names) != 1 or len(later.names) != 1:
         return False
-    first = edges.get(earlier.names[0])
-    second = edges.get(later.names[0])
+    return _seam_continues(earlier.names[0], later.names[0], edges)
+
+
+def _seam_continues(
+    earlier: str, later: str, edges: dict[str, tuple[_Edge, _Edge]]
+) -> bool:
+    """2 ページの継ぎ目の色がつながっているか。
+
+    右綴じの見開きは先のページが右に来るので、先のページの左端と次のページの
+    右端が接する。
+    """
+    first = edges.get(earlier)
+    second = edges.get(later)
     if first is None or second is None:
         return False
     left_of_earlier, right_of_later = first[0], second[1]

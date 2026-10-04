@@ -118,6 +118,7 @@ ROW_KEYS = {
     "displaced",
     "kept_whole",
     "merge_suggested",
+    "rejoin_suggested",
 }
 SCAN_KEYS = {"archive", "page_count", "token", "rows"}
 CONFIRM_KEYS = {

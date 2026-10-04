@@ -534,8 +534,9 @@ test.describe("ページ分割: 配置", () => {
     await confirmSplit(page);
 
     // Assert - 書き込んだ後の文（枚数とページ数）でも縁は同じ。
-    // 保存すると②「見開きにする」へ進む（#153）
-    await expect(page.locator('[data-testid="merge-card"]')).toHaveCount(5, {
+    // 保存すると②「見開きにする」へ進む（#153）。割った 2 枚は②では
+    // 2 枚の単ページとして並ぶ（#154）
+    await expect(page.locator('[data-testid="merge-card"]')).toHaveCount(6, {
       timeout: 30_000,
     });
     const saved = await gridEdges(page);

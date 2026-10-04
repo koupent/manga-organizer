@@ -2,12 +2,23 @@ import { Link2, Scissors } from "lucide-react";
 import { cn } from "../lib/utils";
 import { fitInside } from "../lib/stage";
 import { Badge } from "./ui/badge";
+import { SplitLine } from "./SplitLine";
 
 type Picture = { imageUrl: string; width: number; height: number };
+
+/**
+ * 「結合…」で相手を選んでいる間の、このカードの立場（#154）。
+ * - self: 選び始めたカード
+ * - partner: 相手に選べるカード
+ * - dimmed: どちらでもない。薄くして押せなくする
+ */
+export type PickRole = "none" | "self" | "partner" | "dimmed";
 
 type MergeCardProps = {
   /** 先頭の行の位置。0 から数える */
   index: number;
+  /** 割った対の半分のとき、先（0）か後（1）か */
+  part?: 0 | 1;
   /** 番号の札に出す文字。"3" か "3–4" */
   label: string;
   /** 書き込む前と違うか */
@@ -16,11 +27,12 @@ type MergeCardProps = {
   focused: boolean;
   /**
    * カードの種類。
-   * - page: 1 ページ（または触らない横長）
+   * - page: 1 ページ
    * - candidate: 継ぎ目の色がつながる 2 枚。結合した後の姿を点線で出す
    * - joined: 結合すると決めた 2 枚
+   * - spread: 横長のページ（見開き）
    */
-  kind: "page" | "candidate" | "joined";
+  kind: "page" | "candidate" | "joined" | "spread";
   /** 実際に 2 列を跨がせるか */
   span: boolean;
   boxWidth: number;
@@ -28,26 +40,32 @@ type MergeCardProps = {
   page: Picture;
   /** 結合する相手（次のページ）。右綴じなので左に並べる */
   partner?: Picture;
-  /** いま ZIP の中で 2 ページに割れている対か */
-  applied: boolean;
-  /** ②で作った見開き（結合した・分割を戻した）か */
-  keptWhole: boolean;
+  /** 割った対を戻す候補で、継ぎ目を点線で示す位置（page の座標） */
+  seamX?: number;
+  /** 見開きを中央などで分けると決めたとき、その位置と動かし方 */
+  cut?: { x: number; onMove: (x: number) => void };
+  pick: PickRole;
   /** 候補を結合する */
   onMerge?: () => void;
-  /** 結合をやめる */
+  /** 結合をやめる・見開きを解く・解くのをやめる */
   onUnmerge?: () => void;
-  /** 次のページと結合する（候補に無い 2 枚を手で結合する） */
-  onMergeNext?: () => void;
+  /** 「結合…」で相手を選び始める */
+  onPick?: () => void;
+  /** 相手に選ぶ */
+  onChoose?: () => void;
+  /** 相手を選ぶのをやめる */
+  onCancelPick?: () => void;
 };
 
 /**
- * ②「見開きにする」のカード（#153）。
+ * ②「見開きにする」のカード（#153 #154）。
  *
  * 候補は、結合した後の見開きの姿（右に先のページ）で見せる。viewer での
  * 見え方そのものなので、格子が左から右へ並んでいても迷わない。
  */
 export function MergeCard({
   index,
+  part,
   label,
   pending,
   focused,
@@ -57,11 +75,14 @@ export function MergeCard({
   boxHeight,
   page,
   partner,
-  applied,
-  keptWhole,
+  seamX,
+  cut,
+  pick,
   onMerge,
   onUnmerge,
-  onMergeNext,
+  onPick,
+  onChoose,
+  onCancelPick,
 }: MergeCardProps) {
   // 結合するときは、高い方に揃えて 2 枚を横に並べた寸法で置く。サイドカーが
   // 貼り合わせるときと同じ揃え方
@@ -78,6 +99,22 @@ export function MergeCard({
   );
   const scale = display.height / joinedHeight;
   const candidate = kind === "candidate";
+  // 候補の継ぎ目。貼り合わせる 2 枚なら境目、割った対なら割った位置
+  const seam = !candidate
+    ? null
+    : partner
+      ? partnerWidth * scale
+      : seamX !== undefined
+        ? (seamX / page.width) * display.width
+        : null;
+  const badge =
+    kind === "candidate"
+      ? { text: "結合候補", className: "bg-warn text-canvas" }
+      : kind === "joined"
+        ? { text: "結合する", className: "bg-brand text-brand-ink" }
+        : cut
+          ? { text: "分けます", className: "bg-brand text-brand-ink" }
+          : null;
 
   return (
     <div
@@ -85,14 +122,19 @@ export function MergeCard({
       tabIndex={-1}
       className={cn(
         "group flex flex-col overflow-hidden rounded-card border border-line outline-none",
-        "bg-surface transition-colors hover:border-line-strong",
+        "bg-surface transition-[border-color,opacity] hover:border-line-strong",
         span && "col-span-2",
         focused && "border-brand ring-2 ring-brand/40",
+        pick === "self" && "border-brand ring-2 ring-brand",
+        pick === "partner" && "border-warn ring-2 ring-warn",
+        pick === "dimmed" && "pointer-events-none opacity-40",
       )}
       data-testid="merge-card"
       data-index={index}
+      data-part={part}
       data-kind={kind}
       data-focused={focused}
+      data-pick={pick}
     >
       <div
         className="relative flex flex-none items-center justify-center bg-canvas"
@@ -109,7 +151,7 @@ export function MergeCard({
           {partner ? (
             <img
               data-testid="merge-partner-image"
-              className="block h-full"
+              className="block h-full object-contain"
               style={{ width: partnerWidth * scale }}
               src={partner.imageUrl}
               alt={`${label} ページの左に並ぶページ`}
@@ -118,31 +160,54 @@ export function MergeCard({
           ) : null}
           <img
             data-testid="merge-image"
-            className="block h-full"
+            // 割った対の半分は寸法を割った位置から見積もる。外れても絵が
+            // 歪まないよう、箱の中に収めて描く
+            className="block h-full object-contain"
             style={{ width: ownWidth * scale }}
             src={page.imageUrl}
             alt={`${label} ページ`}
             loading="lazy"
           />
-          {candidate ? (
+          {seam !== null ? (
             <div
               aria-hidden
               className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-warn"
-              style={{ left: partnerWidth * scale - 1 }}
+              style={{ left: seam - 1 }}
+            />
+          ) : null}
+          {cut ? (
+            <SplitLine
+              label={label}
+              x={cut.x}
+              width={page.width}
+              displayWidth={display.width}
+              onChange={cut.onMove}
             />
           ) : null}
         </div>
         {/* 絵の上に載るので、半透明の地では読めない。地を塗りつぶす */}
-        {kind !== "page" ? (
+        {badge ? (
           <Badge
             data-testid="merge-badge"
             className={cn(
               "pointer-events-none absolute top-2 left-2 font-semibold shadow",
-              candidate ? "bg-warn text-canvas" : "bg-brand text-brand-ink",
+              badge.className,
             )}
           >
-            {candidate ? "結合候補" : "結合する"}
+            {badge.text}
           </Badge>
+        ) : null}
+        {pick === "partner" ? (
+          <button
+            type="button"
+            data-testid="merge-partner"
+            className="absolute inset-0 flex items-center justify-center bg-warn/15 text-[12px] font-semibold"
+            onClick={onChoose}
+          >
+            <span className="rounded bg-warn px-2 py-1 text-canvas shadow">
+              ここと結合
+            </span>
+          </button>
         ) : null}
       </div>
 
@@ -157,16 +222,27 @@ export function MergeCard({
         >
           {label}
         </span>
-        {applied ? (
-          <Badge tone="ok" data-testid="merge-applied">
-            分割済み
-          </Badge>
-        ) : null}
-        {keptWhole ? (
-          <Badge data-testid="merge-kept-whole">見開き</Badge>
+        {kind === "spread" && !cut ? (
+          <Badge data-testid="merge-spread">見開き</Badge>
         ) : null}
         <div className="flex-1" />
-        {onMerge ? (
+        {pick === "self" ? (
+          <>
+            <span className="text-[11px] whitespace-nowrap text-ink-muted">
+              相手を押す
+            </span>
+            <button
+              type="button"
+              data-testid="merge-pick-cancel"
+              title="結合する相手を選ぶのをやめる（Esc）"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap text-ink-muted hover:bg-surface-2 hover:text-ink"
+              onClick={onCancelPick}
+            >
+              やめる
+            </button>
+          </>
+        ) : null}
+        {pick !== "self" && onMerge ? (
           <button
             type="button"
             data-testid="merge-accept"
@@ -178,30 +254,33 @@ export function MergeCard({
             結合
           </button>
         ) : null}
-        {onUnmerge ? (
+        {pick !== "self" && onUnmerge ? (
           <button
             type="button"
             data-testid="merge-undo"
-            title={`${label} ページの結合を解く`}
+            title={
+              cut
+                ? `${label} ページを分けるのをやめる`
+                : `${label} ページの見開きを解く`
+            }
             className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap text-ink-muted hover:bg-surface-2 hover:text-ink"
             onClick={onUnmerge}
           >
-            <Scissors className="size-3.5" />
-            解く
+            {cut ? null : <Scissors className="size-3.5" />}
+            {cut ? "やめる" : "解く"}
           </button>
         ) : null}
-        {onMergeNext ? (
+        {pick === "none" && onPick ? (
           <button
             type="button"
-            data-testid="split-merge"
-            title={`${label} ページを次のページと結合する`}
-            aria-label={`${label} ページを次のページと結合する`}
+            data-testid="merge-pick"
+            title={`${label} ページと結合する相手を選ぶ`}
             // 単ページの数だけ並ぶので、普段は隠して指したカードにだけ出す
             className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[11px] whitespace-nowrap text-ink-faint opacity-0 transition-colors group-hover:opacity-100 hover:bg-surface-2 hover:text-ink focus-visible:opacity-100"
-            onClick={onMergeNext}
+            onClick={onPick}
           >
             <Link2 className="size-3.5" />
-            次と結合
+            結合…
           </button>
         ) : null}
       </div>

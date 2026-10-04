@@ -3,11 +3,13 @@ import { coloursOf, pageSizesOf, runPython } from "./archive";
 import { startSidecar, type Sidecar } from "./sidecar";
 
 /**
- * ②「見開きにする」で、隣り合う 2 ページを 1 枚の見開きへ結合する（#139 #153）。
+ * ②「見開きにする」で、隣り合う 2 ページを 1 枚の見開きへ結合する（#139 #153 #154）。
  *
  * 分割と同じく保留にし、保存したときに 1 回だけ書き込む。結合する 2 枚は、
  * 保存する前から結合した後の見開きの姿（右に先のページ、左に次のページ）で出す。
  * 継ぎ目の色がつながる 2 枚は、結合の候補として同じ姿を点線で出す（#149）。
+ * ①で割った 2 枚も②では単ページとして並べ、つながっていれば候補にする。
+ * 手での結合は「結合…」を押してから相手を押す。見開きは ✂ で解く。
  *
  * サイドカー側の契約は `services/core/tests/test_page_splitter.py` の
  * `MergesTwoPagesTest`・`SuggestsMergesTest` と `test_split_api.py` の
@@ -61,7 +63,22 @@ async function open(page: Page, archive: string, cards: number) {
 }
 
 const card = (page: Page, index: number) =>
-  page.locator(`[data-testid="merge-card"][data-index="${index}"]`);
+  page.locator(`[data-testid="merge-card"][data-index="${index}"]`).first();
+
+/** 「結合…」を押す。カードを指したときにだけ出るので、先に指す */
+async function startPick(page: Page, index: number) {
+  await card(page, index).hover();
+  await card(page, index).getByTestId("merge-pick").click();
+}
+
+/** カードごとの「結合…」の立場（data-pick）を、並びの順に読む */
+async function rolesOf(page: Page) {
+  return page
+    .locator('[data-testid="merge-card"]')
+    .evaluateAll((cards) =>
+      cards.map((item) => (item as HTMLElement).dataset.pick),
+    );
+}
 
 test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにする", () => {
   test("結合すると見開きの姿で出て、解けば元に戻る", async ({ page }) => {
@@ -71,15 +88,36 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
       "変更はありません",
     );
 
-    // Assert - 単ページ 2 枚が続くところにだけ結合の操作が出る。見開きと、
-    // 見開きの前・本の最後のページには出ない
-    await expect(card(page, 0).getByTestId("split-merge")).toHaveCount(1);
-    await expect(card(page, 2).getByTestId("split-merge")).toHaveCount(0);
-    await expect(card(page, 3).getByTestId("split-merge")).toHaveCount(0);
-    await expect(card(page, 4).getByTestId("split-merge")).toHaveCount(0);
+    // Assert - 隣に単ページがあるカードにだけ「結合…」が出る。見開きと、
+    // 見開きにしか隣り合わない最後のページには出ない
+    await expect(card(page, 0).getByTestId("merge-pick")).toHaveCount(1);
+    await expect(card(page, 2).getByTestId("merge-pick")).toHaveCount(1);
+    await expect(card(page, 3).getByTestId("merge-pick")).toHaveCount(0);
+    await expect(card(page, 4).getByTestId("merge-pick")).toHaveCount(0);
 
-    // Act - 2 枚目と 3 枚目を結合する
-    await card(page, 1).getByTestId("split-merge").click();
+    // Act - 2 枚目の「結合…」を押す
+    await startPick(page, 1);
+
+    // Assert - 相手に選べるのは両隣の単ページだけ。向き（前・次）は言わない
+    expect(await rolesOf(page)).toEqual([
+      "partner",
+      "self",
+      "partner",
+      "dimmed",
+      "dimmed",
+    ]);
+
+    // Act - Esc でやめ、もう一度選んで 3 枚目を押す
+    await page.keyboard.press("Escape");
+    expect(await rolesOf(page)).toEqual([
+      "none",
+      "none",
+      "none",
+      "none",
+      "none",
+    ]);
+    await startPick(page, 1);
+    await card(page, 2).getByTestId("merge-partner").click();
 
     // Assert - 3 枚目は 2 枚目のカードに吸い込まれ、2 列ぶんの見開きになる
     await expect(page.locator('[data-testid="merge-card"]')).toHaveCount(4);
@@ -114,7 +152,8 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await open(page, archive, 4);
 
     // Act
-    await card(page, 1).getByTestId("split-merge").click();
+    await startPick(page, 1);
+    await card(page, 2).getByTestId("merge-partner").click();
     await page.getByTestId("split-confirm").click();
 
     // Assert - 報告と、読み直した画面
@@ -124,9 +163,21 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     );
     await expect(page.getByTestId("split-page-count")).toHaveText("3 ページ");
     await expect(page.locator('[data-testid="merge-card"]')).toHaveCount(3);
-    await expect(card(page, 1).getByTestId("merge-kept-whole")).toHaveText(
+    await expect(card(page, 1)).toHaveAttribute("data-kind", "spread");
+    await expect(card(page, 1).getByTestId("merge-spread")).toHaveText(
       "見開き",
     );
+    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+
+    // Assert - 保存した見開きは ✂ で解ける（#154）。やめれば元のまま
+    await card(page, 1).getByTestId("merge-undo").click();
+    await expect(card(page, 1).getByTestId("merge-badge")).toHaveText(
+      "分けます",
+    );
+    await expect(page.getByTestId("split-status")).toHaveText(
+      "1 枚を 2 ページに分けます → 全 4 ページ",
+    );
+    await card(page, 1).getByTestId("merge-undo").click();
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
     // Assert - 結合した見開きは①の対象にしない（#151 #153）。対象にすると、
@@ -328,5 +379,146 @@ test.describe("ページ分割・結合: ステップの切り替え（#153）",
       "true",
     );
     expect(Object.keys(pageSizesOf(archive))).toHaveLength(5);
+  });
+});
+
+/**
+ * 横長 1 枚と縦長 1 枚の本。横長は、絵が中央をまたぐ見開き（seam）か、
+ * 白い余白を挟んで 2 ページを並べた 1 枚（two-up）
+ */
+function writeWideBook(name: string, kind: "seam" | "two-up"): string {
+  const target = `${sidecar.workDir}/${name}`;
+  runPython(
+    `
+import io, sys, zipfile
+from PIL import Image
+
+width, height = 1200, 900
+across = Image.linear_gradient("L").rotate(90).resize((width, height))
+stripes = Image.new("L", (width, height))
+for index, value in enumerate((0, 200, 40, 240, 80, 160, 20, 220, 120)):
+    stripes.paste(value, (0, index * 100, width, (index + 1) * 100))
+picture = Image.merge("RGB", (across, stripes, Image.new("L", (width, height), 128)))
+if sys.argv[2] == "two-up":
+    sheet = Image.new("RGB", (width, height), "#ffffff")
+    sheet.paste(picture.resize((440, 740)), (80, 80))
+    sheet.paste(picture.resize((440, 740)).rotate(180), (680, 80))
+    picture = sheet
+
+def png(image):
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG")
+    return buffer.getvalue()
+
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("001.png", png(picture))
+    archive.writestr("002.png", png(Image.new("RGB", (600, 900), "#808080")))
+`,
+    target,
+    kind,
+  );
+  return target;
+}
+
+/** 開いて①で全部を分け、保存して②へ進む */
+async function splitEverything(page: Page, archive: string) {
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await page.goto(
+    `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
+      `&mode=split&archive=${encodeURIComponent(archive)}`,
+  );
+  await page.getByTestId("split-all").click();
+  await page.getByTestId("split-confirm").click();
+  await expect(page.getByTestId("split-page-count")).toHaveText("3 ページ", {
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+}
+
+test.describe("ページ分割・結合: ①で割った 2 枚を②で扱う（#154）", () => {
+  test("絵がつながる 2 枚は戻す候補になり、結合すると割る前の 1 枚に戻る", async ({
+    page,
+  }) => {
+    // Arrange
+    const archive = writeWideBook("戻す候補.zip", "seam");
+    const before = runPython(
+      `
+import hashlib, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    print(hashlib.sha256(archive.read("001.png")).hexdigest())
+`,
+      archive,
+    ).trim();
+    await splitEverything(page, archive);
+
+    // Assert - 割った 2 枚は、割る前の姿で候補として出る
+    await expect(page.locator('[data-testid="merge-card"]')).toHaveCount(2);
+    await expect(card(page, 0)).toHaveAttribute("data-kind", "candidate");
+    await expect(card(page, 0).getByTestId("merge-number")).toHaveText("1–2");
+
+    // Act - 結合して保存する
+    await card(page, 0).getByTestId("merge-accept").click();
+    await expect(page.getByTestId("split-status")).toHaveText(
+      "1 枚を 1 ページに戻します → 全 2 ページ",
+    );
+    await page.getByTestId("split-confirm").click();
+
+    // Assert - 割る前の 1 枚がそのまま戻る（貼り合わせ直しではない）
+    await expect(page.getByTestId("split-page-count")).toHaveText("2 ページ", {
+      timeout: 30_000,
+    });
+    const pages = Object.keys(pageSizesOf(archive));
+    expect(pages).toHaveLength(2);
+    const after = runPython(
+      `
+import hashlib, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    print(hashlib.sha256(archive.read(sys.argv[2])).hexdigest())
+`,
+      archive,
+      pages[0],
+    ).trim();
+    expect(after, "戻したページが割る前の 1 枚と違う").toBe(before);
+
+    // Assert - 戻した見開きは②で解ける。すべて解くも同じ
+    await expect(card(page, 0)).toHaveAttribute("data-kind", "spread");
+    await page.getByTestId("unmerge-all").click();
+    await expect(card(page, 0).getByTestId("merge-badge")).toHaveText(
+      "分けます",
+    );
+    await expect(page.getByTestId("unmerge-all")).toBeDisabled();
+  });
+
+  test("余白を挟んだ 2 枚は単ページとして並び、相手はもう半分だけ", async ({
+    page,
+  }) => {
+    // Arrange
+    await splitEverything(page, writeWideBook("並べた2枚.zip", "two-up"));
+
+    // Assert - 割った 2 枚は 2 枚の単ページとして並ぶ。候補にはしない
+    const halves = page.locator('[data-testid="merge-card"][data-index="0"]');
+    await expect(halves).toHaveCount(2);
+    await expect(halves.nth(0)).toHaveAttribute("data-kind", "page");
+    await expect(halves.nth(1)).toHaveAttribute("data-part", "1");
+    await expect(page.getByTestId("merge-all")).toBeDisabled();
+
+    // Act - 先の半分の「結合…」を押す
+    await halves.nth(0).hover();
+    await halves.nth(0).getByTestId("merge-pick").click();
+
+    // Assert - 相手に選べるのはもう半分だけ。隣の縦長ページとは結合しない
+    expect(await rolesOf(page)).toEqual(["self", "partner", "dimmed"]);
+
+    // Act - 結合する
+    await halves.nth(1).getByTestId("merge-partner").click();
+
+    // Assert - 割る前の 1 枚へ戻すことになる
+    await expect(card(page, 0)).toHaveAttribute("data-kind", "joined");
+    await expect(page.getByTestId("split-status")).toHaveText(
+      "1 枚を 1 ページに戻します → 全 2 ページ",
+    );
   });
 });

@@ -115,13 +115,19 @@ class SplitRowView(BaseModel):
     kept_whole: bool = Field(
         description=(
             "見開きのまま残すと決めたページか（割ってから戻した・2 ページを結合した）。"
-            "画面はこの行に分割を提案しない"
+            "画面は①の「すべて分割」からこの行を外す"
         )
     )
     merge_suggested: bool = Field(
         description=(
             "この行と次の行の継ぎ目の色がつながっていて、2 枚で 1 枚の見開きらしいか。"
-            "画面は結合の提案として示すだけで、保留にはしない"
+            "画面は結合の候補として示すだけで、保留にはしない"
+        )
+    )
+    rejoin_suggested: bool = Field(
+        description=(
+            "割った対の 2 枚の継ぎ目の色がつながっていて、割る前の 1 枚に戻せば"
+            "見開きらしいか。画面は結合の候補として示す"
         )
     )
 
@@ -323,6 +329,7 @@ def _row_view(row: SplitRow) -> SplitRowView:
         displaced=row.displaced,
         kept_whole=row.kept_whole,
         merge_suggested=row.merge_suggested,
+        rejoin_suggested=row.rejoin_suggested,
     )
 
 
