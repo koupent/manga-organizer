@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { sidecarReason, type SidecarClient } from "../api/client";
+import { firstImageGeneration } from "./utils";
 import {
   confirmResultOf,
   doneMessage,
@@ -65,7 +66,7 @@ export function useSplitJob({
   const [report, setReport] = useState<Report>(NOTHING);
   const [busy, setBusy] = useState(false);
   // 書き込むと連番が振り直され、同じ URL が別の絵を指す。ここを進めて読み直させる
-  const [reloadKey, setReloadKey] = useState(0);
+  const [reloadKey, setReloadKey] = useState(firstImageGeneration);
 
   useEffect(() => {
     const controller = new AbortController();

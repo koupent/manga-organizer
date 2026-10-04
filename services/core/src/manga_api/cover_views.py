@@ -16,6 +16,7 @@ from typing import Any
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from manga_core.cover_editor import edge_colors
 from manga_core.original_store import OriginalStoreError, find_original, read_original
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,20 @@ class OperationView(BaseModel):
 
     kind: str
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class EdgeColorsView(BaseModel):
+    """画像の 4 辺の縁の色（#rrggbb）。
+
+    切り抜き枠が画像の外へはみ出した所は、サイドカーがこの色で塗る。画面は
+    同じ色で見本を描くので、確定する前に仕上がりが見える（#130）。向きは
+    回す前の画像のもの。
+    """
+
+    top: str
+    bottom: str
+    left: str
+    right: str
 
 
 class OriginalView(BaseModel):
@@ -41,6 +56,7 @@ class OriginalView(BaseModel):
     # 既定値を持たせない。持たせると生成される画面側の型で任意項目になり、
     # 常に載せているという実装と食い違う
     operations: list[OperationView]
+    edge_colors: EdgeColorsView
 
 
 class CoverView(BaseModel):
@@ -56,6 +72,7 @@ class CoverView(BaseModel):
     height: int
     is_spread: bool
     target_aspect_ratio: float
+    edge_colors: EdgeColorsView
     # 既定値を持たせない。載せ忘れと「元画像が無い」を、画面側が null で
     # 見分けられるようにする
     original: OriginalView | None = Field(
@@ -63,10 +80,22 @@ class CoverView(BaseModel):
     )
 
 
+def describe_edges(image: Image.Image) -> EdgeColorsView:
+    """画像の縁の色を、画面へ渡す形にする"""
+    colors = edge_colors(image)
+    return EdgeColorsView(
+        **{
+            side: "#{:02x}{:02x}{:02x}".format(*getattr(colors, side))
+            for side in ("top", "bottom", "left", "right")
+        }
+    )
+
+
 def describe_original(archive_path: Path, image: bytes) -> OriginalView | None:
     """加工後の 1 枚から、加工前の姿を引く。記録が無ければ None。
 
-    寸法は PIL が見出しだけ読んで返すので、画素まで展開しない。
+    縁の色を拾うので画素まで展開する。枠は加工前の画像に置くので、はみ出した
+    所を塗る色もこちらの縁から取る。
     """
     ref = find_original(archive_path, image)
     if ref is None:
@@ -74,6 +103,7 @@ def describe_original(archive_path: Path, image: bytes) -> OriginalView | None:
     try:
         with Image.open(io.BytesIO(read_original(archive_path, ref))) as opened:
             width, height = opened.size
+            edges = describe_edges(opened)
     except (OriginalStoreError, OSError):
         # 記録はあるが読めない。同梱が失われた古いアーカイブでも画面が
         # 開けるよう、元画像が無いものとして扱う
@@ -82,6 +112,7 @@ def describe_original(archive_path: Path, image: bytes) -> OriginalView | None:
     return OriginalView(
         width=width,
         height=height,
+        edge_colors=edges,
         operations=[
             OperationView(kind=operation.kind, params=dict(operation.params))
             for operation in ref.operations

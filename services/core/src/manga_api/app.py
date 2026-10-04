@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from manga_api import thumbnails
 from manga_api.analysis_job import AnalyzeRequest, analysis_work
 from manga_api.cover_job import CoverRequest, cover_work
-from manga_api.cover_views import CoverView, describe_original
+from manga_api.cover_views import CoverView, describe_edges, describe_original
 from manga_api.drop_scan import walk_shallow_first
 from manga_api.http_images import (
     THUMBNAIL_MEDIA_TYPE,
@@ -405,13 +405,20 @@ def create_app(
         "/api/library/entries", dependencies=guarded, response_model=LibraryEntries
     )
     def list_entries(query: str = "") -> LibraryEntries:
-        """タイトルと著者の辞書。query を与えると絞り込む"""
+        """タイトルと著者の辞書。query を与えると絞り込む。
+
+        絞り込まないときは全件を返す。画面はこの一覧の完全一致で著者を即座に
+        埋め、外れたときだけ外部検索へ回る（元の Tkinter 版も辞書全体を引いて
+        いた）。件数で切ると、辞書に入っている作品名でも毎回ネットワークへ出て
+        数秒待たされる（#125）。
+        """
         database = open_database()
         try:
             pairs = (
                 database.search_titles(query, limit=50)
                 if query
-                else database.get_recent_manga(limit=200)
+                # SQLite の LIMIT -1 は上限なし
+                else database.get_recent_manga(limit=-1)
             )
         finally:
             database.close()
@@ -463,6 +470,22 @@ def create_app(
         finally:
             database.close()
 
+    app.state.author_fetcher = None
+
+    def author_fetcher():
+        """外部検索の取得器。最初に要るときに作り、以後は使い回す。
+
+        要求ごとに作り直すと ``requests.Session`` も毎回新しくなり、DNS・TCP・
+        TLS をやり直したうえ、取得器が持つ結果のキャッシュも効かない（#125）。
+        元の Tkinter 版も 1 つを使い回していた。
+        """
+        # 取り込みが重く、ネットワークにも出るので要るときに読み込む
+        from manga_core.api_client import MangaMetadataFetcher
+
+        if app.state.author_fetcher is None:
+            app.state.author_fetcher = MangaMetadataFetcher()
+        return app.state.author_fetcher
+
     @app.post("/api/library/suggest", dependencies=guarded, response_model=Suggestion)
     def suggest(request: SuggestRequest) -> Suggestion:
         """外部サービスから著者名を補完する。
@@ -470,11 +493,8 @@ def create_app(
         ネットワークに出るため失敗しうる。見つからない場合と区別せず、
         空の結果として返して画面を止めない。
         """
-        # 取り込みが重く、ネットワークにも出るのでここで読み込む
-        from manga_core.api_client import MangaMetadataFetcher
-
         try:
-            found = MangaMetadataFetcher().get_author_candidates(request.title)
+            found = author_fetcher().get_author_candidates(request.title)
         except Exception:  # noqa: BLE001 - 補完は失敗しても処理を続ける
             logger.warning("著者の補完に失敗しました: %s", request.title)
             return Suggestion()
@@ -577,12 +597,14 @@ def create_app(
             editor.close()
         with Image.open(io.BytesIO(body)) as image:
             width, height = image.size
+            edges = describe_edges(image)
         return CoverView(
             name=target,
             width=width,
             height=height,
             is_spread=is_spread(width, height),
             target_aspect_ratio=COVER_ASPECT_RATIO,
+            edge_colors=edges,
             original=describe_original(path, body),
         )
 

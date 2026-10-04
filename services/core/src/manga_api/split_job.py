@@ -98,6 +98,12 @@ class SplitRowView(BaseModel):
     # 既定値を持たせない。載せ忘れと「まだ割っていない」を、画面側が null で
     # 見分けられるようにする
     split: SplitPositionView | None
+    displaced: bool = Field(
+        description=(
+            "割った対の 2 枚がいま隣り合っていないか。行は先に出てくる方の位置に"
+            "置かれ、確定するとそこで 2 枚が隣り合う"
+        )
+    )
 
 
 class SplitScanView(BaseModel):
@@ -121,6 +127,9 @@ class SplitResultView(BaseModel):
     split_count: int
     restored_count: int
     adjusted_count: int
+    joined_count: int = Field(
+        description="離れていた対を、分割位置は変えずに隣り合わせへ戻した数"
+    )
 
 
 def archive_token(pages: Sequence[PageEntry]) -> str:
@@ -169,9 +178,16 @@ def intent_rows(
     確かめる。欠けている行を通すと、行を 1 つ作り損ねただけでページが消える。
     並びが違う行を通すと、割る画面を開いていた間に別のタブで動かした並びが
     黙って元へ戻る。並べ替えは別の経路の仕事。
+
+    ただ 1 つ、割った対の 2 枚目だけは今の位置を離れてよい。走査は離れた対を
+    1 枚目の位置へ畳むので（#133）、行の上では 2 枚目が 1 枚目の直後に来る。
+    2 枚が本当に割った対かどうかは、コアが中身で確かめ直す。
     """
     submitted = [name for row in rows for name in row.names]
-    current = [page.name for page in pages]
+    current = _with_pairs_joined(
+        [page.name for page in pages],
+        {row.names[0]: row.names[1] for row in rows if len(row.names) == 2},
+    )
     if submitted != current:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -180,6 +196,19 @@ def intent_rows(
     return tuple(
         SplitIntent(names=tuple(row.names), split=_position(row.split)) for row in rows
     )
+
+
+def _with_pairs_joined(order: list[str], partners: dict[str, str]) -> list[str]:
+    """ページ順のうち、対の 2 枚目だけを 1 枚目の直後へ寄せた並び"""
+    seconds = set(partners.values())
+    joined: list[str] = []
+    for name in order:
+        if name in seconds:
+            continue
+        joined.append(name)
+        if name in partners:
+            joined.append(partners[name])
+    return joined
 
 
 def scan_work(path: Path) -> Callable[[ProgressReporter], dict[str, Any]]:
@@ -252,6 +281,7 @@ def _row_view(row: SplitRow) -> SplitRowView:
         source=row.source,
         is_spread=row.is_spread,
         split=None if row.split is None else SplitPositionView(x=row.split.x),
+        displaced=row.displaced,
     )
 
 
@@ -263,4 +293,5 @@ def _result_view(result: SplitResult) -> SplitResultView:
         split_count=result.split_count,
         restored_count=result.restored_count,
         adjusted_count=result.adjusted_count,
+        joined_count=result.joined_count,
     )

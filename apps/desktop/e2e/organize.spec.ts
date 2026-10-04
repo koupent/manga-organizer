@@ -957,9 +957,7 @@ test.describe("整理後の受け渡し", () => {
       "aria-pressed",
       "true",
     );
-    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
-      expected[1],
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText(expected[1]);
     // ファイル整理は隠れるだけで残る（#67）ので、その中のドロップ領域も
     // DOM には居続ける。ここで見たいのは「移った先にドロップ領域が出ない」
     // ことなので、数ではなく見えているかどうかで確かめる
@@ -994,9 +992,7 @@ test.describe("整理後の受け渡し", () => {
       "aria-pressed",
       "true",
     );
-    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
-      expected[1],
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText(expected[1]);
     // 上と同じ理由。隠れて残っているファイル整理のドロップ領域は数に入る
     await expect(page.getByTestId("dropzone")).toBeHidden();
 
@@ -1072,9 +1068,7 @@ test.describe("整理後の受け渡し", () => {
 
     // Act / Assert - 単独で最後まで使える
     await chooseArchiveViaBrowser(page, archive);
-    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
-      "単独利用.zip",
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText("単独利用.zip");
     await expect(page.getByTestId("cover-name")).toHaveText("001.jpg");
 
     // Act - ページ並べ替えを直接開く
@@ -1087,9 +1081,7 @@ test.describe("整理後の受け渡し", () => {
 
     // Act / Assert
     await chooseArchiveViaBrowser(page, archive);
-    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
-      "単独利用.zip",
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText("単独利用.zip");
     await expect(page.getByTestId("page-card")).toHaveCount(3);
   });
 });

@@ -142,6 +142,8 @@ class PlannedBook:
     author: str | None = None
     title: str | None = None
     organized_reason: str | None = None
+    # 理由の中身を利用者が読める 1 文で（#126）。``OrganizedVerdict.detail``
+    organized_detail: str | None = None
 
 
 @dataclass(frozen=True)
@@ -411,6 +413,7 @@ class _Planner:
             author=verdict.author,
             title=verdict.title,
             organized_reason=verdict.reason,
+            organized_detail=verdict.detail,
         )
 
 

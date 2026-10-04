@@ -66,25 +66,28 @@ manga_core.original_store
         "side" しか無いので、x が無いときは floor(width / 2) へ落とす
 
 
-畳み込みの規則（この 6 つが全部そろったときだけ 1 行にする）
+畳み込みの規則（この 5 つが全部そろったときだけ 1 行にする）
 ------------------------------------------------------------------
-1. 隣り合っている
-2. 両方の find_original が成功し、ref.hash が同じ
-3. ref.operations がちょうど 1 つで、kind が "split"
-4. 前が side=="right"、後ろが side=="left"
-5. 両方の x が同じ
-6. どちらもまだ他の行に取られていない
+1. 両方の find_original が成功し、ref.hash が同じ
+2. ref.operations がちょうど 1 つで、kind が "split"
+3. side=="right" と side=="left" が 1 枚ずつ
+4. 両方の x が同じ
+5. どちらもまだ他の行に取られていない
 
 1 つでも欠けたら、それぞれ普通の 1 行として扱う。緩めると、たまたま同じ
 元から出た無関係な 2 枚が 1 行にまとめられ、片方を割り直したつもりで
 もう片方が消える。
 
+並び（隣り合っているか、右・左の順か）は問わない（#133）。ページ並べ替えで
+左右を入れ替えた対や離れた位置へ動かした対も、先に出てくる方の位置へ畳む。
+畳まないと、ZIP に元画像が残っているのに戻す手立てが無くなる。割り直す
+ときはいまの左右の並びを保ち、離れていた対はその位置で隣り合わせに戻る。
+
 例外は、左右が互いに同じバイト列になった対（一色の見開きを中央で割った
 場合など）。記録の鍵は中身のハッシュなので、同じバイト列の 2 枚には記録を
-1 件しか持てず、4 と 5 は確かめようがない。隣り合う 2 枚が互いに同じ
-バイト列で、同じ元から出た同じ 1 件の split の記録に行き着くときに限り、
-その記録の x で畳む。ここを塞いだままにすると、真っ白な見開きだけが
-二度と割り位置を直せない。
+1 件しか持てず、3 と 4 は確かめようがない。2 枚が互いに同じバイト列で、
+同じ元から出た同じ 1 件の split の記録に行き着くときに限り、その記録の x で
+畳む。ここを塞いだままにすると、真っ白な見開きだけが二度と割り位置を直せない。
 """
 
 import io
@@ -367,53 +370,124 @@ class FoldsBackIntoOneRowTest(SplitFixture):
                 f"{index} 行目（割っていないページ）が畳まれています",
             )
 
-    def test_halves_that_were_separated_do_not_fold(self):
+    def move_pages(self, positions: list[int]) -> list[str]:
+        """ページ並べ替えと同じ経路で並びを変え、変えた後のページ名を返す"""
+        editor = ZipPageEditor(self.archive_path)
+        names = [page.name for page in editor.pages]
+        editor.apply_order([names[index] for index in positions])
+        editor.close()
+        return page_names(self.archive_path)
+
+    def test_halves_that_were_separated_fold_at_the_first_position(self):
+        """並べ替えで離れた対も 1 行へ畳み、元へ戻せる（#133）"""
         # Arrange
         self.build_four_pages()
         self.split_row(self.archive_path, 1, SPLIT_X)
         # 畳む材料が確かにあることを先に確かめる。記録が空の本で
-        # 「畳まれていない」と言っても、何も検証していない
+        # 「畳まれた」と言っても、何も検証していない
         self.assertEqual(2, len(derived_of(self.archive_path)))
 
         # Arrange - 後に読む方（左半分）を末尾へ動かす
-        editor = ZipPageEditor(self.archive_path)
-        names = [page.name for page in editor.pages]
-        editor.apply_order([names[0], names[1], names[3], names[4], names[2]])
-        editor.close()
+        names = self.move_pages([0, 1, 3, 4, 2])
         # 紐づけは中身のハッシュなので、連番の振り直しでは切れない
         self.assertEqual(2, len(derived_of(self.archive_path)))
 
         # Act
         rows = list(self.splitter.scan_rows(self.archive_path))
 
-        # Assert - 離れた 2 枚は対ではない。畳むと、間のページを挟んだまま
-        # 1 行として扱われ、割り直しで無関係なページが消える
-        self.assertEqual(5, len(rows))
-        for index, row in enumerate(rows):
-            self.assertEqual(1, len(row.names), f"{index} 行目が畳まれています")
+        # Assert - 先に出てくる右半分の位置に 1 行で畳まれ、離れていると分かる
+        self.assertEqual(4, len(rows))
+        self.assertEqual((names[1], names[4]), rows[1].names)
+        self.assertIs(True, rows[1].displaced)
+        self.assertEqual(SPLIT_X, rows[1].split.x)
+        for index in (0, 2, 3):
+            self.assertEqual(1, len(rows[index].names), f"{index} 行目が畳まれた")
 
-    def test_halves_in_the_wrong_order_do_not_fold(self):
+        # Act - 割る前へ戻す
+        self.splitter.apply_rows(
+            self.archive_path,
+            [
+                replace(row, split=None) if index == 1 else row
+                for index, row in enumerate(rows)
+            ],
+        )
+
+        # Assert - 右半分が居た位置に見開きが戻り、ほかのページは欠けていない
+        restored = page_names(self.archive_path)
+        self.assertEqual(4, len(restored))
+        self.assertEqual(
+            (SPREAD_WIDTH, SPREAD_HEIGHT),
+            size_of(entry_data(self.archive_path, restored[1])),
+        )
+        self.assertEqual(
+            list(TALL_COLOURS),
+            [
+                colour_at(entry_data(self.archive_path, restored[index]), 10, 10)
+                for index in (0, 2, 3)
+            ],
+        )
+
+    def test_confirming_a_separated_pair_joins_it_and_says_so(self):
+        """離れた対をそのまま確定すると、隣り合わせに戻ったと数える（#133）"""
         # Arrange
         self.build_four_pages()
         self.split_row(self.archive_path, 1, SPLIT_X)
-        self.assertEqual(2, len(derived_of(self.archive_path)))
+        self.move_pages([0, 1, 3, 4, 2])
+        rows = list(self.splitter.scan_rows(self.archive_path))
+
+        # Act - 走査の結果をそのまま送り返す
+        result = self.splitter.apply_rows(self.archive_path, rows)
+
+        # Assert - 右半分・左半分が隣り合い、位置を直したとは数えない
+        names = page_names(self.archive_path)
+        self.assertEqual(
+            [(SPREAD_WIDTH - SPLIT_X, SPREAD_HEIGHT), (SPLIT_X, SPREAD_HEIGHT)],
+            [size_of(entry_data(self.archive_path, name)) for name in names[1:3]],
+        )
+        self.assertEqual(
+            (1, 0, True), (result.joined_count, result.adjusted_count, result.changed)
+        )
+        # Assert - もう離れていない
+        again = list(self.splitter.scan_rows(self.archive_path))
+        self.assertIs(False, again[1].displaced)
+
+    def test_halves_in_the_wrong_order_fold_and_keep_their_order(self):
+        """左右を入れ替えた対も畳み、割り直しても入れ替えた並びを保つ（#133）"""
+        # Arrange
+        self.build_four_pages()
+        self.split_row(self.archive_path, 1, SPLIT_X)
 
         # Arrange - 左半分と右半分を入れ替える。隣り合ってはいるが、
         # 右綴じの並び（右 -> 左）ではない
-        editor = ZipPageEditor(self.archive_path)
-        names = [page.name for page in editor.pages]
-        editor.apply_order([names[0], names[2], names[1], names[3], names[4]])
-        editor.close()
+        names = self.move_pages([0, 2, 1, 3, 4])
         self.assertEqual(2, len(derived_of(self.archive_path)))
 
         # Act
         rows = list(self.splitter.scan_rows(self.archive_path))
 
-        # Assert - 順序が逆なら、利用者が意図して入れ替えたということ。
-        # 畳むと、その入れ替えが次の書き込みで黙って戻る
-        self.assertEqual(5, len(rows))
-        for index, row in enumerate(rows):
-            self.assertEqual(1, len(row.names), f"{index} 行目が畳まれています")
+        # Assert - 1 行に畳まれ、並びは入れ替えたまま。離れてはいない
+        self.assertEqual(4, len(rows))
+        self.assertEqual((names[1], names[2]), rows[1].names)
+        self.assertIs(False, rows[1].displaced)
+
+        # Act - 位置を動かして割り直す
+        self.splitter.apply_rows(
+            self.archive_path,
+            [
+                replace(row, split=self.splitter.SplitPosition(x=1000))
+                if index == 1
+                else row
+                for index, row in enumerate(rows)
+            ],
+        )
+
+        # Assert - 左半分（幅 1000）が先、右半分（幅 1400）が後のまま。
+        # 右・左へ黙って戻すと、利用者が意図して入れ替えた並びが消える
+        names = page_names(self.archive_path)
+        self.assertEqual(
+            [(1000, SPREAD_HEIGHT), (1400, SPREAD_HEIGHT)],
+            [size_of(entry_data(self.archive_path, name)) for name in names[1:3]],
+        )
 
 
 class AdjustsWithoutAccumulatingTest(SplitFixture):
@@ -808,68 +882,6 @@ class RevalidatesThePairBeforeRewritingTest(SplitFixture):
         self.assertEqual(3, len(restored))
         self.assertEqual(
             (SPREAD_WIDTH, SPREAD_HEIGHT), size_of(entry_data(other, restored[0]))
-        )
-
-    def test_refuses_a_pair_whose_halves_are_no_longer_adjacent(self):
-        # Arrange - まず、隣り合っている本物の対なら位置を動かせることを見る
-        names = self.build_split_spread()
-        rows = list(self.splitter.scan_rows(self.archive_path))
-        self.splitter.apply_rows(
-            self.archive_path,
-            [
-                replace(row, split=self.splitter.SplitPosition(x=1000))
-                if index == 1
-                else row
-                for index, row in enumerate(rows)
-            ],
-        )
-        names = page_names(self.archive_path)
-        self.assertEqual(
-            [(1400, SPREAD_HEIGHT), (1000, SPREAD_HEIGHT)],
-            [size_of(entry_data(self.archive_path, name)) for name in names[1:3]],
-        )
-
-        # Arrange - 利用者が、後に読む方（左半分）を末尾へ動かす
-        editor = ZipPageEditor(self.archive_path)
-        editor.apply_order([names[0], names[1], names[3], names[4], names[2]])
-        editor.close()
-        names = page_names(self.archive_path)
-
-        # Arrange - 対照。動かした 2 枚は、いまも同じ見開きから出た右と左で、
-        # 記録もそろっている。断る理由が「別の元」でも「記録が無い」でもない
-        self.assertEqual(
-            [(1400, SPREAD_HEIGHT), (1000, SPREAD_HEIGHT)],
-            [
-                size_of(entry_data(self.archive_path, name))
-                for name in (names[1], names[4])
-            ],
-        )
-        self.assertEqual(2, len(derived_of(self.archive_path)))
-        # 対照 - 走査は離れた 2 枚を畳まない。この行は動かす前の画面から来た
-        self.assertEqual(
-            [1, 1, 1, 1, 1],
-            [len(row.names) for row in self.splitter.scan_rows(self.archive_path)],
-        )
-        before = self.archive_path.read_bytes()
-        rows = [
-            page_row(self.splitter, self.archive_path, names[0]),
-            pair_row(
-                self.splitter,
-                (names[1], names[4]),
-                SPREAD_WIDTH,
-                SPREAD_HEIGHT,
-                self.splitter.SplitPosition(x=1200),
-            ),
-            page_row(self.splitter, self.archive_path, names[2]),
-            page_row(self.splitter, self.archive_path, names[3]),
-        ]
-
-        # Act / Assert - 断る。通すと、利用者が意図して動かした並びが
-        # 割り直しの巻き添えで黙って元へ戻る
-        with self.assertRaises(self.splitter.PageSplitError):
-            self.splitter.apply_rows(self.archive_path, rows)
-        self.assertEqual(
-            before, self.archive_path.read_bytes(), "断ったのに本が書き換わっている"
         )
 
 

@@ -777,6 +777,18 @@ class CoverEditTest(ApiTestBase):
         self.assertTrue(payload["is_spread"])
         self.assertEqual(1600, payload["width"])
 
+    def test_reports_the_colour_of_each_edge(self):
+        # Act - 左半分が赤、右半分が青の見開き
+        payload = self.client.get(
+            "/api/cover", params=self.auth({"archive": str(self.spread)})
+        ).json()
+
+        # Assert - 枠を外へ広げた所を塗る色。画面は同じ色で見本を描く（#130）
+        edges = payload["edge_colors"]
+        self.assertEqual({"top", "bottom", "left", "right"}, set(edges))
+        self.assertRegex(edges["left"], r"^#f[0-9a-f]0[0-9a-f]0[0-9a-f]$")
+        self.assertRegex(edges["right"], r"^#0[0-9a-f]0[0-9a-f]f[0-9a-f]$")
+
     def test_splits_the_cover_through_a_job(self):
         # Act
         submitted = self.client.post(
@@ -1011,6 +1023,28 @@ class LibraryTest(ApiTestBase):
     def test_requires_a_token(self):
         self.assertEqual(401, self.client.get("/api/library/entries").status_code)
 
+    def test_lists_every_entry_without_a_query(self):
+        """絞り込まない一覧は全件を返す（#125）。
+
+        画面はこの一覧の完全一致で著者を埋める。件数で切ると、辞書に入って
+        いる作品名でも外部検索へ回り、数秒待たされる。
+        """
+        # Arrange - 以前の上限（200 件）を越える辞書
+        from manga_core.manga_database import MangaDatabase
+
+        database = MangaDatabase(self.app.state.database_path)
+        try:
+            for index in range(250):
+                database.save_manga_info(f"作品{index:03d}", f"著者{index:03d}")
+        finally:
+            database.close()
+
+        # Act
+        listed = self.client.get("/api/library/entries", params=self.auth()).json()
+
+        # Assert
+        self.assertEqual(250, len(listed["entries"]))
+
 
 class AuthorSuggestTest(ApiTestBase):
     """作品名から著者を引く経路。ネットワークには出さず、応答の形だけ再現する"""
@@ -1089,6 +1123,35 @@ class AuthorSuggestTest(ApiTestBase):
         # Assert
         self.assertIsNone(payload["author"])
         self.assertEqual([], payload["candidates"])
+
+    def test_reuses_the_connection_and_cache_across_requests(self):
+        """同じ作品名を続けて引いても、外へは 1 回しか出ない（#125）。
+
+        要求ごとに取得器を作り直すと、接続もキャッシュも捨てられ、毎回
+        DNS・TCP・TLS からやり直すことになる。
+        """
+        # Arrange
+        found = [
+            {
+                "title": "One Piece",
+                "title_japanese": "ワンピース",
+                "authors": ["尾田栄一郎"],
+                "source": "AniList",
+                "similarity": 1.0,
+            }
+        ]
+
+        # Act
+        with mock.patch.object(
+            AniListClient, "search_manga", return_value=found
+        ) as searched:
+            first = self.suggest("ワンピース").json()
+            second = self.suggest("ワンピース").json()
+
+        # Assert
+        self.assertEqual("尾田栄一郎", first["author"])
+        self.assertEqual("尾田栄一郎", second["author"])
+        searched.assert_called_once()
 
     def test_rejects_a_title_that_has_no_content(self):
         # Arrange - 空の作品名は検索にならない

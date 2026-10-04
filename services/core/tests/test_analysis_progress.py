@@ -74,6 +74,7 @@ BOOK_KEYS = {
     "author",
     "title",
     "organized_reason",
+    "organized_detail",
 }
 
 # 1 つの ZIP に 2 冊分が入っている状態。アーカイブの件数（2）と冊数（3）を
@@ -199,6 +200,7 @@ class AnalysisJobTestBase(unittest.TestCase):
                 "author": book.author,
                 "title": book.title,
                 "organized_reason": book.organized_reason,
+                "organized_detail": book.organized_detail,
             }
             for book in planned
         ]

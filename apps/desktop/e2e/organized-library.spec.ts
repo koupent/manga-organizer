@@ -651,6 +651,13 @@ test.describe("整理済みの本の見せ方", () => {
       ).toHaveCount(1);
     }
 
+    // Assert - 種類だけでなく、どのページが何と違うのかまで読める（#126）。
+    // 「連番が違います」とだけ言われても、利用者には違いを見つけようがない
+    await expect(
+      bookRow(page, library.pagesMismatch).getByTestId("plan-row-reason"),
+      "連番の違いの中身が説明に出ていない",
+    ).toHaveAttribute("title", /3 枚目が 004\.jpg（連番なら 003\.jpg）/);
+
     // Assert - 対照 1。まだ整理していない蔵書の普通の姿（名前が違う）には
     // 印を出さない。整理済みでない行すべてに出す実装では、一覧が印で埋まり、
     // 直せば整理済みになる 3 つが見分けられなくなる
@@ -1523,7 +1530,7 @@ test.describe("整理済みの行の仕上げ", () => {
       "true",
     );
     await expect(
-      page.getByTestId("thumbnail-archive-name"),
+      page.getByTestId("archive-name"),
       "移った先が別のファイルを読んでいる",
     ).toHaveText(source.split("/").pop()!);
     // ファイル整理は隠れるだけで残る（#67）ので、その中のドロップ領域も
@@ -1555,7 +1562,7 @@ test.describe("整理済みの行の仕上げ", () => {
       "true",
     );
     await expect(
-      page.getByTestId("reorder-archive-name"),
+      page.getByTestId("archive-name"),
       "移った先が別のファイルを読んでいる",
     ).toHaveText(another.split("/").pop()!);
     // 名前だけなら見出しを書き換えるだけでも通る。中身まで読めていることを

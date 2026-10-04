@@ -1,4 +1,6 @@
 import logging
+import os
+import tempfile
 import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -6,6 +8,8 @@ from pathlib import Path
 from types import MappingProxyType
 
 from manga_core.archive_handler import ArchiveHandler
+from manga_core.file_times import capture_file_times, restore_file_times
+from manga_core.organized_detector import judge_organized
 from manga_core.original_store import sidecar_members
 from manga_core.volume_detector import SeriesName, VolumeDetector
 
@@ -105,14 +109,19 @@ class FileOrganizer:
         manga_dir: Path,
         volume: int | None,
         series: SeriesName,
+        sole: bool,
     ) -> ProcessResult | None:
-        """1 巻ぶんを書き出す。行き先が元のアーカイブ自身なら ``None`` を返す"""
+        """1 巻ぶんを書き出す。行き先が元のアーカイブ自身で、作り直す必要も
+        無ければ ``None`` を返す。
+
+        ``sole`` は、元のアーカイブから出る本がこの 1 冊だけかどうか。
+        """
         # Generate output filename
         output_name = series.volume_name(volume)
 
-        # 行き先が元のアーカイブ自身なら、何もしない（#73 段階 4a）。
+        # 行き先が元のアーカイブ自身なら、``_1`` の写しは作らない（#73 段階 4a）。
         # 既定の出力先は「投入した 1 件目の親フォルダ」なので、``蔵書/[著者] 作品``
-        # を放り込むと出力先は ``蔵書`` になり、整理済みの本の行き先はその本自身に
+        # を放り込むと出力先は ``蔵書`` になり、蔵書の本の行き先はその本自身に
         # なる。``get_unique_filename`` は既にある名前を返さないので、書きに行くと
         # ``…第003巻_1.zip`` が出来て元と写しが並び、``keep_originals=False`` なら
         # ``_handle_original_deletion`` が元を消す。利用者から見れば、蔵書の本が
@@ -120,7 +129,12 @@ class FileOrganizer:
         # 行き先が必ず自分と違う名前になり、この一致が永久に起きないため
         destination = manga_dir / f"{output_name}{OUTPUT_SUFFIX}"
         if destination.resolve() == archive_path.resolve():
-            return None
+            if not sole or self._already_organized(archive_path):
+                return None
+            # 名前も置き場所も出来上がりなのに、中身（ページ名・同梱物）だけが
+            # 違う本。飛ばすと、利用者が選んで整理したのに何も変わらず、印も
+            # 残り続ける（#127）。同じ場所で作り直す
+            return self._rebuild_in_place(image_dir, archive_path, volume)
 
         # Get unique output path in the manga subdirectory
         output_path = self.volume_detector.get_unique_filename(
@@ -145,6 +159,63 @@ class FileOrganizer:
                 success=False,
                 error_message=error,
             )
+
+    def _already_organized(self, archive_path: Path) -> bool:
+        """自分自身の上に来た本が、既に整理の出力そのものかどうか。
+
+        判定は解析と同じ ``judge_organized``。読めなければ整理済みと見て
+        触らない側へ倒す。作り直しは元を置き換える操作なので、分からないまま
+        進めない。
+        """
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                names = archive.namelist()
+        except (OSError, zipfile.BadZipFile):
+            return True
+        return judge_organized(archive_path, "", 1, names).organized
+
+    def _rebuild_in_place(
+        self, image_dir: Path, archive_path: Path, volume: int | None
+    ) -> ProcessResult:
+        """元のアーカイブを、整理の出力で置き換える（#127）。
+
+        同じフォルダの一時ファイルへ書き、読み直して壊れていないと確かめて
+        から置き換える。元は展開済みなので、置き換えた後に読む物は無い。
+        途中で失敗したら元には触れず、一時ファイルだけを消す。
+
+        ファイルの時刻は元のまま残す。蔵書の中の本を書き直す操作なので、
+        ページ並べ替えやサムネイル作成と同じく、日付で並べた蔵書の並びを崩さない。
+        """
+        handle, raw = tempfile.mkstemp(
+            dir=archive_path.parent,
+            prefix=f".{archive_path.name}.organize-",
+            suffix=".tmp",
+        )
+        os.close(handle)
+        temp_path = Path(raw)
+        try:
+            error = self._build_volume_archive(image_dir, temp_path, volume)
+            if error is None:
+                error = _damaged(temp_path)
+            if error is not None:
+                return ProcessResult(
+                    original_path=archive_path,
+                    output_path=None,
+                    success=False,
+                    error_message=error,
+                )
+            times = capture_file_times(archive_path)
+            os.replace(temp_path, archive_path)
+            restore_file_times(archive_path, times)
+        finally:
+            temp_path.unlink(missing_ok=True)
+        self._log(f"Rebuilt in place: {archive_path.name}")
+        return ProcessResult(
+            original_path=archive_path,
+            output_path=archive_path,
+            success=True,
+            volume_number=volume,
+        )
 
     def _build_volume_archive(
         self, image_dir: Path, output_path: Path, volume: int | None
@@ -255,9 +326,16 @@ class FileOrganizer:
         """Delete original archive if requested and all volumes were successful.
 
         外した本があるときは消さない。元を消すと、外した本を後から作り直す
-        手立てが無くなる。
+        手立てが無くなる。同じ場所で作り直したときも消さない。元の場所に
+        あるのは、もう出来上がった本そのもの（#127）。
         """
-        if not skipped and not self.keep_originals and all(r.success for r in results):
+        rebuilt = any(r.output_path == archive_path for r in results)
+        if (
+            not skipped
+            and not rebuilt
+            and not self.keep_originals
+            and all(r.success for r in results)
+        ):
             try:
                 archive_path.unlink()
                 self._log(f"Deleted original: {archive_path}")
@@ -296,7 +374,7 @@ class FileOrganizer:
                 volumes,
             )
             result = self._process_volume(
-                image_dir, image_dir, manga_dir, volume, series
+                image_dir, image_dir, manga_dir, volume, series, sole=True
             )
             # 書き出す先は ZIP なので、フォルダ自身と同じになることはない
             return [result] if result is not None else []
@@ -392,11 +470,19 @@ class FileOrganizer:
 
                 # Process the volume
                 result = self._process_volume(
-                    image_dir, archive_path, manga_dir, volume, series
+                    image_dir,
+                    archive_path,
+                    manga_dir,
+                    volume,
+                    series,
+                    # 複数の本を抱えたアーカイブを 1 冊ぶんで置き換えると、
+                    # 残りの本ごと元が消える。自分自身の上で作り直すのは
+                    # 1 冊だけのときに限る
+                    sole=len(image_dirs) == 1,
                 )
                 if result is None:
-                    # 行き先が元のアーカイブ自身。外した本と同じ扱いにする。
-                    # 元を消さず、「1 冊も処理しなかった」失敗にもしない
+                    # 行き先が元のアーカイブ自身で、作り直すまでもない。外した本と
+                    # 同じ扱いにする。元を消さず、「1 冊も処理しなかった」失敗にもしない
                     skipped = True
                     self._log(f"  Skipped (already at destination): volume {vol_idx}")
                     continue
@@ -464,3 +550,18 @@ class FileOrganizer:
             "failed": failed,
             "results": self.results,
         }
+
+
+def _damaged(path: Path) -> str | None:
+    """書き上げた ZIP を読み直し、壊れていればその理由を返す。
+
+    置き換えた後では元に戻せない。CRC まで突き合わせてから置き換える。
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            broken = archive.testzip()
+    except (OSError, zipfile.BadZipFile) as error:
+        return f"作り直した本を読み直せませんでした: {error}"
+    if broken is not None:
+        return f"作り直した本が壊れています: {broken}"
+    return None

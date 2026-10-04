@@ -336,9 +336,10 @@ test.describe("サムネイル作成: 切り抜きを広げる方向に戻せる
       "大きくはなったが、捨てた画素は戻っていない（引き伸ばしただけ）",
     ).toBeTruthy();
 
-    // Assert - 元画像に収まる範囲は超えない
-    expect(widened[0]).toBeLessThanOrEqual(800);
-    expect(widened[1]).toBeLessThanOrEqual(1200);
+    // Assert - 画像の全体がちょうど収まる 2:3（1200×1800）は超えない。
+    // それより先は余白が増えるだけなので、枠もそこで止まる（#130）
+    expect(widened[0]).toBeLessThanOrEqual(1200);
+    expect(widened[1]).toBeLessThanOrEqual(1800);
 
     // Assert - 何度加工しても元画像は最初の 1 枚のまま。加工のたびに
     // 増えるなら、加工後の画像を元画像として貯め込んでいる

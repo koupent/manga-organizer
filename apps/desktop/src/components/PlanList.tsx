@@ -76,10 +76,17 @@ const REASON_BADGES: Record<string, string> = {
   "extra-entries": "余計なファイルがあります",
 };
 
-/** 理由の説明。知らない理由が来ても黙らず、記号を添えて出す */
-function reasonTip(reason: string): string {
+/**
+ * 理由の説明。知らない理由が来ても黙らず、記号を添えて出す。
+ *
+ * 中身（どのページが何と違うか）があれば 2 行目に添える。種類だけでは
+ * 「連番が違う」と言われても、利用者には違いを見つけようがない（#126）。
+ */
+function reasonTip(row: PlanRow): string {
+  const reason = row.organizedReason;
   if (reason === "") return "";
-  return REASON_TIPS[reason] ?? `整理済みではありません: ${reason}`;
+  const tip = REASON_TIPS[reason] ?? `整理済みではありません: ${reason}`;
+  return row.organizedDetail ? `${tip}\n${row.organizedDetail}` : tip;
 }
 
 /** 1 段ぶんの字下げ。3 階層でも左端の情報量を潰さない幅 */
@@ -249,7 +256,7 @@ function PlanListRow({
       data-organized-reason={row.organizedReason}
       // 印を出さない理由でも、行に乗せれば何が違うのかを読める。
       // 整理済みの行には説明を付けない（印そのものが説明を持っている）
-      title={reasonTip(row.organizedReason) || undefined}
+      title={reasonTip(row) || undefined}
       tabIndex={0}
       style={{ paddingLeft: 8 + row.level * INDENT_PX }}
       className={cn(
@@ -382,9 +389,10 @@ function RowBadges({
           tone="neutral"
           data-testid="plan-row-reason"
           data-reason={row.organizedReason}
+          data-detail={row.organizedDetail}
           data-dim
           className={dim}
-          title={reasonTip(row.organizedReason)}
+          title={reasonTip(row)}
         >
           <Info className="size-3" />
           {reasonBadge}

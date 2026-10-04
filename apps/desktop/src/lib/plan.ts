@@ -27,6 +27,11 @@ export type PlannedBook = {
   organized: boolean;
   /** 整理済みでない理由 1 つ。整理済みなら null */
   organized_reason: string | null;
+  /**
+   * 理由の中身を利用者が読める 1 文で（#126）。どのページ・ファイル・フォルダが
+   * 何と違うか。古いサイドカーや台本の応答には無いことがある
+   */
+  organized_detail?: string | null;
   /** 本の名前から読んだ作品名。整理済みでなければ null */
   title: string | null;
   /** 本の名前から読んだ著者名。整理済みでなければ null */
@@ -100,6 +105,8 @@ export type PlanRow = {
    * 「整理済みでない」のか「判定が届いていない」のかを区別できない。
    */
   organizedReason: string;
+  /** 理由の中身。無ければ空文字（#126） */
+  organizedDetail: string;
   /**
    * その本自身の作品名。持たない本と入れ物の行では空文字（#73 段階 4a）。
    *
@@ -187,6 +194,7 @@ function containerRow(
     // 判定は本 1 冊ごとに下すもので、入れ物そのものは対象にならない
     organized: false,
     organizedReason: "",
+    organizedDetail: "",
     title: "",
     author: "",
     ancestors,
@@ -217,6 +225,7 @@ function bookRow(
     // サイドカーは理由なしを null で返す。そのまま行の属性へ渡すと
     // 画面に "null" の 4 文字が出るので、ここで空文字に均す
     organizedReason: book.organized_reason ?? "",
+    organizedDetail: book.organized_detail ?? "",
     // 名前も同じく空文字へ均す。判定（carriesOwnName）が空文字だけを
     // 「自分の名前を持たない」と読めるようにするため
     title: book.title ?? "",

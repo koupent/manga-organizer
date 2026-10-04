@@ -562,6 +562,64 @@ class SelfDestinationTest(NamingTestBase):
         self.assertFalse(elsewhere.exists(), f"頼まれたのに元が残っている: {elsewhere}")
 
 
+class SelfDestinationRebuildTest(NamingTestBase):
+    """名前と置き場所は出来上がりなのに中身が違う本を、同じ場所で作り直すこと（#127）。
+
+    ``蔵書/[著者] 作品`` を入れると、その中の本の行き先は本自身になる。整理済みの
+    本はそこで飛ばしてよいが、ページ名や同梱物が違う本まで飛ばすと、利用者が
+    選んで整理したのに何も変わらず、「整理済みではありません」が残り続ける。
+    """
+
+    def prepare(self) -> tuple[Path, Path, list[bytes]]:
+        """整理の形の名前と置き場所のまま、番号が 1 つ抜けた本"""
+        library = self.work_dir / "蔵書"
+        here = self.build_organized(library)
+        with zipfile.ZipFile(here) as archive:
+            contents = [archive.read(name) for name in sorted(archive.namelist())]
+        with zipfile.ZipFile(here, "w") as archive:
+            for name, data in zip(
+                ["001.jpg", "002.jpg", "004.jpg"], contents, strict=True
+            ):
+                archive.writestr(name, data)
+        return library, here, contents
+
+    def test_a_book_at_its_destination_with_wrong_pages_is_rebuilt_there(self):
+        # Arrange
+        library, here, contents = self.prepare()
+        before = here.stat()
+        books = self.analyze([here], author=AUTHOR, title=TITLE)
+        self.assertEqual("pages-mismatch", self.one(books, here)["organized_reason"])
+
+        # Act - 元を残さない設定。作り直した本を「元」として消すと何も残らない
+        job = self.organize(
+            [here],
+            library,
+            self.selection(books),
+            author=AUTHOR,
+            title=TITLE,
+            keep_originals=False,
+        )
+
+        # Assert - 走り切り、作った本としてその本自身が報告される
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual([], job["result"]["failed"], job["result"])
+        self.assertEqual([str(here)], job["result"]["produced"], job["result"])
+
+        # Assert - 同じ場所に、連番の本として残る。写しは出来ない
+        self.assertTrue(here.is_file(), f"作り直した本が消えた: {here}")
+        self.assert_no_duplicate_suffix(library)
+        with zipfile.ZipFile(here) as archive:
+            self.assertEqual(["001.jpg", "002.jpg", "003.jpg"], archive.namelist())
+            self.assertEqual(contents, [archive.read(n) for n in archive.namelist()])
+
+        # Assert - 時刻は元のまま。日付で並べた蔵書の並びを崩さない
+        self.assertEqual(before.st_mtime_ns, here.stat().st_mtime_ns)
+
+        # Assert - 解析し直すと整理済み。印が残り続けることはもう無い
+        again = self.analyze([here], author=AUTHOR, title=TITLE)
+        self.assertIs(True, self.one(again, here)["organized"])
+
+
 class NamelessBookTest(NamingTestBase):
     """名前を 1 つも持たない本は、黙って ``[]`` の本にせず失敗させること"""
 

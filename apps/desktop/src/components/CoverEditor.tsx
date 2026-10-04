@@ -1,6 +1,5 @@
 import {
   Check,
-  FolderOpen,
   Image as ImageIcon,
   Images,
   RotateCcw,
@@ -16,6 +15,7 @@ import { CoverPreview } from "./CoverPreview";
 import {
   CropFrame,
   TARGET_RATIO,
+  canvasOf,
   defaultCrop,
   nextTurn,
   oppositeTurn,
@@ -23,14 +23,18 @@ import {
   rotateCrop,
   rotatedSize,
   toCropBox,
+  turnedEdges,
   type CropRect,
+  type EdgeColors,
   type ImageSize,
   type Operation,
   type QuarterTurn,
 } from "./CropFrame";
 import { Empty } from "./ui/empty";
+import { EditorLayout } from "./EditorLayout";
 import { SectionTitle } from "./ui/section-title";
 import { fitInside, useBoxSize } from "../lib/stage";
+import { firstImageGeneration } from "../lib/utils";
 import type { SidecarClient } from "../api/client";
 
 /** 絵を囲う枠線の太さ。この画面で唯一、絵の縁を背景から切り分けるもの */
@@ -39,10 +43,11 @@ const FRAME_BORDER = 1;
 /** viewer での見え方に使う幅。2:3 なので高さは 300px になる */
 const PREVIEW_WIDTH = 200;
 
+/** 枠を置く相手。寸法と、外へ広げた所を塗る縁の色 */
+type CoverSource = ImageSize & { edge_colors: EdgeColors };
+
 /** いま保存されている 1 枚の、加工前の姿 */
-type CoverOriginal = {
-  width: number;
-  height: number;
+type CoverOriginal = CoverSource & {
   operations: Operation[];
 };
 
@@ -52,6 +57,7 @@ type Cover = {
   height: number;
   is_spread: boolean;
   target_aspect_ratio: number;
+  edge_colors: EdgeColors;
   /** 加工前の画像。一度も加工していなければ null */
   original: CoverOriginal | null;
 };
@@ -64,7 +70,7 @@ type Cover = {
  * 動かせない。利用者から見れば同じ 1 枚で、「元画像」と「加工後」の区別は
  * 画面に出さない。
  */
-function sourceOf(cover: Cover): ImageSize {
+function sourceOf(cover: Cover): CoverSource {
   return cover.original ?? cover;
 }
 
@@ -88,8 +94,6 @@ function initialEdit(cover: Cover): {
 type CoverEditorProps = {
   client: SidecarClient;
   archive: string;
-  archiveName?: string;
-  onChangeArchive?: () => void;
   /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
   onArchiveChanged?: () => void;
 };
@@ -107,8 +111,6 @@ type CoverEditorProps = {
 export function CoverEditor({
   client,
   archive,
-  archiveName,
-  onChangeArchive,
   onArchiveChanged,
 }: CoverEditorProps) {
   const [pages, setPages] = useState<string[]>([]);
@@ -126,7 +128,7 @@ export function CoverEditor({
   // 行かないので、確定のたびにここを進めて読み直させる。
   // これは「同じ画面で加工した」ときの合図でしかない。開き直したときに古い絵を
   // 出さないことは、サイドカー側の ETag による再確認が受け持つ
-  const [reloadKey, setReloadKey] = useState(0);
+  const [reloadKey, setReloadKey] = useState(firstImageGeneration);
 
   // 絵を置ける面の実寸。候補一覧の開け閉てや窓の大きさで変わる
   const [stageRef, stage] = useBoxSize<HTMLDivElement>();
@@ -256,89 +258,91 @@ export function CoverEditor({
       : client.imageUrl(archive, cover.name)
   }&v=${reloadKey}`;
 
-  // 絵は枠線の内側に入る。枠線のぶんを先に引いてから収める大きさを決める
-  const display = fitInside(shown, {
+  // 枠を置ける範囲。見開きでなければ画像より広く、外へ広げた枠もここに描く
+  const canvas = canvasOf(shown);
+  // 外へ広げた所を塗る色。回した後の向きの辺へ移しておく
+  const edges = turnedEdges(source.edge_colors, angle);
+  // 範囲は枠線の内側に入る。枠線のぶんを先に引いてから収める大きさを決める
+  const display = fitInside(canvas, {
     width: stage.width - FRAME_BORDER * 2,
     height: stage.height - FRAME_BORDER * 2,
   });
+  // 範囲の中で絵が占める所。絵は範囲の真ん中に置かれる
+  const scale = canvas.width > 0 ? display.width / canvas.width : 0;
+  const picture = {
+    left: -canvas.x * scale,
+    top: -canvas.y * scale,
+    width: shown.width * scale,
+    height: shown.height * scale,
+  };
   // 回す前の描画寸法。90 度と 270 度では縦横が入れ替わる
-  const upright = rotatedSize(display, oppositeTurn(angle));
+  const upright = rotatedSize(picture, oppositeTurn(angle));
+  // 画像の外まで枠を広げられるか。説明の文を変える
+  const paddable = canvas.width > shown.width || canvas.height > shown.height;
 
   return (
     /*
       ワークベンチ型。判断の材料である絵に高さを全部渡し、操作は幅の決まった
       右の列へ寄せる。絵の上下に操作を積むと、積んだぶんだけ絵が縮む。
     */
-    <section className="flex min-h-0 flex-1 flex-col gap-2">
-      {/* いま何を見ているか。1 行に収め、絵の取り分を削らない */}
-      <div className="flex shrink-0 items-center gap-2">
-        <h2
-          className="min-w-0 truncate text-[13px] font-semibold"
-          data-testid="thumbnail-archive-name"
-        >
-          {archiveName ?? "表紙"}
-        </h2>
-        {onChangeArchive ? (
-          <Button
-            variant="ghost"
-            data-testid="change-archive"
-            onClick={onChangeArchive}
-          >
-            <FolderOpen />
-            別のファイルを選ぶ
-          </Button>
-        ) : null}
-        {/* この行に並ぶ名前・寸法・枠の判定は、いま保存されている 1 枚の値。
+    <EditorLayout
+      toolbar={
+        <>
+          {/* この行に並ぶ名前・寸法・枠の判定は、いま保存されている 1 枚の値。
             見えている絵と枠は加工前の画像なので、見出しを付けないと
             1600×1200 の見開きを見ながら「800×1200」「枠に合っています」と
             書かれた画面になり、矛盾しているようにしか読めない */}
-        <span className="shrink-0 text-[12px] text-ink-faint">
-          保存されている表紙
-        </span>
-        <span
-          className="shrink-0 text-[12px] text-ink-faint"
-          data-testid="cover-name"
-        >
-          {cover.name}
-        </span>
-        <Badge tone="neutral" data-testid="cover-size">
-          <span className="tabular">
-            {cover.width}×{cover.height}
-          </span>
-        </Badge>
-        {/* 保留の加工は、確定するまでファイルに残らない。回した角度は
-            見えている絵からは読み取れないので、数値で添えておく */}
-        {angle === 0 ? null : (
-          <Badge tone="neutral" data-testid="pending-rotation">
-            <span className="tabular">{angle} 度回転（未確定）</span>
-          </Badge>
-        )}
-        {/* ここには枠に収まっているかどうかだけを出す。見開きの警告は
-            右の列の先頭に置く */}
-        {cover.is_spread ? null : (
-          <p
-            className="shrink-0 text-[12px] text-ink-faint"
-            data-testid="fits-frame"
-          >
-            {fitsFrame ? "枠に合っています" : "枠と縦横比が異なります"}
-          </p>
-        )}
-        {/* 枠は掴めると分かって初めて使われる。説明は枠のある作業面の
-            すぐ上に出す。枠が退いている間は言っても指す先が無い */}
-        {choosing ? null : (
           <span className="shrink-0 text-[12px] text-ink-faint">
-            枠を掴んで動かせます（2:3 固定）
+            保存されている表紙
           </span>
-        )}
-        <div className="flex-1" />
-        <span
-          className="shrink-0 text-[12px] text-ink-muted"
-          data-testid="cover-status"
-        >
-          {status}
-        </span>
-      </div>
-
+          <span
+            className="shrink-0 text-[12px] text-ink-faint"
+            data-testid="cover-name"
+          >
+            {cover.name}
+          </span>
+          <Badge tone="neutral" data-testid="cover-size">
+            <span className="tabular">
+              {cover.width}×{cover.height}
+            </span>
+          </Badge>
+          {/* 保留の加工は、確定するまでファイルに残らない。回した角度は
+            見えている絵からは読み取れないので、数値で添えておく */}
+          {angle === 0 ? null : (
+            <Badge tone="neutral" data-testid="pending-rotation">
+              <span className="tabular">{angle} 度回転（未確定）</span>
+            </Badge>
+          )}
+          {/* ここには枠に収まっているかどうかだけを出す。見開きの警告は
+            右の列の先頭に置く */}
+          {cover.is_spread ? null : (
+            <p
+              className="shrink-0 text-[12px] text-ink-faint"
+              data-testid="fits-frame"
+            >
+              {fitsFrame ? "枠に合っています" : "枠と縦横比が異なります"}
+            </p>
+          )}
+          {/* 枠は掴めると分かって初めて使われる。説明は枠のある作業面の
+            すぐ上に出す。枠が退いている間は言っても指す先が無い */}
+          {choosing ? null : (
+            <span className="shrink-0 text-[12px] text-ink-faint">
+              {paddable
+                ? "枠を掴んで動かせます（2:3 固定。画像の外へ広げた所は縁の色で塗ります）"
+                : "枠を掴んで動かせます（2:3 固定）"}
+            </span>
+          )}
+          <div className="flex-1" />
+          <span
+            className="min-w-0 truncate text-[12px] text-ink-muted"
+            data-testid="cover-status"
+            title={status}
+          >
+            {status}
+          </span>
+        </>
+      }
+    >
       <div className="flex min-h-0 flex-1 gap-3">
         {/* 作業面。切り抜きの面と候補一覧が、同じ場所を入れ替わりで使う。
             200 ページから 1 枚を探すには、帯ではなくこの面の広さが要る */}
@@ -362,7 +366,7 @@ export function CoverEditor({
               ref={stageRef}
               className="flex min-h-0 flex-1 justify-center overflow-hidden"
             >
-              {/* 枠の位置を画像そのものに合わせるため、枠線は外側の箱に持たせる */}
+              {/* 枠の位置を範囲そのものに合わせるため、枠線は外側の箱に持たせる */}
               <div
                 className="relative self-start overflow-hidden rounded border border-line"
                 style={{
@@ -370,6 +374,42 @@ export function CoverEditor({
                   height: display.height + FRAME_BORDER * 2,
                 }}
               >
+                {/* 絵の外の余白は、その辺の縁の色で塗っておく。枠を広げたときの
+                    仕上がりがそのまま見える。枠の外は枠の影で暗くなる */}
+                {canvas.y < 0 ? (
+                  <>
+                    <div
+                      data-testid="cover-pad"
+                      className="absolute inset-x-0 top-0"
+                      style={{ height: picture.top, background: edges.top }}
+                    />
+                    <div
+                      data-testid="cover-pad"
+                      className="absolute inset-x-0 bottom-0"
+                      style={{
+                        height: display.height - picture.top - picture.height,
+                        background: edges.bottom,
+                      }}
+                    />
+                  </>
+                ) : null}
+                {canvas.x < 0 ? (
+                  <>
+                    <div
+                      data-testid="cover-pad"
+                      className="absolute inset-y-0 left-0"
+                      style={{ width: picture.left, background: edges.left }}
+                    />
+                    <div
+                      data-testid="cover-pad"
+                      className="absolute inset-y-0 right-0"
+                      style={{
+                        width: display.width - picture.left - picture.width,
+                        background: edges.right,
+                      }}
+                    />
+                  </>
+                ) : null}
                 {/*
                   回転は保留なので、原稿ではなく見え方だけを回す。回す前の
                   寸法で置いてから中心で回すと、外側の箱にちょうど収まる。
@@ -385,8 +425,8 @@ export function CoverEditor({
                     width: upright.width,
                     height: upright.height,
                     maxWidth: "none",
-                    left: (display.width - upright.width) / 2,
-                    top: (display.height - upright.height) / 2,
+                    left: picture.left + (picture.width - upright.width) / 2,
+                    top: picture.top + (picture.height - upright.height) / 2,
                     transform: `rotate(${angle}deg)`,
                   }}
                   src={imageUrl}
@@ -433,6 +473,7 @@ export function CoverEditor({
                 image={source}
                 angle={angle}
                 crop={frame}
+                edges={edges}
                 width={PREVIEW_WIDTH}
               />
             </div>
@@ -493,6 +534,6 @@ export function CoverEditor({
           </div>
         </aside>
       </div>
-    </section>
+    </EditorLayout>
   );
 }
