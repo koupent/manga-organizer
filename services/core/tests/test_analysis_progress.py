@@ -580,9 +580,12 @@ class ReadingProgressTest(AnalysisJobTestBase):
         # Act
         job_id = self.accepted_id([archive])
 
-        # Assert - 件数はまだ 0 で、中の進みが見える
+        # Assert - 件数はまだ 0 で、中の進みが見える。走査が終わるまでは
+        # 途中経過そのものがまだ無い（None）
         self.assertTrue(
-            wait_until(lambda: self.job(job_id)["result"].get("reading") == 0.5),
+            wait_until(
+                lambda: (self.job(job_id)["result"] or {}).get("reading") == 0.5
+            ),
             f"読んでいる途中の進みが出ない: {self.job(job_id)}",
         )
         self.assertEqual(0, self.job(job_id)["current"])
