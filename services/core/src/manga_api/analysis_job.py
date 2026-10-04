@@ -124,6 +124,13 @@ class PlannedBookView(BaseModel):
             "判断には organized_reason を使う"
         ),
     )
+    size: int | None = Field(
+        default=None,
+        description=(
+            "この本がアーカイブ全体のとき、そのファイルの大きさ（バイト）。"
+            "1 つのアーカイブから出る本や、画像フォルダの本では null"
+        ),
+    )
 
 
 def analysis_work(
@@ -284,4 +291,14 @@ def _book_view(book: PlannedBook) -> dict[str, Any]:
         title=book.title,
         organized_reason=book.organized_reason,
         organized_detail=book.organized_detail,
+        # 同じ巻が複数あるとき、大きい方（画質の良い方）を残す判断に使う（#163）
+        size=file_size(book.source) if book.entry == "" else None,
     ).model_dump()
+
+
+def file_size(path: Path) -> int | None:
+    """ファイルの大きさ（バイト）。ファイルでなければ（フォルダ・消えた）None"""
+    try:
+        return path.stat().st_size if path.is_file() else None
+    except OSError:
+        return None

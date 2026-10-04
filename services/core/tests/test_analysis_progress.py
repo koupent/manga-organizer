@@ -75,6 +75,7 @@ BOOK_KEYS = {
     "title",
     "organized_reason",
     "organized_detail",
+    "size",
 }
 
 # 1 つの ZIP に 2 冊分が入っている状態。アーカイブの件数（2）と冊数（3）を
@@ -201,6 +202,8 @@ class AnalysisJobTestBase(unittest.TestCase):
                 "title": book.title,
                 "organized_reason": book.organized_reason,
                 "organized_detail": book.organized_detail,
+                # 画面へ渡すときに足す。アーカイブ全体が 1 冊の本だけが持つ（#163）
+                "size": book.source.stat().st_size if book.entry == "" else None,
             }
             for book in planned
         ]
@@ -694,9 +697,10 @@ class SilentlySkippedArchiveTest(AnalysisJobTestBase):
         self.assertEqual("succeeded", job["state"], job.get("error"))
 
         # Assert - 本を持たない入れ物も整理の対象数に入り、実際に処理される。
-        # ``app.py`` の ``_wanted_entries`` が外していれば総数は 1 になり、
-        # 経過にも名前が残らない。ここが黙って落ちることの正体
-        self.assertEqual(2, job["total"], f"整理の対象数が違う: {job}")
+        # 総数は作る予定の冊数で、本を持たない入れ物は位置なしの 1 件として
+        # 数える（#159）。``app.py`` の ``_wanted_entries`` が外していれば総数は
+        # 2 冊ぶんになり、経過にも名前が残らない。ここが黙って落ちることの正体
+        self.assertEqual(3, job["total"], f"整理の対象数が違う: {job}")
         self.assertTrue(
             any(bookless.name in line for line in job["log"]),
             f"本を持たない入れ物が整理へ渡っていない: {job['log']}",

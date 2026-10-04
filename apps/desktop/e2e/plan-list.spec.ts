@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
@@ -695,5 +695,117 @@ test.describe("解析した本の一覧", () => {
     // Assert - 印は出るが、チェックは既定のまま。読めなかったことと
     // 「整理しない」ことは別で、中身は実行時に展開して初めて分かる
     await expect(checkOf(broken)).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("解析した時点で出来上がる名前の順に並び、同じ巻が複数あれば数が出る（#162）", async ({
+    page,
+  }) => {
+    // Arrange - 元の名前の順（a, dup, m, z）と出来上がる巻の順（1, 1, 2, 3）を
+    // わざと食い違わせる。dup_01 と m_01 は同じ 1 巻
+    const name = "名前順";
+    const folder = join(sidecar.workDir, name);
+    mkdirSync(folder, { recursive: true });
+    const page1 = [{ name: "001.jpg", color: "#ff0000" }];
+    for (const archive of ["a_02.zip", "dup_01.zip", "m_01.zip", "z_03.zip"])
+      writeArchive(sidecar.workDir, join(name, archive), page1);
+    const output = join(sidecar.workDir, "out-名前順");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "名前順の作品");
+
+    // Act
+    await addFolder(page, name);
+    await waitForBooks(page, 4);
+
+    // Assert - 本は出来上がる名前（巻）の順。同じ巻どうしは隣り合う
+    const books = page.locator('[data-testid="plan-row"][data-kind="book"]');
+    const sources = await books.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute("data-source")!.split("/").pop()),
+    );
+    expect(sources).toEqual(["dup_01.zip", "m_01.zip", "a_02.zip", "z_03.zip"]);
+
+    // Assert - 同じ巻の 2 冊にだけ「同じ巻 2」が出る
+    for (const [index, count] of [
+      [0, "同じ巻 2"],
+      [1, "同じ巻 2"],
+    ] as const) {
+      await expect(books.nth(index).getByTestId("plan-row-same")).toHaveText(
+        count,
+      );
+    }
+    await expect(books.nth(2).getByTestId("plan-row-same")).toHaveCount(0);
+    await expect(books.nth(3).getByTestId("plan-row-same")).toHaveCount(0);
+
+    // Act - 要らない方を外す
+    await checkOf(books.nth(0)).click();
+
+    // Assert - 外しても、同じ巻が他にもあることは見えたまま。重なりの警告は消える
+    await expect(books.nth(0).getByTestId("plan-row-same")).toHaveText(
+      "同じ巻 2",
+    );
+    await expect(books.nth(1).getByTestId("plan-row-issue")).toHaveCount(0);
+  });
+
+  test("アーカイブ全体が 1 冊の本には、ファイルの大きさが出る（#163）", async ({
+    page,
+  }) => {
+    // Arrange / Act
+    const title = "大きさの作品";
+    await preparePlan(page, "大きさ", title);
+
+    // Assert - 1 冊の ZIP は大きさが出る。2 冊入りの ZIP から出る本は、
+    // 本ごとの大きさが分からないので空
+    await expect(
+      bookRow(page, volumeName(title, 3)).getByTestId("plan-row-size"),
+    ).toHaveText(/^\d+(\.\d)? (B|KB)$/);
+    for (const volume of [1, 2])
+      await expect(
+        bookRow(page, volumeName(title, volume)).getByTestId("plan-row-size"),
+      ).toHaveText("");
+  });
+
+  test("本のファイルを、確かめてからごみ箱へ移せる（#164）", async ({
+    page,
+  }) => {
+    // Arrange
+    const title = "ごみ箱の作品";
+    const { single } = await preparePlan(page, "ごみ箱", title);
+    const row = bookRow(page, volumeName(title, 3));
+
+    // Act - 行に乗せると出るボタンを押す
+    await row.hover();
+    await row.getByTestId("plan-trash").click();
+
+    // Assert - 消す前に、名前と大きさを出して確かめる
+    const dialog = page.getByTestId("trash-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("単体_03.zip（");
+    await expect(dialog).toContainText(single);
+
+    // Act / Assert - やめれば何も起きない
+    await page.getByTestId("trash-cancel").click();
+    await expect(dialog).toBeHidden();
+    expect(existsSync(single)).toBe(true);
+    await expect(row).toBeVisible();
+
+    // Act - 今度は移す
+    await row.hover();
+    await row.getByTestId("plan-trash").click();
+    await page.getByTestId("trash-confirm").click();
+
+    // Assert - ファイルは元の場所から消え、一覧からも外れる。他の本は残る
+    await expect(row).toHaveCount(0);
+    expect(existsSync(single)).toBe(false);
+    await expect(page.getByTestId("organize-status")).toContainText(
+      "単体_03.zip をごみ箱へ移しました",
+    );
+    await expect(
+      page.locator('[data-testid="plan-row"][data-kind="book"]'),
+    ).toHaveCount(2);
+
+    // Assert - 2 冊入りの ZIP から出る本は、その本だけを消せないのでボタンが無い
+    const compoundBook = bookRow(page, volumeName(title, 1));
+    await compoundBook.hover();
+    await expect(compoundBook.getByTestId("plan-trash")).toHaveCount(0);
   });
 });

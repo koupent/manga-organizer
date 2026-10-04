@@ -498,6 +498,31 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/files/trash": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Trash File
+     * @description 利用者が一覧で選んだファイルを、ごみ箱へ移す（#164）。
+     *
+     *     消すのではなくごみ箱へ移す。画面は消す前に確かめるが、押し間違えた
+     *     ときに取り戻せる道を残す。触れるのは読んでよい場所か、この起動で
+     *     選んだ出力先の中のファイルだけ。フォルダは扱わない。中身ごと消える
+     *     ことになり、確かめた 1 冊より多くを失いうるため。
+     */
+    post: operations["trash_file_api_files_trash_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/jobs/organize": {
     parameters: {
       query?: never;
@@ -1113,6 +1138,28 @@ export interface components {
       author?: string | null;
       /** Candidates */
       candidates?: components["schemas"]["AuthorCandidate"][];
+    };
+    /**
+     * TrashRequest
+     * @description 一覧から消すファイル（#164）
+     */
+    TrashRequest: {
+      /**
+       * Path
+       * @description ごみ箱へ移すファイルの絶対パス
+       */
+      path: string;
+    };
+    /**
+     * TrashedView
+     * @description ごみ箱へ移したファイル
+     */
+    TrashedView: {
+      /**
+       * Path
+       * @description ごみ箱へ移したファイル（辿り直した絶対パス）
+       */
+      path: string;
     };
     /** ValidationError */
     ValidationError: {
@@ -1945,6 +1992,42 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["OutputRootView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  trash_file_api_files_trash_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TrashRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TrashedView"];
         };
       };
       /** @description Validation Error */

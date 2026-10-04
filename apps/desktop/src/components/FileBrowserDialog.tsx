@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { isInside } from "../lib/plan";
 import { cn } from "../lib/utils";
-import { SHORTCUT_SIZE } from "./ProducedList";
+import { SHORTCUT_SIZE } from "./EditShortcuts";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { CardHeader } from "./ui/card";

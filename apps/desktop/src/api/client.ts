@@ -29,6 +29,8 @@ type CoverRequest =
   paths["/api/jobs/cover"]["post"]["requestBody"]["content"]["application/json"];
 type OutputRoot =
   paths["/api/output-roots"]["post"]["responses"][200]["content"]["application/json"];
+type Trashed =
+  paths["/api/files/trash"]["post"]["responses"][200]["content"]["application/json"];
 type LibraryEntries =
   paths["/api/library/entries"]["get"]["responses"][200]["content"]["application/json"];
 /** 辞書の 1 件。作品名と著者の対 */
@@ -237,6 +239,11 @@ export class SidecarClient {
 
   organize(request: OrganizeRequest): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/organize", request);
+  }
+
+  /** ファイルをごみ箱へ移す（#164）。消す前の確認は呼び出す側が済ませる */
+  trashFile(path: string): Promise<Trashed> {
+    return this.post<Trashed>("/api/files/trash", { path });
   }
 
   /**

@@ -2,12 +2,15 @@ import {
   ArrowRight,
   BookMarked,
   CircleCheck,
+  Copy,
   Folder,
   Info,
   Package,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import { useRef, useState, type KeyboardEvent } from "react";
+import type { FinishedBook } from "../lib/analysis";
 import {
   checkStateOf,
   TOC_UNREADABLE,
@@ -24,8 +27,9 @@ import {
   EditShortcuts,
   type EditMarks,
   type HandoffMode,
-} from "./ProducedList";
+} from "./EditShortcuts";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 
 /** 印の言い換え。知らない印が来ても、印そのものは消さずに素で出す */
@@ -126,8 +130,14 @@ type PlanListProps = {
   locked: boolean;
   /** 行のチェックを付け外しする。Shift で押すと、範囲の行がまとめて来る */
   onToggle: (rows: PlanRow[], keep: boolean) => void;
+  /** 整理して出来た本の行の鍵 → 出来た本（#160）。整理の途中から増える */
+  made: ReadonlyMap<string, FinishedBook>;
+  /** 同じ巻の本が 2 冊以上ある行の鍵 → その冊数（#162） */
+  sameVolume: ReadonlyMap<string, number>;
   /** 整理済みの本を、そのまま次の画面へ読み込ませる */
   onOpenArchive: (path: string, mode: HandoffMode) => void;
+  /** 本のファイルをごみ箱へ移す（#164）。確かめるのは受け取った側 */
+  onTrash: (target: TrashTarget) => void;
   /** 本ごとの編集済みの種類。整理済みの行の近道に印を出す（#143） */
   edits: EditMarks;
   /** 利用者が巻数を直した本の鍵 */
@@ -166,7 +176,10 @@ export function PlanList({
   outputDirectory,
   locked,
   onToggle,
+  made,
+  sameVolume,
   onOpenArchive,
+  onTrash,
   edits,
   corrected,
   collided,
@@ -195,35 +208,49 @@ export function PlanList({
       className="min-h-0 flex-1 divide-y divide-line/60 overflow-y-auto p-1"
       data-testid="plan-list"
     >
-      {rows.map((row) => (
-        <PlanListRow
-          key={row.id}
-          row={row}
-          state={checkStateOf(row, excluded)}
-          name={names.get(row.id) ?? ""}
-          outputDirectory={outputDirectory}
-          locked={locked}
-          onToggle={toggle}
-          onOpenArchive={onOpenArchive}
-          edited={edits[row.source] ?? []}
-          corrected={corrected.has(row.id)}
-          collided={collided.has(row.id)}
-          onCorrect={onCorrect}
-          onFill={onFill}
-        />
-      ))}
+      {rows.map((row) => {
+        const madePath = made.get(row.id)?.path;
+        return (
+          <PlanListRow
+            key={row.id}
+            row={row}
+            madePath={madePath}
+            madeSize={made.get(row.id)?.size}
+            sameVolume={sameVolume.get(row.id)}
+            state={checkStateOf(row, excluded)}
+            name={names.get(row.id) ?? ""}
+            outputDirectory={outputDirectory}
+            locked={locked}
+            onToggle={toggle}
+            onOpenArchive={onOpenArchive}
+            onTrash={onTrash}
+            edited={edits[madePath ?? row.source] ?? []}
+            corrected={corrected.has(row.id)}
+            collided={collided.has(row.id)}
+            onCorrect={onCorrect}
+            onFill={onFill}
+          />
+        );
+      })}
     </ul>
   );
 }
 
 type PlanListRowProps = {
   row: PlanRow;
+  /** 整理して出来たファイル。まだ出来ていなければ無い */
+  madePath?: string;
+  /** 出来たファイルの大きさ */
+  madeSize?: number | null;
+  /** 同じ巻の本の冊数。1 冊だけなら無い */
+  sameVolume?: number;
   state: CheckState;
   name: string;
   outputDirectory: string;
   locked: boolean;
   onToggle: (row: PlanRow, keep: boolean, range: boolean) => void;
   onOpenArchive: (path: string, mode: HandoffMode) => void;
+  onTrash: (target: TrashTarget) => void;
   edited: readonly string[];
   corrected: boolean;
   collided: boolean;
@@ -233,12 +260,16 @@ type PlanListRowProps = {
 
 function PlanListRow({
   row,
+  madePath,
+  madeSize,
+  sameVolume,
   state,
   name,
   outputDirectory,
   locked,
   onToggle,
   onOpenArchive,
+  onTrash,
   edited,
   corrected,
   collided,
@@ -250,9 +281,21 @@ function PlanListRow({
   const correctable = row.kind === "book" && !row.organized;
   const dim = off ? DIMMED : undefined;
   // 整理済みの本は、既にディスク上に最終形で在る。整理を待たずにそのまま
-  // 開けるので、行から次の作業へ渡せる（作る・作らないとは関わりが無い）
-  const finished = row.kind === "book" && row.organized;
+  // 開けるので、行から次の作業へ渡せる（作る・作らないとは関わりが無い）。
+  // 整理して出来た本も、出来た時点から同じに扱う（#160）
+  const finished =
+    row.kind === "book" && (row.organized || madePath !== undefined);
   const showsDestination = finished && state === true;
+  // その本がいまディスク上の 1 つのファイルなら、大きさを出し、消せるように
+  // する（#163 #164）。整理して出来た本は出来たファイル、アーカイブ全体が
+  // 1 冊の本はそのアーカイブ。1 つのアーカイブから出る本は、その本だけを
+  // 消せないので出さない
+  const file =
+    madePath !== undefined
+      ? { path: madePath, size: madeSize ?? null }
+      : row.kind === "book" && row.size !== null
+        ? { path: row.source, size: row.size }
+        : null;
 
   return (
     <li
@@ -269,9 +312,10 @@ function PlanListRow({
       ].join(" ")}
       data-organized={String(row.organized)}
       data-organized-reason={row.organizedReason}
+      data-made={madePath}
       // 印を出さない理由でも、行に乗せれば何が違うのかを読める。
       // 整理済みの行には説明を付けない（印そのものが説明を持っている）
-      title={reasonTip(row) || undefined}
+      title={finished ? undefined : reasonTip(row) || undefined}
       tabIndex={0}
       style={{ paddingLeft: 8 + row.level * INDENT_PX }}
       className={cn(
@@ -357,7 +401,13 @@ function PlanListRow({
           </span>
         </>
       )}
-      <RowBadges row={row} collided={collided} dim={dim} />
+      <RowBadges
+        row={row}
+        finished={finished}
+        sameVolume={sameVolume}
+        collided={collided}
+        dim={dim}
+      />
       {/*
         近道は印の右に置く。左へ割り込ませると整理済みの印が行の中ほどまで
         押し戻され、その行にすることが無いと一目で読めなくなる。
@@ -366,12 +416,34 @@ function PlanListRow({
         <EditShortcuts
           name={name}
           // 渡すのは今ディスク上に在るファイル。これから作られる行き先では
-          // まだ開けない
-          path={row.source}
+          // まだ開けない。整理して出来た本なら、出来たファイル
+          path={madePath ?? row.source}
           edited={edited}
           testIdPrefix="plan"
           onOpen={onOpenArchive}
         />
+      ) : null}
+      {file && !locked ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-ink-faint opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-danger"
+          data-testid="plan-trash"
+          title={`${name} のファイルをごみ箱へ移す`}
+          aria-label={`${name} のファイルをごみ箱へ移す`}
+          onClick={() => onTrash({ ...file, name })}
+        >
+          <Trash2 />
+        </Button>
+      ) : null}
+      {row.kind === "book" ? (
+        // 桁をそろえて右端に置く。同じ巻の本どうしで見比べるため
+        <span
+          data-testid="plan-row-size"
+          className="tabular w-14 shrink-0 text-right text-[11px] text-ink-faint"
+        >
+          {file?.size != null ? sizeLabel(file.size) : ""}
+        </span>
       ) : null}
     </li>
   );
@@ -386,10 +458,15 @@ function PlanListRow({
  */
 function RowBadges({
   row,
+  finished,
+  sameVolume,
   collided,
   dim,
 }: {
   row: PlanRow;
+  /** 整理済みか。整理して出来た本も含む（#160） */
+  finished: boolean;
+  sameVolume?: number;
   collided: boolean;
   dim?: string;
 }) {
@@ -401,13 +478,25 @@ function RowBadges({
         そのもので、一緒に薄めると「なぜ作られないのか」の答えが一番読みにくい
         所に置かれることになる。
       */}
-      {row.organized ? (
+      {finished ? (
         <Badge tone="ok" data-testid="plan-row-state" title={ORGANIZED_TIP}>
           <CircleCheck className="size-3" />
           整理済み
         </Badge>
       ) : null}
-      {reasonBadge ? (
+      {/* 同じ巻が他にもあることは、外した行でも読めるよう薄めない。
+          どれを残すか見比べるための印なので */}
+      {sameVolume ? (
+        <Badge
+          tone="neutral"
+          data-testid="plan-row-same"
+          title={`同じ巻の本が ${sameVolume} 冊あります`}
+        >
+          <Copy className="size-3" />
+          同じ巻 {sameVolume}
+        </Badge>
+      ) : null}
+      {reasonBadge && !finished ? (
         <Badge
           tone="neutral"
           data-testid="plan-row-reason"
@@ -435,6 +524,23 @@ function RowBadges({
       ))}
     </>
   );
+}
+
+/** ごみ箱へ移す本のファイル。確かめる窓に名前と大きさを出す */
+export type TrashTarget = { path: string; size: number | null; name: string };
+
+/** ファイルの大きさの表示。10 未満だけ小数 1 桁にする（例: 8.4 MB, 152 MB） */
+export function sizeLabel(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const shown =
+    value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1);
+  return `${shown} ${units[unit]}`;
 }
 
 /** パスの末尾。場所は隣の欄が受け持つ */

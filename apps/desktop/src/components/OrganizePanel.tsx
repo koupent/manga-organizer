@@ -12,7 +12,9 @@ import {
   organizeResult,
   refusedPaths,
   snapshotMark,
+  withoutPaths,
   type Analysis,
+  type FinishedBook,
 } from "../lib/analysis";
 import { resolveDroppedPaths } from "../lib/dropped";
 import {
@@ -21,6 +23,7 @@ import {
   planSummary,
 } from "../lib/organize-text";
 import {
+  bookId,
   buildPlanRows,
   collidingBooks,
   droppedBookCount,
@@ -32,6 +35,7 @@ import {
   needsSeriesName,
   organizedSkippedCount,
   outputNames,
+  sameVolumeCounts,
   selectedBooks,
   toggleLeaves,
   toggleTargets,
@@ -53,8 +57,8 @@ import { SeriesInfoSection } from "./organize/SeriesInfoSection";
 import { SourceList, type SourceProblem } from "./organize/SourceList";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
-import { PlanList } from "./PlanList";
-import { ProducedList, type EditMarks, type HandoffMode } from "./ProducedList";
+import { PlanList, sizeLabel, type TrashTarget } from "./PlanList";
+import { type EditMarks, type HandoffMode } from "./EditShortcuts";
 import { Button } from "./ui/button";
 import { Empty } from "./ui/empty";
 import { SectionTitle } from "./ui/section-title";
@@ -149,6 +153,8 @@ export function OrganizePanel({
 
   // 解析で分かったこと。走査が終わるまでは入れ物も空
   const [analysis, setAnalysis] = useState<Analysis>(IDLE_ANALYSIS);
+  // 最後に解析へ回した投入。外しただけの変化を見分ける（#164）
+  const analyzedSources = useRef<string[]>([]);
   // 解析をやり直させる合図。投入が同じでも、整理が本をその場で作り直したら
   // 一覧の判定は古くなる（#127）
   const [analysisRound, setAnalysisRound] = useState(0);
@@ -162,9 +168,12 @@ export function OrganizePanel({
   // たびに書き潰され、利用者の選択が消える
   const [decisions, setDecisions] = useState<Decisions>(new Map());
 
-  // 整理して出来たファイルの絶対パス。実際に出来たものだけを持つので、
-  // 中断・失敗のときは空のままになる
-  const [produced, setProduced] = useState<string[]>([]);
+  // 整理して出来た本。実際に出来たものだけを持ち、整理の途中から 1 冊ずつ
+  // 増える（#160）。その本の行に整理済みの印と編集への近道を出す
+  const [finished, setFinished] = useState<FinishedBook[]>([]);
+
+  // ごみ箱へ移そうとしている本のファイル。確かめる窓が開いている間だけ在る（#164）
+  const [trashing, setTrashing] = useState<TrashTarget | null>(null);
 
   // 整理できなかったアーカイブと、その理由。ジョブは失敗しても succeeded で
   // 終わるため、ここに出さないと処理ログを開くまで失敗に気づけない
@@ -233,8 +242,22 @@ export function OrganizePanel({
    * 読み直す必要は無い。
    */
   useEffect(() => {
+    const before = analyzedSources.current;
+    analyzedSources.current = sources;
     if (sources.length === 0) {
       setAnalysis(IDLE_ANALYSIS);
+      return;
+    }
+    // 外しただけなら読み直さない（#164）。済んだ解析から外したぶんを除けば
+    // 足りる。目次読みは重く、1 つ外すたびに全部を読み直すと、投入が大きい
+    // ほど待たされる
+    if (
+      analysis.settled &&
+      sources.length < before.length &&
+      sources.every((path) => before.includes(path))
+    ) {
+      const removed = before.filter((path) => !sources.includes(path));
+      setAnalysis((current) => withoutPaths(current, removed));
       return;
     }
     const controller = new AbortController();
@@ -413,7 +436,7 @@ export function OrganizePanel({
       ...rows
         .filter((row) => row.kind === "book" && row.organized)
         .map((row) => row.source),
-      ...produced,
+      ...finished.map((book) => book.path),
     ]),
   ].join("\n");
   useEffect(() => {
@@ -437,6 +460,16 @@ export function OrganizePanel({
   const names = useMemo(
     () => outputNames(rows, author, title, off),
     [rows, author, title, off],
+  );
+  // 整理して出来た本の行 → 出来た本（#160）
+  const made = useMemo(
+    () => new Map(finished.map((book) => [bookId(book), book])),
+    [finished],
+  );
+  // 同じ巻の本の数（#162）。外した本も数える
+  const sameVolume = useMemo(
+    () => sameVolumeCounts(rows, author, title),
+    [rows, author, title],
   );
   // 作る本どうしで名前が重なる本。後ろの本は黙って _1 で出来てしまう
   const collided = useMemo(
@@ -628,6 +661,8 @@ export function OrganizePanel({
           // 外した本のぶんも引かれるので、画面の件数で補うと食い違う（#65）
           setProgress({ current: snapshot.current, total: snapshot.total });
           setLog(snapshot.log ?? []);
+          // 出来た本から、その行で編集へ移れるようにする。全部済むのを待たない
+          setFinished(organizeResult(snapshot.result).finished);
         },
         { signal },
       );
@@ -644,7 +679,7 @@ export function OrganizePanel({
       // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
       // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
       const outcome = organizeResult(job.result);
-      setProduced(outcome.produced);
+      setFinished(outcome.finished);
       setFailures(outcome.failed);
       // 投入した本そのものが作り直された（行き先が自分自身だった）なら、
       // 一覧はまだ作り直す前の判定を見せている。解析し直して新しい姿にする。
@@ -690,7 +725,7 @@ export function OrganizePanel({
     setLog([]);
     // 前回の結果はここで捨てる。今回が中断・失敗に終わったとき、前回の
     // 一覧が残っていると「今回出来たもの」に見えてしまう
-    setProduced([]);
+    setFinished([]);
     setFailures([]);
     setStatus("整理しています...");
     // 総数はサイドカーが投入時に決める。ここで見込みを入れると、外した本の
@@ -739,6 +774,30 @@ export function OrganizePanel({
       jobId.current = null;
       setRunning(false);
     }
+  };
+
+  /**
+   * 確かめた本のファイルをごみ箱へ移し、一覧から外す（#164）。
+   *
+   * 整理して出来たファイルなら、その行は整理する前の姿へ戻る。元の
+   * アーカイブなら、解析の結果から除く。読み直さない。
+   */
+  const trash = async (target: TrashTarget) => {
+    setTrashing(null);
+    try {
+      await client.trashFile(target.path);
+    } catch (error) {
+      setStatus(sidecarReason(error));
+      return;
+    }
+    setFinished((current) =>
+      current.filter((book) => book.path !== target.path),
+    );
+    setAnalysis((current) => withoutPaths(current, [target.path]));
+    if (sources.includes(target.path)) {
+      onSourcesChange(sources.filter((path) => path !== target.path));
+    }
+    setStatus(`${baseName(target.path)} をごみ箱へ移しました`);
   };
 
   /**
@@ -948,8 +1007,11 @@ export function OrganizePanel({
                 outputDirectory={outputDirectory}
                 locked={running}
                 onToggle={toggleRows}
-                // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
-                // 通る。行が渡すのは、いまディスク上に在る元のファイル
+                made={made}
+                sameVolume={sameVolume}
+                onTrash={setTrashing}
+                // 整理済みの行の近道は、いまディスク上に在るファイルを渡す。
+                // 整理して出来た本の行なら、出来たファイル
                 onOpenArchive={onOpenProduced}
                 edits={edits}
                 corrected={new Set(volumes.keys())}
@@ -965,9 +1027,59 @@ export function OrganizePanel({
           出来たぶんの一覧に押し下げられて見落とすと元も子もない。
         */}
         <FailedList failures={failures} />
-        <ProducedList paths={produced} edits={edits} onOpen={onOpenProduced} />
         <OrganizeLog lines={log} />
       </div>
+
+      {/* 消す前に確かめる（#164）。押し間違えても取り戻せるよう、消すのでは
+          なくごみ箱へ移す */}
+      <Dialog
+        open={trashing !== null}
+        onOpenChange={(open) => {
+          if (!open) setTrashing(null);
+        }}
+      >
+        <DialogContent
+          data-testid="trash-dialog"
+          className="w-[min(32rem,92vw)] gap-3 p-4"
+        >
+          <DialogTitle className="text-[14px] font-semibold">
+            このファイルをごみ箱へ移しますか
+          </DialogTitle>
+          <DialogDescription className="text-[12.5px] text-ink-muted">
+            {trashing
+              ? `${baseName(trashing.path)}${
+                  trashing.size !== null
+                    ? `（${sizeLabel(trashing.size)}）`
+                    : ""
+                }`
+              : ""}
+          </DialogDescription>
+          <p
+            className="truncate text-[11.5px] text-ink-faint"
+            title={trashing?.path}
+          >
+            {trashing?.path}
+          </p>
+          {/* 主操作を右端に置く。最初のフォーカスは先頭の「やめる」に当たる。
+              Enter 1 つで消えてしまわないように */}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              data-testid="trash-cancel"
+              onClick={() => setTrashing(null)}
+            >
+              やめる
+            </Button>
+            <Button
+              variant="danger"
+              data-testid="trash-confirm"
+              onClick={() => trashing && void trash(trashing)}
+            >
+              ごみ箱へ移す
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/*
         辞書は整理の途中で覗きに行くものなので、画面を切り替えず重ねて出す。

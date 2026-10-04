@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from manga_api.analysis_job import file_size
 from manga_api.jobs import ProgressReporter
 from manga_core.cancellation import OperationCancelled
 from manga_core.file_identity import file_key
@@ -285,7 +286,7 @@ def organize_work(
 
     def work(report: ProgressReporter) -> dict[str, Any]:
         # 取り込みが重いので、整理を投入したときだけ読み込む
-        from manga_core.file_organizer import FileOrganizer
+        from manga_core.file_organizer import BookDone, FileOrganizer, ProcessResult
 
         organizer = FileOrganizer(
             # 確かめたパスをそのまま渡す。文字列から組み直すと、確かめた
@@ -300,8 +301,46 @@ def organize_work(
         produced: list[str] = []
         failed: list[dict[str, str]] = []
         refused: list[dict[str, str]] = []
-        for index, archive in enumerate(archives, 1):
-            report(current=index, total=len(archives), message=archive.name)
+        # 進捗は作る本の冊数で数える（#159）。入れ物の数で数えると、何十冊も
+        # 入ったアーカイブ 1 つでは、始めた瞬間から終わるまで 1 / 1 のまま動かない
+        planned = [_planned_books(archive, wanted) for archive in archives]
+        total = sum(planned)
+        done = 0
+        # 出来た本と、それが一覧のどの行か（#160）。全部済むのを待たずに途中の
+        # 結果として返し、画面は出来た本の行から編集へ移れるようにする
+        finished: list[dict[str, Any]] = []
+
+        def advance(to: int = 0, message: str = "") -> None:
+            # 予告より多く出来たら、総数のほうを伸ばす。100% を超えさせない
+            nonlocal done
+            done = max(done, to)
+            report(
+                current=done,
+                total=max(total, done),
+                message=message,
+                result={"finished": list(finished)},
+            )
+
+        def made_in(archive: Path, plan: _ArchivePlan) -> BookDone:
+            def tell(result: ProcessResult, location: str | None) -> None:
+                entry = plan.entries.get(location) if location is not None else None
+                if result.success and result.output_path and entry is not None:
+                    finished.append(
+                        {
+                            "source": str(archive),
+                            "entry": entry,
+                            "path": str(result.output_path),
+                            "size": file_size(result.output_path),
+                        }
+                    )
+                advance(done + 1)
+
+            return tell
+
+        for index, archive in enumerate(archives):
+            # 前の入れ物の予定冊数までは済んだことにする。作り直すまでもなかった本や
+            # 入れ物ごと失敗した本のぶんが、いつまでも残らないように
+            advance(sum(planned[:index]), archive.name)
             series = _series_for(archive, request, wanted)
             if not series.author or not series.title:
                 failed.append(_nameless_failure(archive))
@@ -312,7 +351,7 @@ def organize_work(
             plan = _archive_plan(archive, wanted, report)
             refused.extend(_announce(plan.refused, report))
             for result in organizer.process_single_archive(
-                archive, plan.skip, series, plan.volumes
+                archive, plan.skip, series, plan.volumes, made_in(archive, plan)
             ):
                 if result.success and result.output_path:
                     produced.append(str(result.output_path))
@@ -327,10 +366,16 @@ def organize_work(
                         "reason": result.error_message or "原因不明の失敗",
                     }
                 )
+        advance(total)
         # 走り切ったこと（state）と、何が出来たか（result）は別に伝える。
         # failed も refused もキーごと省かない。省くと画面から見て「無い」のか
         # 「数えていない」のかを区別できない
-        return {"produced": produced, "failed": failed, "refused": refused}
+        return {
+            "produced": produced,
+            "failed": failed,
+            "refused": refused,
+            "finished": finished,
+        }
 
     return work
 
@@ -400,9 +445,22 @@ class _ArchivePlan:
     skip: frozenset[str]
     volumes: Mapping[str, int | None]
     refused: tuple[dict[str, str], ...]
+    # 展開した位置 → 目次での位置（画面の行が持つ ``entry``）。出来た本が一覧の
+    # どの行かを画面へ返すのに使う（#160）。目次を読めなければ空
+    entries: Mapping[str, str]
 
 
-_NOTHING_PLANNED = _ArchivePlan(frozenset(), _NO_CORRECTIONS, ())
+_NOTHING_PLANNED = _ArchivePlan(frozenset(), _NO_CORRECTIONS, (), MappingProxyType({}))
+
+
+def _planned_books(archive: Path, wanted: dict[Hashable, _Wanted] | None) -> int:
+    """このアーカイブから作る予定の冊数。進捗の総数に使う（#159）。
+
+    選んだ本の指定が無ければ分からないので 1 冊と見込む。多く出来たときは
+    進捗の側で総数を伸ばす。
+    """
+    found = wanted.get(source_key(archive)) if wanted is not None else None
+    return len(found.entries) if found is not None else 1
 
 
 def _archive_plan(
@@ -454,7 +512,10 @@ def _archive_plan(
             else _NO_CORRECTIONS
         )
         return _ArchivePlan(
-            frozenset(), whole, _missing_refusals(archive, corrections, {""})
+            frozenset(),
+            whole,
+            _missing_refusals(archive, corrections, {""}),
+            MappingProxyType({"": ""}),
         )
 
     try:
@@ -475,6 +536,7 @@ def _archive_plan(
             frozenset(),
             _NO_CORRECTIONS,
             tuple(_unreadable_refusal(archive, entry) for entry in sorted(corrections)),
+            MappingProxyType({}),
         )
 
     skip: set[str] = set()
@@ -499,7 +561,14 @@ def _archive_plan(
         volumes[location.extracted_path] = corrections[location.entry]
     # 目次に一度も現れなかった位置への訂正は、当て先そのものが無い
     refused.extend(_missing_refusals(archive, corrections, seen))
-    return _ArchivePlan(frozenset(skip), MappingProxyType(volumes), tuple(refused))
+    return _ArchivePlan(
+        frozenset(skip),
+        MappingProxyType(volumes),
+        tuple(refused),
+        MappingProxyType(
+            {location.extracted_path: location.entry for location in located}
+        ),
+    )
 
 
 def _organized_refusal(archive: Path, entry: str) -> dict[str, str]:

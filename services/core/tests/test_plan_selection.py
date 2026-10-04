@@ -48,6 +48,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -488,6 +489,208 @@ class PlanSelectionTest(PlanApiTestBase):
         # 実行したときに全部作られる
         self.assertEqual([], job["result"]["produced"], job["result"])
         self.assertEqual([], self.files_under(output), "外したはずの本が出来ている")
+
+
+class OrganizeProgressByBookTest(PlanApiTestBase):
+    """整理の進捗を冊数で数え、出来た本を途中から返す（#159 #160）。
+
+    進捗を入れ物の数で数えると、何十冊も入ったアーカイブ 1 つでは始めた瞬間に
+    1 / 1 になり、終わるまで動かない。出来た本も、全部済んでから返すのでは
+    整理の途中で編集へ移れない。
+    """
+
+    def latest_organize(self):
+        """実行中のジョブを、画面が読むのと同じ値で覗く（ジョブは同期実行）"""
+        return next(
+            job for job in self.app.state.jobs.list_jobs() if job.kind == "organize"
+        )
+
+    def test_counts_books_inside_one_archive_and_reports_each_as_it_is_made(self):
+        # Arrange - 2 冊入りの ZIP 1 つと、1 冊の ZIP 1 つ。入れ物は 2、本は 3
+        from manga_core.file_organizer import FileOrganizer
+
+        folder = self.work_dir / "冊数"
+        self.write_compound(folder / "合本.zip")
+        self.write_archive(folder / "単体_03.zip")
+        books = self.analyzed_books([folder])
+        chosen = self.selection(books, [book["output_name"] for book in books])
+        output = self.work_dir / "out-冊数"
+
+        # 1 冊を書き出す直前ごとに、そのときの進捗と途中の結果を控える
+        observed: list[tuple[int, int, int]] = []
+        process_volume = FileOrganizer._process_volume
+
+        def watched(organizer, *args, **kwargs):
+            job = self.latest_organize()
+            finished = (job.result or {}).get("finished", [])
+            observed.append((job.current, job.total, len(finished)))
+            return process_volume(organizer, *args, **kwargs)
+
+        # Act
+        with mock.patch.object(FileOrganizer, "_process_volume", watched):
+            job = self.organize([folder], output, chosen)
+
+        # Assert - 1 冊ごとに進む。総数は入れ物の数（2）ではなく冊数（3）。
+        # 出来た本も、その時点までのぶんが途中の結果に載っている
+        self.assertEqual(
+            [(0, 3, 0), (1, 3, 1), (2, 3, 2)],
+            observed,
+            f"1 冊ごとに進んでいない: {observed}",
+        )
+        self.assertEqual((3, 3), (job["current"], job["total"]), job)
+
+        # Assert - 出来た本は、解析が返した本（= 一覧の行）と元・位置で対応し、
+        # 実際に出来たファイルを指す
+        finished = job["result"]["finished"]
+        self.assertEqual(
+            sorted((book["source"], book["entry"]) for book in books),
+            sorted((book["source"], book["entry"]) for book in finished),
+            f"出来た本が一覧の行と対応しない: {finished}",
+        )
+        self.assertEqual(
+            sorted(job["result"]["produced"]),
+            sorted(book["path"] for book in finished),
+        )
+        for book in finished:
+            self.assertTrue(Path(book["path"]).is_file(), book)
+
+    def test_reaches_the_total_even_when_a_book_is_not_made(self):
+        # Arrange - 出来上がる名前を持たない（作品名が空の）本は失敗として
+        # 外れ、1 冊も書き出されない。それでも進捗は最後に 100% へ届く
+        folder = self.work_dir / "届く"
+        self.write_compound(folder / "合本.zip")
+        books = self.analyzed_books([folder])
+        chosen = self.selection(books, [book["output_name"] for book in books])
+        output = self.work_dir / "out-届く"
+
+        # Act - 依頼の作品名を空にする
+        accepted = self.client.post(
+            "/api/jobs/organize",
+            params=self.auth(),
+            json={
+                "archives": [str(folder)],
+                "output_directory": str(output),
+                "title": "",
+                "author": AUTHOR,
+                "keep_originals": True,
+                "books": chosen,
+            },
+        )
+
+        # Assert
+        self.assertEqual(202, accepted.status_code, accepted.text)
+        job_id = accepted.json()["id"]
+        job = self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual([], job["result"]["finished"])
+        self.assertEqual((2, 2), (job["current"], job["total"]), job)
+
+
+class BookSizeTest(PlanApiTestBase):
+    """本の大きさを返す（#163）。同じ巻が複数あるとき、大きい方を残す判断に使う"""
+
+    def test_a_whole_archive_book_carries_the_file_size(self):
+        # Arrange - 1 冊の ZIP と、2 冊入りの ZIP
+        folder = self.work_dir / "大きさ"
+        single = self.write_archive(folder / "単体_03.zip", ("001.jpg", "002.jpg"))
+        self.write_compound(folder / "合本.zip")
+
+        # Act
+        books = self.analyzed_books([folder])
+
+        # Assert - アーカイブ全体の本はそのファイルの大きさ。中の 1 冊は分からない
+        sizes = {
+            (Path(book["source"]).name, book["entry"]): book["size"] for book in books
+        }
+        self.assertEqual(single.stat().st_size, sizes[("単体_03.zip", "")], sizes)
+        compound = [size for (name, _), size in sizes.items() if name == "合本.zip"]
+        self.assertEqual([None, None], compound, sizes)
+
+    def test_a_made_book_carries_the_size_of_the_made_file(self):
+        # Arrange
+        folder = self.work_dir / "出来た大きさ"
+        self.write_compound(folder / "合本.zip")
+        books = self.analyzed_books([folder])
+        chosen = self.selection(books, [book["output_name"] for book in books])
+
+        # Act
+        job = self.organize([folder], self.work_dir / "out-出来た大きさ", chosen)
+
+        # Assert - 出来たファイルそのものの大きさ
+        finished = job["result"]["finished"]
+        self.assertEqual(2, len(finished), finished)
+        for book in finished:
+            self.assertEqual(Path(book["path"]).stat().st_size, book["size"], book)
+
+
+class TrashFileTest(PlanApiTestBase):
+    """一覧から選んだファイルをごみ箱へ移す（#164）。
+
+    実際のごみ箱は汚さない。ごみ箱へ渡すところを差し替え、何を渡したか・
+    渡さずに断ったかを見る。
+    """
+
+    def trash(self, path: Path):
+        return self.client.post(
+            "/api/files/trash", params=self.auth(), json={"path": str(path)}
+        )
+
+    def test_moves_a_file_inside_the_allowed_roots_to_the_trash(self):
+        # Arrange
+        archive = self.write_archive(self.work_dir / "要らない_01.zip")
+
+        # Act
+        with mock.patch("manga_api.app.send2trash") as send:
+            response = self.trash(archive)
+
+        # Assert
+        self.assertEqual(200, response.status_code, response.text)
+        send.assert_called_once_with(archive.resolve())
+        self.assertEqual(str(archive.resolve()), response.json()["path"])
+
+    def test_refuses_a_file_outside_the_allowed_roots(self):
+        # Arrange - 許可の外に置いたファイル
+        outside_temp = TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(outside_temp.cleanup)
+        outside = self.write_archive(Path(outside_temp.name).resolve() / "外.zip")
+
+        # Act
+        with mock.patch("manga_api.app.send2trash") as send:
+            response = self.trash(outside)
+
+        # Assert - 断り、ごみ箱へは何も渡さない
+        self.assertEqual(400, response.status_code, response.text)
+        send.assert_not_called()
+        self.assertTrue(outside.exists())
+
+    def test_refuses_a_folder_and_a_missing_file(self):
+        # Arrange - フォルダは中身ごと消えるので扱わない
+        folder = self.work_dir / "フォルダ"
+        self.write_archive(folder / "中_01.zip")
+
+        # Act
+        with mock.patch("manga_api.app.send2trash") as send:
+            refused_folder = self.trash(folder)
+            refused_missing = self.trash(self.work_dir / "無い.zip")
+
+        # Assert
+        self.assertEqual(400, refused_folder.status_code, refused_folder.text)
+        self.assertEqual(400, refused_missing.status_code, refused_missing.text)
+        send.assert_not_called()
+
+    def test_reports_why_the_file_could_not_be_moved(self):
+        # Arrange - 開かれたままのファイルなど、ごみ箱へ移せないとき
+        archive = self.write_archive(self.work_dir / "掴まれた_01.zip")
+
+        # Act
+        with mock.patch(
+            "manga_api.app.send2trash", side_effect=PermissionError("使用中です")
+        ):
+            response = self.trash(archive)
+
+        # Assert - 理由を添えて断る。黙って成功にしない
+        self.assertEqual(409, response.status_code, response.text)
+        self.assertIn("使用中です", response.json()["detail"])
 
 
 if __name__ == "__main__":

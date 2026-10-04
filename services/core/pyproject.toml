@@ -1,6 +1,6 @@
 [project]
 name = "manga-core"
-version = "4.9.0"
+version = "4.10.0"
 description = "漫画アーカイブの整理とページ順修正を担う GUI 非依存のコアロジック"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -10,6 +10,7 @@ dependencies = [
     "py7zr>=0.20.0",
     "rarfile>=4.0",
     "requests>=2.31.0",
+    "send2trash>=2.1.0",
     "uvicorn>=0.32.0",
 ]
 
