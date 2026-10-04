@@ -784,18 +784,6 @@ class CoverEditTest(ApiTestBase):
         self.assertTrue(payload["is_spread"])
         self.assertEqual(1600, payload["width"])
 
-    def test_reports_the_colour_of_each_edge(self):
-        # Act - 左半分が赤、右半分が青の見開き
-        payload = self.client.get(
-            "/api/cover", params=self.auth({"archive": str(self.spread)})
-        ).json()
-
-        # Assert - 枠を外へ広げた所を塗る色。画面は同じ色で見本を描く（#130）
-        edges = payload["edge_colors"]
-        self.assertEqual({"top", "bottom", "left", "right"}, set(edges))
-        self.assertRegex(edges["left"], r"^#f[0-9a-f]0[0-9a-f]0[0-9a-f]$")
-        self.assertRegex(edges["right"], r"^#0[0-9a-f]0[0-9a-f]f[0-9a-f]$")
-
     def test_splits_the_cover_through_a_job(self):
         # Act
         submitted = self.client.post(

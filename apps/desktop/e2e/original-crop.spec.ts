@@ -159,13 +159,16 @@ async function handleCentre(page: Page) {
   return { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
 }
 
-/** 掴んで内側へ運び、枠の右端が画像の幅の fraction の所へ来るまで縮める */
+/**
+ * 掴んで内側へ運び、枠の右下が画像の fraction の所へ来るまで縮める。
+ * 枠の縦横比は固定しない（#146）ので、縦横どちらも縮める
+ */
 async function shrinkFrameTo(page: Page, fraction: number) {
   const image = await boxOf(page, "cover-image");
   const grip = await handleCentre(page);
   await dragFrom(page, grip, {
     x: image.x + image.width * fraction,
-    y: grip.y,
+    y: image.y + image.height * fraction,
   });
 }
 
@@ -296,7 +299,7 @@ test.describe("サムネイル作成: 切り抜きを広げる方向に戻せる
     page,
     browser,
   }) => {
-    // Arrange - 1200×1200。2:3 で切れる最大は 800×1200 になる
+    // Arrange - 1200×1200。開いたときの枠は画像の全体（#146）
     const archive = writeArchiveWithCover("枠を広げる.zip", 1200, 1200);
     await openCover(page, archive);
     await expect(page.getByTestId("cover-size")).toHaveText("1200×1200");
@@ -336,10 +339,9 @@ test.describe("サムネイル作成: 切り抜きを広げる方向に戻せる
       "大きくはなったが、捨てた画素は戻っていない（引き伸ばしただけ）",
     ).toBeTruthy();
 
-    // Assert - 画像の全体がちょうど収まる 2:3（1200×1800）は超えない。
-    // それより先は余白が増えるだけなので、枠もそこで止まる（#130）
-    expect(widened[0]).toBeLessThanOrEqual(1200);
-    expect(widened[1]).toBeLessThanOrEqual(1800);
+    // Assert - 枠は画像の全体（1200×1200）で止まり、足りない上下を余白で
+    // 足した 2:3（1200×1800）になる（#146）
+    expect(widened).toEqual([1200, 1800]);
 
     // Assert - 何度加工しても元画像は最初の 1 枚のまま。加工のたびに
     // 増えるなら、加工後の画像を元画像として貯め込んでいる

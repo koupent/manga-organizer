@@ -3,10 +3,12 @@ import {
   TARGET_RATIO,
   rotatedSize,
   type CropRect,
-  type EdgeColors,
   type ImageSize,
   type QuarterTurn,
 } from "./CropFrame";
+
+/** 縁の色を拾う帯の太さ。manga_core.cover_editor.EDGE_STRIP_FRACTION と同じ */
+const EDGE_STRIP_FRACTION = 0.01;
 
 type CoverPreviewProps = {
   /** 原稿の URL。加工前の 1 枚をそのまま指す */
@@ -17,8 +19,6 @@ type CoverPreviewProps = {
   angle: QuarterTurn;
   /** 保留中の切り抜き。回した後の座標で受け取る */
   crop: CropRect;
-  /** 枠が画像の外へはみ出した所を塗る色。回した後の向きで受け取る */
-  edges: EdgeColors;
   /** 見本の幅。高さは 2:3 から決まる */
   width: number;
 };
@@ -35,6 +35,18 @@ function turnContext(
   context.rotate((angle * Math.PI) / 180);
 }
 
+/** 帯の中の画素の、色ごとの中央値（#rrggbb） */
+function medianColour(data: Uint8ClampedArray): string {
+  const channel = (offset: number) => {
+    const values: number[] = [];
+    for (let at = offset; at < data.length; at += 4) values.push(data[at]);
+    values.sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)] ?? 0;
+  };
+  const hex = (value: number) => value.toString(16).padStart(2, "0");
+  return `#${hex(channel(0))}${hex(channel(1))}${hex(channel(2))}`;
+}
+
 /**
  * viewer での見え方。保留中の切り抜きと回転を、その場で描いて見せる。
  *
@@ -42,16 +54,16 @@ function turnContext(
  * 枠を動かしても回しても見え方が変わらない。確定するまで結果が見えない
  * 画面では、確定してみるまで正しいかどうか分からない。
  *
- * サイドカーは 切り抜き → 回転 の順に適用する。枠は回した後の座標で
- * 持っているので、ここでは「原稿を回してから、枠の中を切り出す」という
- * 同じ結果になる順で描く。最後に viewer と同じ 2:3 の中央クロップで収める。
+ * サイドカーは 切り抜き → 回転 → 余白を足して 2:3（#146）の順に作る。枠は
+ * 回した後の座標で持っているので、ここでは「原稿を回してから、枠の中を
+ * 切り出す」という同じ結果になる順で描き、2:3 の中央に収めて、足りない側を
+ * 切り出した絵の縁の色で塗る。
  */
 export function CoverPreview({
   src,
   image,
   angle,
   crop,
-  edges,
   width,
 }: CoverPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -65,6 +77,9 @@ export function CoverPreview({
     // 画面に貼らない Image で読む。document.images に混ざらないので、
     // 読み込みを待つ他の仕組みを巻き込まない
     const loading = new Image();
+    // 余白の色を絵の縁から拾うため、画素を読める形で取り寄せる。サイドカーは
+    // 画面の生まれ（Tauri・開発）を許しているので、別の生まれでも読める
+    loading.crossOrigin = "anonymous";
     let live = true;
     // 前の絵は、もう別の 1 枚のもの。持ち越すと、新しい絵が届くまでの間
     // 「前のページの画素を、新しい寸法と枠で切った絵」を見え方として出す。
@@ -89,7 +104,7 @@ export function CoverPreview({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) return;
 
     // 画面の画素密度に合わせて実画素を持つ。CSS 上の大きさは style で決める
@@ -102,50 +117,102 @@ export function CoverPreview({
     // 描く絵が無い間は空にしておく。前の絵を残すと、それが今の 1 枚の
     // 見え方だと読めてしまう
     if (!source || crop.width <= 0 || crop.height <= 0) return;
-    // viewer と同じ置き方。短い辺を枠に合わせ、余った側は中央で切る
-    const scale = Math.max(
+
+    // 切り出した絵を、2:3 の中に収まる最大の大きさで真ん中に置く
+    const scale = Math.min(
       canvas.width / crop.width,
       canvas.height / crop.height,
     );
-    context.translate(
-      (canvas.width - crop.width * scale) / 2,
-      (canvas.height - crop.height * scale) / 2,
-    );
-    context.scale(scale, scale);
-    context.translate(-crop.x, -crop.y);
-    // 画像の外へはみ出した所は、サイドカーと同じくその辺の縁の色で塗る（#130）
+    const placed = {
+      x: (canvas.width - crop.width * scale) / 2,
+      y: (canvas.height - crop.height * scale) / 2,
+      width: crop.width * scale,
+      height: crop.height * scale,
+    };
     const turned = rotatedSize(
       { width: imageWidth, height: imageHeight },
       angle,
     );
-    const right = crop.x + crop.width;
-    const bottom = crop.y + crop.height;
-    const pad = (
-      colour: string,
-      x: number,
-      y: number,
-      w: number,
-      h: number,
-    ) => {
-      if (w <= 0 || h <= 0) return;
-      context.fillStyle = colour;
-      context.fillRect(x, y, w, h);
+    const drawPicture = () => {
+      context.save();
+      context.beginPath();
+      context.rect(placed.x, placed.y, placed.width, placed.height);
+      context.clip();
+      context.translate(placed.x, placed.y);
+      context.scale(scale, scale);
+      context.translate(-crop.x, -crop.y);
+      turnContext(context, angle, turned);
+      context.drawImage(source, 0, 0, imageWidth, imageHeight);
+      context.restore();
     };
-    // 帯は絵の下へ少し潜らせる。境目が画素の途中に来ると、帯と絵の縁が
-    // 両方とも半分透けて、細い線が見える
+    drawPicture();
+
+    // 足りない側を、切り出した絵のその辺の縁の色で塗る（サイドカーと同じ
+    // 塗り方）。帯は絵の下へ少し潜らせ、境目に細い線が見えないようにする
+    const sideways = placed.width < canvas.width - 1;
+    const upright = placed.height < canvas.height - 1;
+    if (!sideways && !upright) return;
+    let colours: [string, string];
+    try {
+      const strip = (x: number, y: number, w: number, h: number) =>
+        medianColour(
+          context.getImageData(
+            Math.floor(x),
+            Math.floor(y),
+            Math.max(1, Math.round(w)),
+            Math.max(1, Math.round(h)),
+          ).data,
+        );
+      if (sideways) {
+        const across = Math.max(1, placed.width * EDGE_STRIP_FRACTION);
+        colours = [
+          strip(placed.x, placed.y, across, placed.height),
+          strip(
+            placed.x + placed.width - across,
+            placed.y,
+            across,
+            placed.height,
+          ),
+        ];
+      } else {
+        const across = Math.max(1, placed.height * EDGE_STRIP_FRACTION);
+        colours = [
+          strip(placed.x, placed.y, placed.width, across),
+          strip(
+            placed.x,
+            placed.y + placed.height - across,
+            placed.width,
+            across,
+          ),
+        ];
+      }
+    } catch {
+      // 画素を読めない（取り寄せが生まれの違いで弾かれた）。余白は塗らずに
+      // 絵だけを見せる。見本が無くなるより、色が付かない方がまし
+      return;
+    }
     const tuck = 2;
-    if (crop.y < 0) pad(edges.top, crop.x, crop.y, crop.width, tuck - crop.y);
-    if (bottom > turned.height) {
-      const from = turned.height - tuck;
-      pad(edges.bottom, crop.x, from, crop.width, bottom - from);
+    context.fillStyle = colours[0];
+    if (sideways) {
+      context.fillRect(0, 0, placed.x + tuck, canvas.height);
+      context.fillStyle = colours[1];
+      context.fillRect(
+        placed.x + placed.width - tuck,
+        0,
+        canvas.width - placed.x - placed.width + tuck,
+        canvas.height,
+      );
+    } else {
+      context.fillRect(0, 0, canvas.width, placed.y + tuck);
+      context.fillStyle = colours[1];
+      context.fillRect(
+        0,
+        placed.y + placed.height - tuck,
+        canvas.width,
+        canvas.height - placed.y - placed.height + tuck,
+      );
     }
-    if (crop.x < 0) pad(edges.left, crop.x, crop.y, tuck - crop.x, crop.height);
-    if (right > turned.width) {
-      const from = turned.width - tuck;
-      pad(edges.right, from, crop.y, right - from, crop.height);
-    }
-    turnContext(context, angle, turned);
-    context.drawImage(source, 0, 0, imageWidth, imageHeight);
+    drawPicture();
   }, [
     source,
     imageWidth,
@@ -155,10 +222,6 @@ export function CoverPreview({
     crop.y,
     crop.width,
     crop.height,
-    edges.top,
-    edges.bottom,
-    edges.left,
-    edges.right,
     width,
     height,
   ]);

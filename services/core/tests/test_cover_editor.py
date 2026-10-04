@@ -132,35 +132,35 @@ class TransformImageTest(unittest.TestCase):
             self.assertGreater(red, blue, "左半分（赤）が残っていない")
 
     def test_crops_to_the_requested_box(self):
-        # Act
+        # Act - 2:3 の範囲を切り抜く
         transformed = transform_image(
-            image_bytes((1000, 1000)), CoverTransform(crop=(100, 200, 600, 800))
+            image_bytes((1000, 1000)), CoverTransform(crop=(100, 100, 500, 700))
         )
 
         # Assert
         with Image.open(io.BytesIO(transformed)) as image:
-            self.assertEqual((500, 600), image.size)
+            self.assertEqual((400, 600), image.size)
 
-    def test_rotates_by_quarter_turns(self):
-        # Act
+    def test_rotates_by_quarter_turns_then_pads_to_two_by_three(self):
+        # Act - 800x1200 を回すと 1200x800。仕上がりは 2:3 に揃える（#146）
         transformed = transform_image(
             image_bytes((800, 1200)), CoverTransform(rotate=90)
         )
 
-        # Assert
+        # Assert - 回した後の向きで、上下に余白を足して 1200x1800
         with Image.open(io.BytesIO(transformed)) as image:
-            self.assertEqual((1200, 800), image.size)
+            self.assertEqual((1200, 1800), image.size)
 
     def test_applies_split_then_crop_then_rotate(self):
-        # Act - 分割してから切り抜き、最後に回す
+        # Act - 分割してから切り抜き、回し、最後に余白で 2:3 にする
         transformed = transform_image(
             spread_bytes(),
             CoverTransform(split="right", crop=(0, 0, 400, 600), rotate=90),
         )
 
-        # Assert
+        # Assert - 400x600 を回すと 600x400、2:3 にして 600x900
         with Image.open(io.BytesIO(transformed)) as image:
-            self.assertEqual((600, 400), image.size)
+            self.assertEqual((600, 900), image.size)
 
     def test_rejects_a_rotation_that_is_not_a_quarter_turn(self):
         with self.assertRaises(CoverEditError):
@@ -221,7 +221,11 @@ BANDS = {"top": "red", "bottom": "blue", "left": "lime", "right": "yellow"}
 
 
 class PaddedCropTest(unittest.TestCase):
-    """2:3 に収まらない画像を、枠を外へ広げて切らずに表紙にする（#130）"""
+    """切り取った範囲に余白を足して 2:3 にする（#146）。
+
+    切り取る範囲の縦横比は利用者が自由に決める。仕上がりの 2:3 はサイドカーが
+    揃え、余白は切り取った画像のその辺の縁の色で塗る。
+    """
 
     def crop(self, size, box) -> Image.Image:
         produced = transform_image(
@@ -230,8 +234,8 @@ class PaddedCropTest(unittest.TestCase):
         return Image.open(io.BytesIO(produced)).convert("RGB")
 
     def test_pads_above_and_below_with_each_edge_colour(self):
-        # Act - 750x1000 は 2:3 より横に広い。幅いっぱいの 2:3 は高さ 1125
-        image = self.crop((750, 1000), (0, -62, 750, 1063))
+        # Act - 750x1000 は 2:3 より横に広い。全体を切り取ると上下に足す
+        image = self.crop((750, 1000), (0, 0, 750, 1000))
 
         # Assert - 足した余白はそれぞれの辺の色、元の絵は真ん中にそのまま
         self.assertEqual((750, 1125), image.size)
@@ -240,33 +244,31 @@ class PaddedCropTest(unittest.TestCase):
         self.assertEqual((128, 128, 128), image.getpixel((375, 562)))
 
     def test_pads_left_and_right_with_each_edge_colour(self):
-        # Act - 500x1000 は 2:3 より縦に長い。高さいっぱいの 2:3 は幅 667
-        image = self.crop((500, 1000), (-83, 0, 584, 1000))
+        # Act - 500x1000 は 2:3 より縦に長い。全体を切り取ると左右に足す
+        image = self.crop((500, 1000), (0, 0, 500, 1000))
 
         # Assert
         self.assertEqual((667, 1000), image.size)
         self.assertEqual(_COLOR_SAMPLES["lime"], image.getpixel((10, 500)))
         self.assertEqual(_COLOR_SAMPLES["yellow"], image.getpixel((660, 500)))
 
-    def test_cuts_one_side_and_pads_the_other(self):
-        # Act - 上へ 62 はみ出し、下は 900 で切る（#141）。画面は見えている
-        # 範囲の中で枠を自由に動かせるので、片側だけはみ出す枠も来る
-        image = self.crop((750, 1000), (0, -62, 750, 900))
+    def test_pads_with_the_edges_of_the_cropped_image(self):
+        # Act - 帯の内側の灰色だけを、横長に切り取る
+        image = self.crop((750, 1000), (100, 300, 650, 600))
 
-        # Assert - 上は辺の色で塗り、下は画像のまま切れている（下の帯は入らない）
-        self.assertEqual((750, 962), image.size)
-        self.assertEqual(_COLOR_SAMPLES["red"], image.getpixel((375, 10)))
-        self.assertEqual((128, 128, 128), image.getpixel((375, 955)))
+        # Assert - 余白の色は元の画像の縁（赤や青）ではなく、切り取った画像の縁
+        self.assertEqual((550, 825), image.size)
+        self.assertEqual((128, 128, 128), image.getpixel((275, 10)))
+        self.assertEqual((128, 128, 128), image.getpixel((275, 815)))
 
-    def test_refuses_a_box_that_does_not_overlap_the_image(self):
-        # Assert - 塗っただけの表紙になる範囲は受けない
+    def test_leaves_a_two_by_three_crop_as_it_is(self):
+        image = self.crop((750, 1000), (0, 0, 600, 900))
+        self.assertEqual((600, 900), image.size)
+
+    def test_refuses_a_box_outside_the_image(self):
+        # Assert - 足りない分は切り取った後に足すので、外を指す範囲は受けない
         with self.assertRaises(CoverEditError):
-            self.crop((750, 1000), (0, -300, 750, 0))
-
-    def test_refuses_a_box_far_larger_than_the_image(self):
-        # Assert - 桁違いの範囲 1 つで画素を確保させない
-        with self.assertRaises(CoverEditError):
-            self.crop((750, 1000), (0, -5000, 750, 6000))
+            self.crop((750, 1000), (0, -62, 750, 1063))
 
     def test_edge_colours_ignore_a_thin_line_at_the_very_edge(self):
         # Arrange - 赤い地の外周に 1px の黒い線

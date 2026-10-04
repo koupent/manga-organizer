@@ -119,15 +119,7 @@ test.describe("前回の枠の復元: 壊れた記録を枠にしない", () => 
 });
 
 test.describe("前回の枠の復元: 範囲を選ばない記録", () => {
-  /** 枠は 2:3 に固定されている。viewer が表紙をその比で描くため */
-  function expectTargetRatio(crop: CropRect) {
-    expect(
-      crop.width / crop.height,
-      `枠の縦横比が 2:3 でない（${Math.round(crop.width)}×${Math.round(crop.height)}）`,
-    ).toBeCloseTo(2 / 3, 3);
-  }
-
-  test("加工が 1 つも無ければ、既定の 2:3 の枠にする", () => {
+  test("加工が 1 つも無ければ、既定の枠にする", () => {
     // Arrange - 記録はあるが、範囲を選ぶ加工は 1 つも無い
     // 制御: 元画像そのものは 2:3 ではない。全面を枠にすると必ず崩れる
     expect(ORIGINAL.width / ORIGINAL.height).not.toBeCloseTo(2 / 3, 3);
@@ -135,10 +127,9 @@ test.describe("前回の枠の復元: 範囲を選ばない記録", () => {
     // Act
     const shown = shownEdit([], ORIGINAL);
 
-    // Assert - 全面ではなく、触っていないときと同じ枠。全面のまま確定すると
-    // 2:3 でない絵が表紙になり、viewer で切られて意図と違う見え方になる
+    // Assert - 触っていないときと同じ枠。1000×800 は見開きなので、全面
+    // ではなく中央の 2:3 から始める（片側を選んで表紙にする絵）
     expect(shown.angle).toBe(0);
-    expectTargetRatio(shown.crop);
     expectFrame(
       shown.crop,
       defaultCrop(ORIGINAL),
@@ -146,7 +137,7 @@ test.describe("前回の枠の復元: 範囲を選ばない記録", () => {
     );
   });
 
-  test("回転だけの記録は、向きを保ったまま既定の 2:3 の枠にする", () => {
+  test("回転だけの記録は、向きを保ったまま既定の枠にする", () => {
     // Arrange - 回した後の絵。枠はこの座標で持つ
     const shownSize = rotatedSize(ORIGINAL, 90);
 
@@ -160,9 +151,8 @@ test.describe("前回の枠の復元: 範囲を選ばない記録", () => {
     // 前回の向きが失われる
     expect(shown.angle, "前回の回転が失われている").toBe(90);
 
-    // Assert - 枠は回した絵に対する既定の 2:3。全面だと 800×1000 のままで、
-    // 触らずに確定すれば元画像を丸ごと表紙にしてしまう
-    expectTargetRatio(shown.crop);
+    // Assert - 枠は回した絵に対する既定の枠。回した後は縦長（800×1000）に
+    // なるので、見開きの中央の 2:3 ではなく画像の全体になる（#146）
     expectFrame(
       shown.crop,
       defaultCrop(shownSize),

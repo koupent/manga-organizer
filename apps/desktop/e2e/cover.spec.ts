@@ -915,34 +915,26 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     expect(Math.abs(reset.width - initial.width)).toBeLessThan(3);
   });
 
-  test("枠の縦横比が 2:3 に保たれる", async ({ page }) => {
-    // Arrange - viewer が表紙を 2:3 で描くため、枠も 2:3 に固定する
+  test("枠の縦横比は固定せず、角を運んだとおりに変わる", async ({ page }) => {
+    // Arrange - 切り取る範囲の比は自由で、2:3 に足りない分は確定のときに
+    // 余白で足す（#146）
     const archive = writeSpreadArchive(sidecar.workDir, "枠比率.zip");
     await openCover(page, archive);
     const before = await frameBox(page);
-    expect(Math.abs(before.width / before.height - 2 / 3)).toBeLessThan(0.02);
 
-    // Act - 掴む所を枠の内側へ運んで小さくする
+    // Act - 掴む所を左へだけ運ぶ
     const handle = await page.getByTestId("crop-handle").first().boundingBox();
     if (!handle) throw new Error("crop-handle が描画されていません");
     const grip = {
       x: handle.x + handle.width / 2,
       y: handle.y + handle.height / 2,
     };
-    const towards = {
-      x: before.x + before.width / 2 - grip.x,
-      y: before.y + before.height / 2 - grip.y,
-    };
-    const length = Math.hypot(towards.x, towards.y) || 1;
-    await dragFrom(page, grip, {
-      x: grip.x + (towards.x / length) * 60,
-      y: grip.y + (towards.y / length) * 60,
-    });
+    await dragFrom(page, grip, { x: grip.x - 60, y: grip.y });
 
-    // Assert - 実際に小さくなり、それでも比率は 2:3 のまま
+    // Assert - 幅だけが縮み、高さはそのまま。2:3 に固定していれば高さも縮む
     const after = await frameBox(page);
-    expect(after.width).toBeLessThan(before.width - 15);
-    expect(Math.abs(after.width / after.height - 2 / 3)).toBeLessThan(0.02);
+    expect(after.width).toBeLessThan(before.width - 40);
+    expect(Math.abs(after.height - before.height)).toBeLessThan(3);
   });
 
   test("確定すると選んだ画像が先頭ページになる", async ({ page }) => {

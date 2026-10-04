@@ -1557,9 +1557,6 @@
             "type": "number",
             "title": "Target Aspect Ratio"
           },
-          "edge_colors": {
-            "$ref": "#/components/schemas/EdgeColorsView"
-          },
           "original": {
             "anyOf": [
               {
@@ -1579,7 +1576,6 @@
           "height",
           "is_spread",
           "target_aspect_ratio",
-          "edge_colors",
           "original"
         ],
         "title": "CoverView",
@@ -1603,35 +1599,6 @@
         ],
         "title": "DroppedFile",
         "description": "ドロップされたファイルの手がかり"
-      },
-      "EdgeColorsView": {
-        "properties": {
-          "top": {
-            "type": "string",
-            "title": "Top"
-          },
-          "bottom": {
-            "type": "string",
-            "title": "Bottom"
-          },
-          "left": {
-            "type": "string",
-            "title": "Left"
-          },
-          "right": {
-            "type": "string",
-            "title": "Right"
-          }
-        },
-        "type": "object",
-        "required": [
-          "top",
-          "bottom",
-          "left",
-          "right"
-        ],
-        "title": "EdgeColorsView",
-        "description": "画像の 4 辺の縁の色（#rrggbb）。\n\n切り抜き枠が画像の外へはみ出した所は、サイドカーがこの色で塗る。画面は\n同じ色で見本を描くので、確定する前に仕上がりが見える（#130）。向きは\n回す前の画像のもの。"
       },
       "EditsRequest": {
         "properties": {
@@ -2092,17 +2059,13 @@
             },
             "type": "array",
             "title": "Operations"
-          },
-          "edge_colors": {
-            "$ref": "#/components/schemas/EdgeColorsView"
           }
         },
         "type": "object",
         "required": [
           "width",
           "height",
-          "operations",
-          "edge_colors"
+          "operations"
         ],
         "title": "OriginalView",
         "description": "いま見ている 1 枚の、加工前の姿。\n\nZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた\nmanifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。\n画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。"
