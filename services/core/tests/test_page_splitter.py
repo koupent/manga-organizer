@@ -594,7 +594,7 @@ class RestoresTheOriginalTest(SplitFixture):
         # もう一度割ったとき、元の画素をもう引けない
         self.assertEqual(1, len(originals_of(self.archive_path)))
 
-    def test_a_restored_spread_is_marked_kept_whole(self):
+    def test_a_restored_spread_is_a_spread_again(self):
         # Arrange - 割ってから戻す
         self.build_four_pages()
         self.split_row(self.archive_path, 1, SPLIT_X)
@@ -610,28 +610,9 @@ class RestoresTheOriginalTest(SplitFixture):
         # Act
         reopened = self.splitter.scan_rows(self.archive_path)
 
-        # Assert - 戻した見開きは見開きのまま、戻したことの印が付く（#138）。
-        # 印が無いと、画面は判定どおり既定のチェックを入れ、戻した直後に
-        # また「割る」が保留になる
+        # Assert - 戻した見開きは、割っていない見開きとして出る（#148）
         self.assertTrue(reopened[1].is_spread)
         self.assertIsNone(reopened[1].split)
-        self.assertTrue(reopened[1].kept_whole)
-        self.assertEqual(
-            [False, False, False],
-            [row.kept_whole for index, row in enumerate(reopened) if index != 1],
-        )
-
-    def test_a_spread_that_was_never_split_is_not_marked(self):
-        # Arrange
-        self.build_four_pages()
-
-        # Act
-        rows = self.splitter.scan_rows(self.archive_path)
-
-        # Assert - 割ったことの無い見開きには印を付けない。付けると、開いた
-        # ときの既定のチェックが入らず、見開きを割り漏らす
-        self.assertTrue(rows[1].is_spread)
-        self.assertFalse(rows[1].kept_whole)
 
 
 class SplitsSeveralSpreadsAtOnceTest(SplitFixture):
@@ -1168,15 +1149,13 @@ class MergesTwoPagesTest(SplitFixture):
             ],
         )
 
-        # Assert - 結合した 1 枚は元画像として残り、開き直すと見開きのまま
-        # 残すページとして出る。印が無いと、画面は判定どおりチェックを入れ、
-        # 結合した直後にまた「割る」が保留になる
+        # Assert - 結合した 1 枚は元画像として残り、開き直すと割っていない
+        # 見開きとして出る（#148）
         self.assertIn(content_hash(merged), originals_of(self.archive_path))
         rows = self.splitter.scan_rows(self.archive_path)
         self.assertEqual(3, len(rows))
         self.assertTrue(rows[1].is_spread)
         self.assertIsNone(rows[1].split)
-        self.assertTrue(rows[1].kept_whole)
 
     def test_pages_of_different_heights_are_scaled_to_the_taller(self):
         # Arrange - 1200x1800 と 400x600。低い方を 3 倍して高さを揃える
@@ -1248,3 +1227,134 @@ class MergesTwoPagesTest(SplitFixture):
         restored_names = page_names(self.archive_path)
         self.assertEqual(3, len(restored_names))
         self.assertEqual(merged, entry_data(self.archive_path, restored_names[1]))
+
+
+# 継ぎ目の候補（#149）に使う横縞の明るさ。隣り合う縞の差を大きくし、ずれた
+# 縞どうしが「近い色」に入らないようにする
+SEAM_BANDS = (0, 200, 40, 240, 80, 160, 20, 220, 120)
+
+
+def seam_spread(bands: tuple[int, ...] = SEAM_BANDS) -> Image.Image:
+    """横縞に左右のグラデーションを重ねた 1200x900 の見開き。
+
+    継ぎ目（中央）の両側は同じ色で、外側の端どうしは違う色になる。横縞だけ
+    だと左右の外側の端も同じ色になり、向きを取り違えた実装でも通ってしまう。
+    """
+    width, height = 1200, 900
+    across = Image.linear_gradient("L").rotate(90).resize((width, height))
+    stripes = Image.new("L", (width, height))
+    band = height // len(bands)
+    for index, value in enumerate(bands):
+        stripes.paste(value, (0, index * band, width, (index + 1) * band))
+    return Image.merge("RGB", (across, stripes, Image.new("L", (width, height), 128)))
+
+
+def half_bytes(image: Image.Image, side: str, fmt: str = "PNG") -> bytes:
+    """見開きの右半分（先に読む方）か左半分を、1 ページとして書き出す"""
+    middle = image.width // 2
+    left, right = (middle, image.width) if side == "right" else (0, middle)
+    box = (left, 0, right, image.height)
+    buffer = io.BytesIO()
+    image.crop(box).save(buffer, fmt)
+    return buffer.getvalue()
+
+
+def framed_bytes(picture: Image.Image) -> bytes:
+    """白い余白の中に絵を置いた単ページ。余白は端まで一色"""
+    page = Image.new("RGB", (600, 900), "#ffffff")
+    page.paste(picture.resize((440, 740)), (80, 80))
+    buffer = io.BytesIO()
+    page.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+class SuggestsMergesTest(SplitFixture):
+    """端の色がつながる隣り合う単ページ 2 枚を、結合の候補にする（#149）。
+
+    右綴じの見開きは先のページが右に来るので、先のページの左端と次の
+    ページの右端を比べる。
+    """
+
+    def suggested(self, pages: dict[str, bytes]) -> list[bool]:
+        build_archive(self.archive_path, pages)
+        return [
+            row.merge_suggested for row in self.splitter.scan_rows(self.archive_path)
+        ]
+
+    def test_pages_whose_seam_continues_are_suggested(self):
+        spread = seam_spread()
+        self.assertEqual(
+            [True, False, False],
+            self.suggested(
+                {
+                    "001.png": half_bytes(spread, "right"),
+                    "002.png": half_bytes(spread, "left"),
+                    "003.png": tall_bytes("#808080"),
+                }
+            ),
+        )
+
+    def test_jpeg_pages_are_suggested_too(self):
+        # JPEG は縮めて復号する。にじみと縮小で色が少しずれても拾う
+        spread = seam_spread()
+        self.assertEqual(
+            [True, False],
+            self.suggested(
+                {
+                    "001.jpg": half_bytes(spread, "right", "JPEG"),
+                    "002.jpg": half_bytes(spread, "left", "JPEG"),
+                }
+            ),
+        )
+
+    def test_pages_in_the_wrong_order_are_not_suggested(self):
+        # 左半分が先に来ると、接する端は見開きの外側の端どうしになる
+        spread = seam_spread()
+        self.assertEqual(
+            [False, False],
+            self.suggested(
+                {
+                    "001.png": half_bytes(spread, "left"),
+                    "002.png": half_bytes(spread, "right"),
+                }
+            ),
+        )
+
+    def test_pages_from_different_pictures_are_not_suggested(self):
+        self.assertEqual(
+            [False, False],
+            self.suggested(
+                {
+                    "001.png": half_bytes(seam_spread(), "right"),
+                    "002.png": half_bytes(seam_spread(SEAM_BANDS[::-1]), "left"),
+                }
+            ),
+        )
+
+    def test_blank_margins_are_not_taken_as_a_seam(self):
+        # 白い余白どうしは必ず一致する。比べると余白のある本のほとんどの
+        # ページが候補になる
+        spread = seam_spread()
+        self.assertEqual(
+            [False, False],
+            self.suggested(
+                {"001.png": framed_bytes(spread), "002.png": framed_bytes(spread)}
+            ),
+        )
+
+    def test_a_page_is_not_suggested_twice(self):
+        # 1-2 と 2-3 のどちらもつながっていても、組にするのは前の 1 組だけ。
+        # 画面は 3 枚を数珠つなぎに結合しない
+        spread = seam_spread()
+        right, left = half_bytes(spread, "right"), half_bytes(spread, "left")
+        mirrored = Image.open(io.BytesIO(left)).transpose(
+            Image.Transpose.FLIP_LEFT_RIGHT
+        )
+        buffer = io.BytesIO()
+        mirrored.save(buffer, "PNG")
+        self.assertEqual(
+            [True, False, False],
+            self.suggested(
+                {"001.png": right, "002.png": left, "003.png": buffer.getvalue()}
+            ),
+        )

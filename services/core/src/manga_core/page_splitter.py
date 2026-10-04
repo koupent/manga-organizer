@@ -22,7 +22,7 @@
 import io
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PIL import Image
@@ -39,7 +39,6 @@ from manga_core.original_store import (
     plan_manifest,
     plan_original,
     read_original,
-    stored_original_hashes,
 )
 from manga_core.page_reorder import (
     OutputPage,
@@ -80,6 +79,25 @@ _CHANGE_MERGED = "merged"
 _CHANGE_ADJUSTED = "adjusted"
 _CHANGE_JOINED = "joined"
 
+# 結合の候補を探す継ぎ目の比べ方（#149）。端を縦に _SEAM_POINTS 点へ縮め、
+# 色の差がどのチャンネルも _SEAM_TOLERANCE 以内の点を「つながっている」と
+# みなす。その割合が _SEAM_MATCH 以上なら候補にする。候補は示すだけで保留には
+# しないので、取りこぼすより拾いすぎる側へ寄せてある
+_SEAM_POINTS = 64
+_SEAM_TOLERANCE = 32
+_SEAM_MATCH = 0.8
+# 端の点のうちこの割合以上が一色なら、無地の端（余白・塗りつぶし）として
+# 比べない。白い余白どうしは必ず一致するので、比べるとほとんどのページが
+# 候補になる
+_SEAM_FLAT = 0.9
+# 端として平均する幅（ページの幅に対する割合）。いちばん外の 1 列だけだと、
+# 読み取りの汚れや細い線 1 本で色が決まる
+_SEAM_STRIP = 0.005
+
+_Colour = tuple[int, int, int]
+# 端の色を上から _SEAM_POINTS 点
+_Edge = tuple[_Colour, ...]
+
 
 class PageSplitError(RuntimeError):
     """見開きを割れない"""
@@ -105,11 +123,9 @@ class SplitRow:
     displaced は、対の 2 枚がいま隣り合っていないこと。行は先に出てくる方の
     位置に置かれ、確定するとそこで 2 枚が隣り合う（#133）。
 
-    kept_whole は、見開きのまま残すと利用者が決めたページであること。割って
-    から戻したページ（#138）と、2 ページを結合したページ（#139）がこれに当たる。
-    見開きと判定しても、画面は既定のチェックを入れない。入れると、戻した・
-    結合した直後に読み直した画面でまた「割る」が保留になり、戻せなかった
-    ように見える。
+    merge_suggested は、この行と次の行の継ぎ目の色がつながっていて、2 枚で
+    1 枚の見開きらしいこと（#149）。画面は結合の候補として示すだけで、保留には
+    しない。
     """
 
     names: tuple[str, ...]
@@ -119,7 +135,7 @@ class SplitRow:
     is_spread: bool
     split: SplitPosition | None
     displaced: bool = False
-    kept_whole: bool = False
+    merge_suggested: bool = False
 
 
 @dataclass(frozen=True)
@@ -200,10 +216,10 @@ def scan_rows(
     except PageReorderError as error:
         raise PageSplitError(str(error)) from error
     try:
-        facts = _scan_pages(editor, path, progress)
+        facts, edges = _scan_pages(editor, path, progress)
     finally:
         editor.close()
-    return _fold_pairs(path, facts, stored_original_hashes(path))
+    return _suggest_merges(_fold_pairs(path, facts), edges)
 
 
 def apply_rows(
@@ -320,15 +336,26 @@ def _page_facts(path: Path, name: str, data: bytes) -> _PageFacts:
 
 def _scan_pages(
     editor: ZipPageEditor, path: Path, progress: ProgressCallback | None = None
-) -> tuple[_PageFacts, ...]:
-    """ページを 1 枚ずつ読み、割った跡の記録まで含めて事実を集める"""
+) -> tuple[tuple[_PageFacts, ...], dict[str, tuple[_Edge, _Edge]]]:
+    """ページを 1 枚ずつ読み、割った跡の記録まで含めて事実を集める。
+
+    横長でないページは、結合の候補を探すために左右の端の色も取っておく
+    （#149）。ページ名から引けるように返す。
+    """
     pages = editor.pages
     facts: list[_PageFacts] = []
+    edges: dict[str, tuple[_Edge, _Edge]] = {}
     for position, page in enumerate(pages, 1):
-        facts.append(_page_facts(path, page.name, editor.read_entry(page.name)))
+        data = editor.read_entry(page.name)
+        fact = _page_facts(path, page.name, data)
+        facts.append(fact)
+        if not is_spread(fact.width, fact.height):
+            sides = _edge_colours(data)
+            if sides is not None:
+                edges[page.name] = sides
         if progress is not None:
             progress(position, len(pages))
-    return tuple(facts)
+    return tuple(facts), edges
 
 
 def _split_marks(ref: OriginalRef | None) -> tuple[str | None, int | None]:
@@ -349,19 +376,12 @@ def _split_marks(ref: OriginalRef | None) -> tuple[str | None, int | None]:
     return side, x if isinstance(x, int) and not isinstance(x, bool) else None
 
 
-def _fold_pairs(
-    path: Path, facts: Sequence[_PageFacts], originals: frozenset[str]
-) -> tuple[SplitRow, ...]:
+def _fold_pairs(path: Path, facts: Sequence[_PageFacts]) -> tuple[SplitRow, ...]:
     """割った対を 1 行へ畳む。行は対のうち先に出てくる方の位置に置く。
 
     並びには頼らない（#133）。ページ並べ替えで左右を入れ替えた対や、離れた
     位置へ動かした対を畳まずにおくと、どちらもただのページとして並び、ZIP に
     元画像が残っているのに戻す手立てが無くなる。
-
-    originals は同梱した元画像のハッシュ。中身がそれと同じページは、見開きの
-    まま残すと決めたものとして印を付ける（#138 #139）。割ってから戻したページは
-    元画像のバイト列そのものを書き戻し、結合したページは結合した 1 枚を元画像
-    として同梱するので、どちらも必ず当たる。
     """
     folded: dict[int, tuple[int, SplitRow]] = {}
     for first, second in _matched_halves(facts):
@@ -379,7 +399,7 @@ def _fold_pairs(
         if index in folded:
             rows.append(folded[index][1])
             continue
-        rows.append(_plain_row(fact, kept_whole=fact.digest in originals))
+        rows.append(_plain_row(fact))
     return tuple(rows)
 
 
@@ -488,7 +508,7 @@ def _split_pair(first: _PageFacts, second: _PageFacts) -> _SplitPair | None:
     return _SplitPair(ref=first.ref, x=first.x, right_first=first.side == _SIDE_EARLIER)
 
 
-def _plain_row(fact: _PageFacts, kept_whole: bool) -> SplitRow:
+def _plain_row(fact: _PageFacts) -> SplitRow:
     """まだ割られていない 1 ページぶんの行"""
     return SplitRow(
         names=(fact.name,),
@@ -497,8 +517,84 @@ def _plain_row(fact: _PageFacts, kept_whole: bool) -> SplitRow:
         height=fact.height,
         is_spread=is_spread(fact.width, fact.height),
         split=None,
-        kept_whole=kept_whole,
     )
+
+
+def _suggest_merges(
+    rows: tuple[SplitRow, ...], edges: dict[str, tuple[_Edge, _Edge]]
+) -> tuple[SplitRow, ...]:
+    """継ぎ目の色がつながる隣り合う単ページ 2 枚に、結合の候補の印を付ける（#149）。
+
+    前から順に拾い、組にしたページは次の組に使わない。画面も 3 枚以上を
+    数珠つなぎには結合しない。
+    """
+    marked = list(rows)
+    index = 0
+    while index + 1 < len(rows):
+        earlier, later = rows[index], rows[index + 1]
+        if _looks_joined(earlier, later, edges):
+            marked[index] = replace(earlier, merge_suggested=True)
+            index += 2
+        else:
+            index += 1
+    return tuple(marked)
+
+
+def _looks_joined(
+    earlier: SplitRow, later: SplitRow, edges: dict[str, tuple[_Edge, _Edge]]
+) -> bool:
+    """2 行が、1 枚の見開きを 2 ページに分けて入れたものに見えるか。
+
+    右綴じの見開きは先のページが右に来るので、先のページの左端と次のページの
+    右端が接する。割った対（名前が 2 つ）と横長のページ（端を取っていない）は
+    比べない。
+    """
+    if len(earlier.names) != 1 or len(later.names) != 1:
+        return False
+    first = edges.get(earlier.names[0])
+    second = edges.get(later.names[0])
+    if first is None or second is None:
+        return False
+    left_of_earlier, right_of_later = first[0], second[1]
+    if _is_flat(left_of_earlier) or _is_flat(right_of_later):
+        return False
+    close = sum(
+        _near(a, b) for a, b in zip(left_of_earlier, right_of_later, strict=True)
+    )
+    return close >= _SEAM_MATCH * _SEAM_POINTS
+
+
+def _edge_colours(data: bytes) -> tuple[_Edge, _Edge] | None:
+    """ページの (左端, 右端) の色。読めなければ None（候補を探さないだけ）"""
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            # JPEG は縮めながら復号できる。端の色を比べるだけなので、全画素は
+            # 要らない。ページの数だけ復号するので、走査の重さがここで決まる
+            image.draft("RGB", (_SEAM_POINTS, _SEAM_POINTS))
+            rgb = image.convert("RGB")
+    except OSError:
+        return None
+    strip = max(1, round(rgb.width * _SEAM_STRIP))
+
+    def edge(left: int) -> _Edge:
+        column = rgb.crop((left, 0, left + strip, rgb.height)).resize(
+            (1, _SEAM_POINTS), Image.Resampling.BOX
+        )
+        return tuple(column.getpixel((0, y)) for y in range(_SEAM_POINTS))
+
+    return edge(0), edge(rgb.width - strip)
+
+
+def _near(a: _Colour, b: _Colour) -> bool:
+    return max(abs(x - y) for x, y in zip(a, b, strict=True)) <= _SEAM_TOLERANCE
+
+
+def _is_flat(edge: _Edge) -> bool:
+    """端がほぼ一色か。余白や塗りつぶしの端は、つながりの手がかりにならない"""
+    middle = tuple(
+        sorted(channel)[len(channel) // 2] for channel in zip(*edge, strict=True)
+    )
+    return sum(_near(colour, middle) for colour in edge) >= _SEAM_FLAT * len(edge)
 
 
 @dataclass(frozen=True)
