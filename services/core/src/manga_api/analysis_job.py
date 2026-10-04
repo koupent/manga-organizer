@@ -116,6 +116,14 @@ class PlannedBookView(BaseModel):
             "pages-mismatch / extra-entries / folder-mismatch のいずれか"
         ),
     )
+    organized_detail: str | None = Field(
+        default=None,
+        description=(
+            "整理済みでない理由の中身。どのページ・どのファイル・どのフォルダが"
+            "何と違うかを利用者が読める 1 文で言う。画面はそのまま見せるだけで、"
+            "判断には organized_reason を使う"
+        ),
+    )
 
 
 def analysis_work(
@@ -254,4 +262,5 @@ def _book_view(book: PlannedBook) -> dict[str, Any]:
         author=book.author,
         title=book.title,
         organized_reason=book.organized_reason,
+        organized_detail=book.organized_detail,
     ).model_dump()

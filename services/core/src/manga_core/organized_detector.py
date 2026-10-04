@@ -19,7 +19,7 @@
 | 0 | 入れ物から出る本が 1 冊で ``entry`` が空 | ``toc_analyzer.locate_books`` |
 | 1 | 拡張子が ``.zip`` | ``ArchiveHandler.create_archive`` は ZIP しか書かない |
 | 2 | 名前 == ``format_volume_name(a, t, v) + ".zip"`` | ``volume_detector`` |
-| 3 | ページ名が順に ``sequential_name(i, N, 拡張子)`` | ``viewer_contract`` |
+| 3 | 名前順のページ名 == ``sequential_name(i, N, 拡張子)`` | ``viewer_contract`` |
 | 4 | 目次にそのページ以外が無い（同梱物だけ許す） | ``original_store`` |
 | 5 | 親フォルダ名 == ``[著者] 作品`` | ``FileOrganizer`` |
 
@@ -27,6 +27,11 @@
 いった「分からない」はすべて ``False`` へ落ちる。偽陰性（未整理と見て作り直す）は
 今までどおりの動きだが、偽陽性（未整理の本を整理済みと見て飛ばす）は利用者が
 待っていた整理が黙って行われないことになる。
+
+条件 3 は ZIP の格納順を見ない。viewer は格納順ではなく名前の辞書順で並べる
+（``viewer_contract``）ので、名前が揃っていれば格納順が違っても読み手から見た本は
+同じで、作り直しても得るものが無い。格納順まで求めると、後から別のツールで
+ページを足し引きした本が「連番が違う」と出て、利用者には違いが見つからない（#126）。
 
 **理由は 1 つだけ返す。** 画面がそのまま読む文字列なので、値そのものが公開契約。
 順序は上の表のとおりで、先に見た条件が理由になる。とくに条件 3 は条件 4 より先に
@@ -76,26 +81,39 @@ class OrganizedVerdict:
     reason: str | None = None
     author: str | None = None
     title: str | None = None
+    # 理由の中身を、利用者が読める 1 文で添える（#126）。理由の種類だけでは
+    # 「連番が違う」と言われても、どのページが何と違うのか探しようがない。
+    # 画面はそのまま見せるだけで、判断には ``reason`` を使う
+    detail: str | None = None
 
 
 def pages_are_sequential(names: Iterable[str]) -> bool:
-    """ページ名の並びが、整理の出力そのものかどうか。
+    """ページ名の並びが、整理の出力そのものかどうか。"""
+    return page_mismatch(names) is None
+
+
+def page_mismatch(names: Iterable[str]) -> str | None:
+    """ページ名が整理の出力と違う最初の所を 1 文で返す。同じなら None。
 
     期待値は ``viewer_contract.sequential_name`` に作らせる。桁は総ページ数に
     従うので（1000 ページなら ``0001``）、桁を決め打ちした判定は長い本を丸ごと
     「未整理」にする。拡張子はページごとにそのまま残るが、viewer が読めない形式は
     変換後の拡張子になるため ``001.bmp`` は決して整理済みにならない。
+
+    比べる前に名前順へ並べる。viewer が並べるのと同じ単純な辞書順で、ZIP の
+    格納順は見ない（モジュールの説明を参照）。
     """
-    ordered = list(names)
+    ordered = sorted(names)
     if not ordered:
         # この道具は 0 ページの本を作らない。空同士を「等しい」と見ると、
         # 画像の 1 枚も無い ZIP が整理済みとして飛ばされる
-        return False
+        return "ページがありません"
     total = len(ordered)
-    return ordered == [
-        sequential_name(position, total, PurePosixPath(name).suffix)
-        for position, name in enumerate(ordered, 1)
-    ]
+    for position, name in enumerate(ordered, 1):
+        expected = sequential_name(position, total, PurePosixPath(name).suffix)
+        if name != expected:
+            return f"{position} 枚目が {name}（連番なら {expected}）"
+    return None
 
 
 def judge_organized(
@@ -125,14 +143,22 @@ def judge_organized(
     author, title = parsed
 
     pages, extras = _split_entries(toc_names)
-    if not pages_are_sequential(pages):
-        return OrganizedVerdict(False, PAGES_MISMATCH)
+    mismatch = page_mismatch(pages)
+    if mismatch is not None:
+        return OrganizedVerdict(False, PAGES_MISMATCH, detail=mismatch)
 
-    if not all(_is_bundled(name) for name in extras):
-        return OrganizedVerdict(False, EXTRA_ENTRIES)
+    strangers = [name for name in extras if not _is_bundled(name)]
+    if strangers:
+        return OrganizedVerdict(False, EXTRA_ENTRIES, detail=_strangers(strangers))
 
-    if source.parent.name != format_series_dir(author, title):
-        return OrganizedVerdict(False, FOLDER_MISMATCH)
+    expected_dir = format_series_dir(author, title)
+    if source.parent.name != expected_dir:
+        found = source.parent.name
+        return OrganizedVerdict(
+            False,
+            FOLDER_MISMATCH,
+            detail=f"いまのフォルダは {found}（整理の形なら {expected_dir}）",
+        )
 
     return OrganizedVerdict(True, None, author, title)
 
@@ -155,6 +181,12 @@ def _parse_name(file_name: str) -> tuple[str, str] | None:
     if rebuilt != file_name:
         return None
     return author, title
+
+
+def _strangers(names: Sequence[str]) -> str:
+    """ページでも同梱物でもないエントリを、先頭の 1 つと残りの数で言う"""
+    rest = len(names) - 1
+    return names[0] if rest == 0 else f"{names[0]} ほか {rest} 件"
 
 
 def _split_entries(toc_names: Sequence[str]) -> tuple[list[str], list[str]]:

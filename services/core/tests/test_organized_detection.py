@@ -258,7 +258,13 @@ class OrganizedShapeTest(OrganizedTestBase):
         books = self.analyze(library)
 
         # Assert
-        self.assert_not_organized(self.only_book(books, misplaced), FOLDER_MISMATCH)
+        book = self.only_book(books, misplaced)
+        self.assert_not_organized(book, FOLDER_MISMATCH)
+        # 何が違うのかを、いまの名前と整理の形の両方で言う（#126）
+        self.assertEqual(
+            f"いまのフォルダは {TITLE}（整理の形なら {SERIES_DIR}）",
+            book.organized_detail,
+        )
 
     def test_a_stray_book_in_the_series_folder_is_judged_on_its_own(self):
         # Arrange - 同じフォルダに、整理済みの本と名前だけ違う本を並べる。
@@ -391,7 +397,10 @@ class OrganizedEntryWhitelistTest(OrganizedTestBase):
 
         # Assert - 「ドットで始まる物は見逃す」では通ってしまう。許可するのは
         # `.manga-organizer/` 配下だけ、という先頭一致の一覧が要る
-        self.assert_not_organized(self.only_book(books, book), EXTRA_ENTRIES)
+        found = self.only_book(books, book)
+        self.assert_not_organized(found, EXTRA_ENTRIES)
+        # どのファイルが余計なのかを名前で言う（#126）
+        self.assertEqual(".thumbnails/001.jpg", found.organized_detail)
 
 
 class OrganizedPageSequenceTest(OrganizedTestBase):
@@ -440,13 +449,38 @@ class OrganizedPageSequenceTest(OrganizedTestBase):
         # 残っている本は、この道具が作った物ではない
         self.assertIs(False, self.judge(["001.bmp"]), "変換前の拡張子を見逃す")
 
-    def test_the_page_names_must_be_in_order_and_present(self):
-        # Assert - 並びまで含めて出来上がりと同じであること
-        self.assertIs(False, self.judge(["002.jpg", "001.jpg"]), "格納順が違う")
+    def test_the_page_names_must_be_present(self):
+        # Assert - 抜けた番号は出来上がりと違う
+        self.assertIs(False, self.judge(["001.jpg", "003.jpg"]), "番号が抜けている")
 
         # Assert - 分からないものは False へ落ちる。空の一覧を「等しい」と
         # したくなるが、この道具は 0 ページの本を作らない
         self.assertIs(False, self.judge([]), "ページの無い本を整理済みと見る")
+
+    def test_the_storage_order_does_not_matter(self):
+        """格納順だけが違う本は整理済み（#126）。
+
+        viewer は格納順ではなく名前の辞書順で並べるので、読み手から見た本は
+        同じ。格納順まで求めると、後から別のツールでページを足し引きした本に
+        「連番が違う」が出て、利用者には違いが見つからない。
+        """
+        self.assertIs(True, self.judge(["002.jpg", "001.jpg", "003.jpg"]))
+
+    def test_the_mismatch_names_the_first_page_that_differs(self):
+        """どのページが何と違うかを 1 文で言う（#126）"""
+        from manga_core import organized_detector
+
+        # Assert - 抜けた番号は、そこに来るはずの名前と一緒に出る
+        self.assertEqual(
+            "2 枚目が 003.jpg（連番なら 002.jpg）",
+            organized_detector.page_mismatch(["001.jpg", "003.jpg"]),
+        )
+        # Assert - 連番でない名前は先頭から出る
+        self.assertEqual(
+            "1 枚目が p001.jpg（連番なら 001.jpg）",
+            organized_detector.page_mismatch(["p001.jpg", "p002.jpg"]),
+        )
+        self.assertIsNone(organized_detector.page_mismatch(["001.jpg", "002.png"]))
 
 
 class OrganizedFailSafeTest(OrganizedTestBase):
