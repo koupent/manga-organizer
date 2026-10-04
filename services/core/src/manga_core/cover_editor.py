@@ -143,23 +143,14 @@ def edge_colors(image: Image.Image) -> EdgeColors:
     )
 
 
-def _fits_axis(start: int, end: int, size: int) -> bool:
-    """1 つの軸で、範囲が画像の内側にあるか、画像を丸ごと含むか。
-
-    片側だけはみ出す範囲（片方を切り、もう片方に余白を足す）は受けない。
-    画面は画像を丸ごと含むときにしか枠を外へ出さない。
-    """
-    inside = 0 <= start and end <= size
-    covering = start <= 0 and end >= size
-    return inside or covering
-
-
 def _crop(image: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
     """指定範囲を切り出す。
 
     範囲は画像の外へはみ出してよい（#130）。2:3 に収まらない画像を切らずに
-    表紙にするため。はみ出せるのは 1 つの軸だけで、その軸では画像を丸ごと
-    含むこと。はみ出した所は、その辺の縁の色で塗る。
+    表紙にするため。はみ出せるのは 1 つの軸だけで、片側だけでもよい（#141）。
+    画面は、画像を丸ごと含む 2:3 の範囲の中で枠を自由に動かせるので、片側を
+    切りながら反対側に余白を足す範囲も来る。はみ出した所は、その辺の縁の色で
+    塗る。画像と 1 画素も重ならない範囲は断る。塗っただけの表紙になる。
     """
     left, upper, right, lower = box
     width, height = image.size
@@ -168,7 +159,7 @@ def _crop(image: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
     outside = CoverEditError(
         f"切り抜き範囲が画像の外です: {box} (画像は {width}x{height})"
     )
-    if not (_fits_axis(left, right, width) and _fits_axis(upper, lower, height)):
+    if right <= 0 or left >= width or lower <= 0 or upper >= height:
         raise outside
     widened = left < 0 or right > width
     heightened = upper < 0 or lower > height
@@ -181,11 +172,13 @@ def _crop(image: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
 
     colors = edge_colors(image)
     canvas = Image.new("RGB", (right - left, lower - upper))
-    if widened:
+    if left < 0:
         canvas.paste(colors.left, (0, 0, -left, canvas.height))
+    if right > width:
         canvas.paste(colors.right, (width - left, 0, canvas.width, canvas.height))
-    else:
+    if upper < 0:
         canvas.paste(colors.top, (0, 0, canvas.width, -upper))
+    if lower > height:
         canvas.paste(colors.bottom, (0, height - upper, canvas.width, canvas.height))
     inner = image.crop(
         (max(left, 0), max(upper, 0), min(right, width), min(lower, height))

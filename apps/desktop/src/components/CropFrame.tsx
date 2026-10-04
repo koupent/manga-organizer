@@ -124,7 +124,8 @@ export function turnedEdges(edges: EdgeColors, angle: QuarterTurn): EdgeColors {
  *
  * 見開きでなければ、画像の全体がちょうど収まる 2:3 まで広げられる。2:3 に
  * 収まらない表紙を切らずに使うため。それより大きくしても余白が増えるだけなので、
- * 上限はここで 1 つに決まる。画像は範囲の真ん中に置く。
+ * 上限はここで 1 つに決まる。画像は範囲の真ん中に置く。枠はこの範囲の中なら
+ * どこへでも動かせる（#141）。
  *
  * 見開きは片側を選んで表紙にする絵で、全体を収めると細い帯に余白ばかりが付く。
  * 余白のぶん場所を取ると選ぶための絵まで小さく出るので、画像の内側に限る。
@@ -146,8 +147,10 @@ export function canvasOf(image: ImageSize): CropRect {
 /**
  * 1 つの軸で、枠の始まりを置ける範囲 [下限, 上限]。
  *
- * 枠が画像より短ければ画像の内側。長ければ画像を丸ごと含んだまま、置ける範囲
- * （from から span）の内側。片側を切りながら反対側に余白を足す枠は作らない。
+ * 置ける範囲（from から span）の内側ならどこでもよい（#141）。以前は、片側を
+ * 切りながら反対側に余白を足す枠を作らなかったが、画面には余白まで見えて
+ * いるので、利用者には見えない壁で止められたようにしか見えなかった。
+ * ただし画像とは 1 画素でも重ねる。重ならない枠は、塗っただけの表紙になる。
  */
 function axisRange(
   length: number,
@@ -155,8 +158,7 @@ function axisRange(
   from: number,
   span: number,
 ): [number, number] {
-  if (length <= size) return [0, size - length];
-  return [Math.max(from, size - length), Math.min(0, from + span - length)];
+  return [Math.max(from, 1 - length), Math.min(from + span - length, size - 1)];
 }
 
 /** 枠を小さくできる下限。元画像に対する割合で決め、画像の大小に付いていかせる */
@@ -167,12 +169,18 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * 画像に収まる最大の 2:3 を中央に置いた初期状態。
+ * 開いたときの枠（#141）。
  *
- * viewer は表紙を 2:3 の中央クロップで描く。既定を viewer の見え方に
- * 合わせておけば、何も触らずに確定しても表示は変わらない。
+ * 見開きでなければ、画像の全体が収まる 2:3（置ける範囲いっぱい）。表紙は
+ * 画像を切らずに使うことがほとんどで、画像の内側の 2:3 から始めると、毎回
+ * 広げ直す手間になる。何も触らずに確定すると、足りない所を縁の色で塗った
+ * 表紙になる。
+ *
+ * 見開きは片側を選んで表紙にする絵なので、画像に収まる最大の 2:3 を中央に
+ * 置く。viewer が描く中央クロップと同じ見え方になる。
  */
 export function defaultCrop(image: ImageSize): CropRect {
+  if (image.width / image.height < SPREAD_RATIO) return canvasOf(image);
   const width = Math.min(image.width, image.height * TARGET_RATIO);
   const height = width / TARGET_RATIO;
   return {
@@ -261,8 +269,8 @@ function takenRegion(operation: Operation, shown: ImageSize): CropRect | null {
 /**
  * 範囲 (left, upper, right, lower) が、枠を置ける範囲に収まっているか。
  *
- * 各軸で、画像の内側にあるか、画像を丸ごと含んで置ける範囲の内側にあるか。
- * 置ける範囲の端は小数なので、整数へ丸めた範囲のために 1 画素だけ許す。
+ * 各軸で、置ける範囲の内側にあり、画像と重なっているか（#141）。置ける範囲の
+ * 端は小数なので、整数へ丸めた範囲のために 1 画素だけ許す。
  */
 function withinCanvas(
   [left, upper, right, lower]: number[],
@@ -275,9 +283,7 @@ function withinCanvas(
     size: number,
     from: number,
     span: number,
-  ) =>
-    (start >= 0 && end <= size) ||
-    (start <= 0 && end >= size && start >= from - 1 && end <= from + span + 1);
+  ) => start >= from - 1 && end <= from + span + 1 && end > 0 && start < size;
   return (
     fits(left, right, image.width, canvas.x, canvas.width) &&
     fits(upper, lower, image.height, canvas.y, canvas.height)
@@ -395,21 +401,16 @@ function resizedCrop(
 }
 
 /**
- * 1 つの軸の範囲を整数へ丸める。画像より短ければ画像の内側へ収め、長ければ
- * 画像を丸ごと含む形を保つ（サイドカーは片側だけはみ出す範囲を断る）。
+ * 1 つの軸の範囲を整数へ丸める。丸めた後も画像と 1 画素は重ねる（サイドカーは
+ * 画像と重ならない範囲を断る）。
  */
 function roundedAxis(
   start: number,
   length: number,
   size: number,
 ): [number, number] {
-  const first = Math.round(start);
-  const last = Math.round(start + length);
-  if (last - first <= size) {
-    const inside = clamp(first, 0, size - 1);
-    return [inside, clamp(last, inside + 1, size)];
-  }
-  return [Math.min(first, 0), Math.max(last, size)];
+  const first = Math.min(Math.round(start), size - 1);
+  return [first, Math.max(Math.round(start + length), first + 1, 1)];
 }
 
 /**

@@ -239,7 +239,7 @@ async function confirmSplit(page: Page) {
 }
 
 test.describe("ページ分割: 開いた直後と確定", () => {
-  test("既定のチェックは判定の結果で、横長でも閾値の下には付かない", async ({
+  test("開いた時点では何も選ばず、まとめて選ぶと判定した見開きだけに入る", async ({
     page,
   }) => {
     // Arrange - 縦長・比 1.333 の見開き・比 1.15 の横長が混ざった本
@@ -263,6 +263,25 @@ test.describe("ページ分割: 開いた直後と確定", () => {
       "ページ分割・結合",
     ]);
 
+    // Assert - 開いた時点では何も選ばない（#142）。黙ってチェックを入れて
+    // おくと、気づかずに確定した見開きが割れる。見つかった数と、次に何を
+    // すればよいかを伝える
+    expect(await checkedIndexes(page)).toEqual([]);
+    await expect(page.getByTestId("split-detected-count")).toHaveText(
+      "見開き 1 枚を選ぶ",
+    );
+    await expect(page.getByTestId("split-page-count")).toHaveText("5 ページ");
+    await expect(page.getByTestId("split-status")).toHaveText(
+      "見開き 1 枚が見つかりました。分けるページにチェックを入れてください",
+    );
+    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+
+    // Assert - 2 列ぶんを占めるのは横長の 1 枚だけ。準見開きは列をまたがない
+    expect(await wideIndexes(page)).toEqual([1]);
+
+    // Act - 見つかった見開きをまとめて選ぶ
+    await page.getByTestId("split-master").click();
+
     // Assert - チェックが入るのは 2 枚目だけ。全部に付けて回る実装は、
     // 4 枚目（比 1.15）に付くことでここで落ちる。利用者から見れば、
     // 割ってはいけない縦長ページが黙って 2 ページに割られるということ
@@ -270,15 +289,6 @@ test.describe("ページ分割: 開いた直後と確定", () => {
       await checkedIndexes(page),
       "チェックが入っているページが判定と違う",
     ).toEqual([1]);
-
-    // Assert - 2 列ぶんを占めるのも横長の 1 枚だけ。準見開きは列をまたがない
-    expect(await wideIndexes(page)).toEqual([1]);
-
-    // Assert - 見出しの数え方と、押したら何が起きるかの文
-    await expect(page.getByTestId("split-detected-count")).toHaveText(
-      "見開き 1 枚",
-    );
-    await expect(page.getByTestId("split-page-count")).toHaveText("5 ページ");
     await expect(page.getByTestId("split-status")).toHaveText(
       "1 枚を 2 ページに分けます（全 6 ページになります）",
     );
@@ -287,9 +297,10 @@ test.describe("ページ分割: 開いた直後と確定", () => {
   test("番号はチェックの結果から数え直し、後ろのページまで繰り上がる", async ({
     page,
   }) => {
-    // Arrange
+    // Arrange - 見つかった見開きを選ぶ
     const archive = writeMixedArchive("番号.zip");
     await openSplit(page, archive, 5);
+    await page.getByTestId("split-master").click();
 
     // Assert - 2 枚目が 2 ページ分になり、3 枚目以降が繰り下がっている
     expect(await chipsOf(page)).toEqual(["1", `2${RANGE}3`, "4", "5", "6"]);
@@ -317,9 +328,10 @@ test.describe("ページ分割: 開いた直後と確定", () => {
   test("線を動かして確定すると、その位置で切れた 2 ページになる", async ({
     page,
   }) => {
-    // Arrange
+    // Arrange - 見つかった見開きを選ぶ
     const archive = writeMixedArchive("確定.zip");
     await openSplit(page, archive, 5);
+    await page.getByTestId("split-master").click();
     expect(pageEntriesOf(archive)).toHaveLength(5);
 
     // Act - 中央（1200）から右へずらす。中央のままだと、位置を読まずに
@@ -396,6 +408,8 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     const archive = writeMixedArchive("競合.zip");
     const first = await openIn(browser, archive, 5);
     const second = await openIn(browser, archive, 5);
+    await first.getByTestId("split-master").click();
+    await second.getByTestId("split-master").click();
 
     // Act - 先の窓で確定する。ここで本は書き直され、後の窓が持つ印は古くなる
     await confirmSplit(first);
@@ -476,8 +490,8 @@ test.describe("ページ分割: 配置", () => {
     const loading = await boxOf(page, page.getByTestId("split-loading"));
     await expectNoWindowScroll(page, "読み込み中");
 
-    // Assert - 読み込みが終わった直後。開いた時点で既に「1 枚を 2 ページに
-    // 分けます（全 6 ページになります）」という長い文が出ている
+    // Assert - 読み込みが終わった直後。開いた時点で既に「見開き 1 枚が
+    // 見つかりました。…」という長い文が出ている
     await expect(page.getByTestId("split-grid")).toBeVisible({
       timeout: 30_000,
     });
@@ -493,10 +507,10 @@ test.describe("ページ分割: 配置", () => {
       "読み込み中と読み込み後で、作業面の下端がずれる",
     ).toBeLessThanOrEqual(SLACK);
 
-    // Act - チェックを外す。状態欄の文が入れ替わる
+    // Act - チェックを入れる。状態欄の文が入れ替わる
     await toggle(page, 1);
     await expect(page.getByTestId("split-status")).toHaveText(
-      "変更はありません",
+      "1 枚を 2 ページに分けます（全 6 ページになります）",
     );
 
     // Assert - 文が変わっても格子は動かない。見出しの行が折り返すと、
@@ -506,8 +520,7 @@ test.describe("ページ分割: 配置", () => {
     expect(Math.abs(pending.bottom - loaded.bottom)).toBeLessThanOrEqual(SLACK);
     await expectNoWindowScroll(page, "保留中");
 
-    // Act - 元に戻してから確定する
-    await toggle(page, 1);
+    // Act - 確定する
     await confirmSplit(page);
 
     // Assert - 書き込んだ後の文（枚数とページ数）でも縁は同じ。

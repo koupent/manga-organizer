@@ -222,8 +222,10 @@ export function SplitEditor({
           >
             {pageCount} ページ
           </span>
-          <span
-            className="flex shrink-0 items-center gap-1.5"
+          {/* 見つかった見開きを分割の候補にする入口（#142）。開いた時点では
+              何も選ばないので、ここを押すのが分割の始まりになる */}
+          <label
+            className="flex shrink-0 cursor-pointer items-center gap-1.5"
             title="見開きと判定したページをまとめて選ぶ・外す"
           >
             <Checkbox
@@ -237,9 +239,9 @@ export function SplitEditor({
               className="tabular text-[12px] text-ink-muted"
               data-testid="split-detected-count"
             >
-              見開き {detected.length} 枚
+              見開き {detected.length} 枚を選ぶ
             </span>
-          </span>
+          </label>
           <span className="flex shrink-0 items-center gap-1">
             <Button
               variant="secondary"
@@ -319,7 +321,7 @@ export function SplitEditor({
           </Button>
         </>
       }
-      hint="チェックで分ける・分けないを選ぶ ・ 線を掴んで分割位置を動かす ・ 「次と結合」で 2 ページを 1 枚の見開きにする ・ 画像をクリックで大きく表示"
+      hint="見開き（横長のページ）はチェックを入れると 2 ページに分かれます ・ 線を掴んで分割位置を動かす ・ 「次と結合」で 2 ページを 1 枚の見開きにする ・ 画像をクリックで大きく表示"
     >
       {/* スクロールするのはこの箱であって窓ではない */}
       <div data-testid="split-grid" className="min-h-0 flex-1 overflow-y-auto">

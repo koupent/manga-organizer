@@ -368,6 +368,7 @@ export function CoverEditor({
             >
               {/* 枠の位置を範囲そのものに合わせるため、枠線は外側の箱に持たせる */}
               <div
+                data-testid="cover-canvas"
                 className="relative self-start overflow-hidden rounded border border-line"
                 style={{
                   width: display.width + FRAME_BORDER * 2,

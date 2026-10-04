@@ -416,7 +416,7 @@ test.describe("画面を切り替えても状態が残る", () => {
     );
     const upright = await settledFrameBox(page);
 
-    // Act - 枠を小さくしてから左上へ寄せる。初期状態から遠い所へ置き、
+    // Act - 枠を小さくしてから右下へ寄せる。初期状態から遠い所へ置き、
     // 作り直された初期状態とたまたま一致しないようにする
     const handle = (await page
       .getByTestId("crop-handle")
@@ -436,12 +436,12 @@ test.describe("画面を切り替えても状態が残る", () => {
     await dragFrom(
       page,
       { x: shrunk.x + shrunk.width / 2, y: shrunk.y + shrunk.height / 2 },
-      { x: 1, y: 1 },
+      { x: 2000, y: 2000 },
     );
     const edited = await settledFrameBox(page);
     // 位置は横と縦を合わせて見る。回した後の縦長は、枠を外へ広げられる範囲
-    // （画像の全体が収まる 2:3）ごと描かれる（#130）。左上へ寄せた枠は画像の
-    // 左上に着き、その横の位置は回す前の既定の枠とたまたま重なる
+    // （画像の全体が収まる 2:3）ごと描かれ、既定の枠はその範囲いっぱいになる
+    // （#130 #141）。左上は回す前の既定の枠とたまたま重なるので、右下へ寄せる
     expect(
       Math.abs(edited.x - initial.x) + Math.abs(edited.y - initial.y),
     ).toBeGreaterThan(10);
