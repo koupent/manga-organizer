@@ -59,10 +59,6 @@ QUARTER_TURNS = (0, 90, 180, 270)
 # 見ると、表紙の縁取りや走査の汚れ 1 本で色が決まってしまう
 EDGE_STRIP_FRACTION = 0.01
 
-# 枠の外を塗る余白の上限（画像の長い辺に対する倍率）。画面は「画像の全体が
-# ちょうど収まる 2:3」までしか広げないので、普通の依頼はこの内側に収まる。
-# 届いた数のまま画素を確保すると、桁違いの範囲 1 つでサイドカーが詰まる
-MAX_CANVAS_SCALE = 2
 TEMP_PREFIX = ".cover-"
 TEMP_SUFFIX = ".tmp"
 
@@ -73,7 +69,8 @@ class CoverEditError(RuntimeError):
 
 @dataclass(frozen=True)
 class CoverTransform:
-    """表紙に加える操作。分割 → 切り抜き → 回転の順に適用する"""
+    """表紙に加える操作。分割 → 切り抜き → 回転の順に適用し、最後に余白を
+    足して 2:3 にする（#146）"""
 
     split: str | None = None
     crop: tuple[int, int, int, int] | None = None
@@ -82,7 +79,7 @@ class CoverTransform:
 
 @dataclass(frozen=True)
 class EdgeColors:
-    """画像の 4 辺の縁の色（RGB）。枠が画像の外へはみ出した所を、その辺の色で塗る"""
+    """画像の 4 辺の縁の色（RGB）。2:3 に足りない側の余白を、その辺の色で塗る"""
 
     top: tuple[int, int, int]
     bottom: tuple[int, int, int]
@@ -145,46 +142,49 @@ def edge_colors(image: Image.Image) -> EdgeColors:
 
 
 def _crop(image: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
-    """指定範囲を切り出す。
+    """指定範囲を切り出す。範囲は画像の内側に限る。
 
-    範囲は画像の外へはみ出してよい（#130）。2:3 に収まらない画像を切らずに
-    表紙にするため。はみ出せるのは 1 つの軸だけで、片側だけでもよい（#141）。
-    画面は、画像を丸ごと含む 2:3 の範囲の中で枠を自由に動かせるので、片側を
-    切りながら反対側に余白を足す範囲も来る。はみ出した所は、その辺の縁の色で
-    塗る。画像と 1 画素も重ならない範囲は断る。塗っただけの表紙になる。
+    2:3 に足りない分は、切り出して回した後に余白で足す（#146）。画像の外を
+    指す範囲を受けると、片側だけ余白の付いた表紙という別の仕上がりが紛れ込む。
     """
     left, upper, right, lower = box
     width, height = image.size
     if right <= left or lower <= upper:
         raise CoverEditError(f"切り抜き範囲が空です: {box}")
-    outside = CoverEditError(
-        f"切り抜き範囲が画像の外です: {box} (画像は {width}x{height})"
-    )
-    if right <= 0 or left >= width or lower <= 0 or upper >= height:
-        raise outside
-    widened = left < 0 or right > width
-    heightened = upper < 0 or lower > height
-    if widened and heightened:
-        raise outside
-    if not (widened or heightened):
-        return image.crop(box)
-    if max(right - left, lower - upper) > MAX_CANVAS_SCALE * max(width, height):
-        raise outside
+    if left < 0 or upper < 0 or right > width or lower > height:
+        raise CoverEditError(
+            f"切り抜き範囲が画像の外です: {box} (画像は {width}x{height})"
+        )
+    return image.crop(box)
 
+
+def _padded_to_cover(image: Image.Image) -> Image.Image:
+    """足りない側に余白を足して 2:3 にする（#146）。既に 2:3 なら何もしない。
+
+    切り取る範囲の縦横比は利用者が自由に決めるので、仕上がりの 2:3 はここで
+    揃える。余白は、その辺の縁の色で塗る（#130）。黒や白で固定すると、地の
+    色が違う表紙ほど余白が浮く。画像は真ん中に置く。
+    """
+    width, height = image.size
+    padded_width = round(height * COVER_ASPECT_RATIO)
+    padded_height = round(width / COVER_ASPECT_RATIO)
+    if padded_width > width:
+        size = (padded_width, height)
+    elif padded_height > height:
+        size = (width, padded_height)
+    else:
+        return image
     colors = edge_colors(image)
-    canvas = Image.new("RGB", (right - left, lower - upper))
-    if left < 0:
-        canvas.paste(colors.left, (0, 0, -left, canvas.height))
-    if right > width:
-        canvas.paste(colors.right, (width - left, 0, canvas.width, canvas.height))
-    if upper < 0:
-        canvas.paste(colors.top, (0, 0, canvas.width, -upper))
-    if lower > height:
-        canvas.paste(colors.bottom, (0, height - upper, canvas.width, canvas.height))
-    inner = image.crop(
-        (max(left, 0), max(upper, 0), min(right, width), min(lower, height))
-    )
-    canvas.paste(inner, (max(-left, 0), max(-upper, 0)))
+    canvas = Image.new("RGB", size)
+    left = (size[0] - width) // 2
+    top = (size[1] - height) // 2
+    if size[0] > width:
+        canvas.paste(colors.left, (0, 0, left, height))
+        canvas.paste(colors.right, (left + width, 0, size[0], height))
+    else:
+        canvas.paste(colors.top, (0, 0, width, top))
+        canvas.paste(colors.bottom, (0, top + height, width, size[1]))
+    canvas.paste(image, (left, top))
     return canvas
 
 
@@ -220,7 +220,9 @@ def transform_image(
         image = _split_half(image, transform.split)
     if transform.crop:
         image = _crop(image, transform.crop)
-    image = _rotate(image, transform.rotate)
+    # 余白は回した後に足す。仕上がりの向きで 2:3 にしないと、横向きの絵を
+    # 回したときに横長の表紙になる
+    image = _padded_to_cover(_rotate(image, transform.rotate))
 
     fmt, _ = _output_format(name)
     buffer = io.BytesIO()

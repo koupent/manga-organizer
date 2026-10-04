@@ -1059,6 +1059,84 @@ test.describe("整理後の受け渡し", () => {
     ).toHaveAttribute("data-edited", "false");
   });
 
+  test("同じ本のページ並べ替えへもう一度移っても、格子とサムネイルが出る", async ({
+    page,
+  }) => {
+    // Arrange - 並べ替えで 2 件目を開いてから、ファイル整理へ戻る
+    const paths = writeVolumes("受け渡し同じ本");
+    const output = join(sidecar.workDir, "out-handoff-same");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await organizeAll(page, "同じ本へ戻る作品", "同じ本へ戻る著者", paths);
+    const expected = producedNames(output);
+    const shortcut = page
+      .getByTestId("produced-item")
+      .filter({ hasText: expected[1] })
+      .getByTestId("produced-to-reorder");
+    await shortcut.click();
+    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await page.getByTestId("mode-organize").click();
+
+    // Act - 同じ本の並べ替えへもう一度移る（#145）
+    await shortcut.click();
+
+    // Assert - 以前は一覧を捨てたまま読み直さず、空の画面が残った
+    await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect
+      .poll(() =>
+        page
+          .getByTestId("page-card")
+          .first()
+          .locator("img")
+          .evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
+      .toBeGreaterThan(0);
+  });
+
+  test("並べ替えへ立て続けに移っても、前の本の一覧が後から届いて上書きしない", async ({
+    page,
+  }) => {
+    // Arrange - 1 件目（2 ページ）の一覧だけ返事を遅らせる
+    const paths = writeVolumes("受け渡し立て続け");
+    const output = join(sidecar.workDir, "out-handoff-race");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await organizeAll(page, "立て続けの作品", "立て続けの著者", paths);
+    const expected = producedNames(output);
+    let delayed = false;
+    await page.route(/\/api\/pages\?/, async (route) => {
+      const archive = new URL(route.request().url()).searchParams.get(
+        "archive",
+      );
+      if (archive?.endsWith(expected[0])) {
+        delayed = true;
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+      }
+      await route.continue();
+    });
+    const shortcut = (name: string) =>
+      page
+        .getByTestId("produced-item")
+        .filter({ hasText: name })
+        .getByTestId("produced-to-reorder");
+
+    // Act - 1 件目へ移り、返事を待たずに戻って 2 件目（3 ページ）へ移る
+    await shortcut(expected[0]).click();
+    await expect.poll(() => delayed).toBe(true);
+    await page.getByTestId("mode-organize").click();
+    await shortcut(expected[1]).click();
+    await expect(page.getByTestId("page-card")).toHaveCount(3);
+
+    // Assert - 遅れた 1 件目の返事が届いた後も、2 件目の 3 ページのまま（#145）
+    await page.waitForTimeout(2_000);
+    await expect(page.getByTestId("archive-name")).toHaveText(expected[1]);
+    await expect(page.getByTestId("page-card")).toHaveCount(3);
+  });
+
   test("整理する前は出来たファイルの一覧が出ない", async ({ page }) => {
     // Arrange
     const paths = writeVolumes("受け渡し実行前");

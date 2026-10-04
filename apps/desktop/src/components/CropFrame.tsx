@@ -14,14 +14,6 @@ export type CropRect = {
 /** 画像の寸法（元画像の画素） */
 export type ImageSize = { width: number; height: number };
 
-/** 画像の 4 辺の縁の色（#rrggbb）。サイドカーが拾い、はみ出した所をこの色で塗る */
-export type EdgeColors = {
-  top: string;
-  bottom: string;
-  left: string;
-  right: string;
-};
-
 /** これより横長なら見開き。manga_core.cover_editor と同じ値 */
 const SPREAD_RATIO = 1.2;
 
@@ -85,102 +77,32 @@ export function rotateCrop(
   return { ...crop };
 }
 
-/**
- * 縁の色を、画像を時計回りに angle だけ回した後の向きへ移す。
- *
- * サイドカーは回す前の画像で切り抜き、外へはみ出した所をその向きの辺の色で
- * 塗ってから回す。画面は回した後の絵の上で見本を描くので、辺も同じだけ回す。
- */
-export function turnedEdges(edges: EdgeColors, angle: QuarterTurn): EdgeColors {
-  if (angle === 90) {
-    return {
-      top: edges.left,
-      right: edges.top,
-      bottom: edges.right,
-      left: edges.bottom,
-    };
-  }
-  if (angle === 180) {
-    return {
-      top: edges.bottom,
-      right: edges.left,
-      bottom: edges.top,
-      left: edges.right,
-    };
-  }
-  if (angle === 270) {
-    return {
-      top: edges.right,
-      right: edges.bottom,
-      bottom: edges.left,
-      left: edges.top,
-    };
-  }
-  return { ...edges };
-}
-
-/**
- * 枠を置ける範囲（#130）。画像の座標で持ち、原点は画像の左上。
- *
- * 見開きでなければ、画像の全体がちょうど収まる 2:3 まで広げられる。2:3 に
- * 収まらない表紙を切らずに使うため。それより大きくしても余白が増えるだけなので、
- * 上限はここで 1 つに決まる。画像は範囲の真ん中に置く。枠はこの範囲の中なら
- * どこへでも動かせる（#141）。
- *
- * 見開きは片側を選んで表紙にする絵で、全体を収めると細い帯に余白ばかりが付く。
- * 余白のぶん場所を取ると選ぶための絵まで小さく出るので、画像の内側に限る。
- */
-export function canvasOf(image: ImageSize): CropRect {
-  if (image.width / image.height >= SPREAD_RATIO) {
-    return { x: 0, y: 0, width: image.width, height: image.height };
-  }
-  const width = Math.max(image.width, image.height * TARGET_RATIO);
-  const height = width / TARGET_RATIO;
-  return {
-    x: (image.width - width) / 2,
-    y: (image.height - height) / 2,
-    width,
-    height,
-  };
-}
-
-/**
- * 1 つの軸で、枠の始まりを置ける範囲 [下限, 上限]。
- *
- * 置ける範囲（from から span）の内側ならどこでもよい（#141）。以前は、片側を
- * 切りながら反対側に余白を足す枠を作らなかったが、画面には余白まで見えて
- * いるので、利用者には見えない壁で止められたようにしか見えなかった。
- * ただし画像とは 1 画素でも重ねる。重ならない枠は、塗っただけの表紙になる。
- */
-function axisRange(
-  length: number,
-  size: number,
-  from: number,
-  span: number,
-): [number, number] {
-  return [Math.max(from, 1 - length), Math.min(from + span - length, size - 1)];
+/** 1 つの軸で、枠の始まりを置ける範囲 [下限, 上限]。枠は画像の内側に限る */
+function axisRange(length: number, size: number): [number, number] {
+  return [0, size - length];
 }
 
 /** 枠を小さくできる下限。元画像に対する割合で決め、画像の大小に付いていかせる */
-const MIN_WIDTH_FRACTION = 0.1;
+const MIN_FRACTION = 0.1;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
 /**
- * 開いたときの枠（#141）。
+ * 開いたときの枠（#146）。
  *
- * 見開きでなければ、画像の全体が収まる 2:3（置ける範囲いっぱい）。表紙は
- * 画像を切らずに使うことがほとんどで、画像の内側の 2:3 から始めると、毎回
- * 広げ直す手間になる。何も触らずに確定すると、足りない所を縁の色で塗った
- * 表紙になる。
+ * 見開きでなければ画像の全体。切り取る範囲の縦横比は自由で、2:3 に足りない
+ * 分はサイドカーが余白で足すので、何も触らずに確定すれば画像を切らずに
+ * 表紙にできる。
  *
  * 見開きは片側を選んで表紙にする絵なので、画像に収まる最大の 2:3 を中央に
  * 置く。viewer が描く中央クロップと同じ見え方になる。
  */
 export function defaultCrop(image: ImageSize): CropRect {
-  if (image.width / image.height < SPREAD_RATIO) return canvasOf(image);
+  if (image.width / image.height < SPREAD_RATIO) {
+    return { x: 0, y: 0, width: image.width, height: image.height };
+  }
   const width = Math.min(image.width, image.height * TARGET_RATIO);
   const height = width / TARGET_RATIO;
   return {
@@ -234,11 +156,12 @@ function takenRegion(operation: Operation, shown: ImageSize): CropRect | null {
     if (!box) return null;
     const [left, upper, right, lower] = box;
     if (right <= left || lower <= upper) return null;
-    // 記録は ZIP の中にあり、本を配る側が自由に書ける。枠を置ける範囲から
-    // はみ出す範囲を枠に写すと、掴めない枠が出たうえ、そのまま確定すれば
-    // 見当違いの範囲で本文が上書きされる。収めるのではなく受け付けない。
-    // 収めた枠は「前回の範囲」として出るのに、前回の範囲ではない
-    if (!withinCanvas([left, upper, right, lower], shown)) return null;
+    // 記録は ZIP の中にあり、本を配る側が自由に書ける。画像からはみ出す
+    // 範囲を枠に写すと、掴めない枠が出たうえ、そのまま確定すれば見当違いの
+    // 範囲で本文が上書きされる。収めるのではなく受け付けない。収めた枠は
+    // 「前回の範囲」として出るのに、前回の範囲ではない。
+    // 画像の外まで広げた以前の記録（#130 #141）も、ここで既定の枠へ戻る
+    if (!withinImage([left, upper, right, lower], shown)) return null;
     return { x: left, y: upper, width: right - left, height: lower - upper };
   }
   if (operation.kind === "split") {
@@ -267,26 +190,18 @@ function takenRegion(operation: Operation, shown: ImageSize): CropRect | null {
 }
 
 /**
- * 範囲 (left, upper, right, lower) が、枠を置ける範囲に収まっているか。
- *
- * 各軸で、置ける範囲の内側にあり、画像と重なっているか（#141）。置ける範囲の
- * 端は小数なので、整数へ丸めた範囲のために 1 画素だけ許す。
+ * 範囲 (left, upper, right, lower) が画像の内側にあるか。整数へ丸めた範囲の
+ * ために 1 画素だけ許す。
  */
-function withinCanvas(
+function withinImage(
   [left, upper, right, lower]: number[],
   image: ImageSize,
 ): boolean {
-  const canvas = canvasOf(image);
-  const fits = (
-    start: number,
-    end: number,
-    size: number,
-    from: number,
-    span: number,
-  ) => start >= from - 1 && end <= from + span + 1 && end > 0 && start < size;
   return (
-    fits(left, right, image.width, canvas.x, canvas.width) &&
-    fits(upper, lower, image.height, canvas.y, canvas.height)
+    left >= -1 &&
+    upper >= -1 &&
+    right <= image.width + 1 &&
+    lower <= image.height + 1
   );
 }
 
@@ -301,9 +216,8 @@ function withinCanvas(
  * 読めない記録が混ざったら、そこで諦めて null を返す。中途半端に解いた枠は、
  * 利用者から見ると前回の範囲と区別が付かない。
  *
- * 範囲を選ぶ加工が 1 つも無いとき（回転だけ、あるいは空）は、絵の全面ではなく
- * 触っていないときと同じ既定の 2:3 を返す。全面を枠にすると、開き直して
- * そのまま確定しただけで 2:3 でない絵が表紙になり、viewer で切られる。
+ * 範囲を選ぶ加工が 1 つも無いとき（回転だけ、あるいは空）は、触っていない
+ * ときと同じ既定の枠を返す。
  */
 export function restoredEdit(
   operations: Operation[],
@@ -348,38 +262,36 @@ export function restoredEdit(
   return { crop: rotateCrop(region, original, angle), angle };
 }
 
-/** 枠を、置ける範囲に収めたまま (x, y) へ置く */
+/** 枠を、画像に収めたまま (x, y) へ置く */
 function placedCrop(
   x: number,
   y: number,
   width: number,
+  height: number,
   image: ImageSize,
 ): CropRect {
-  const canvas = canvasOf(image);
-  const height = width / TARGET_RATIO;
-  const [left, right] = axisRange(width, image.width, canvas.x, canvas.width);
-  const [top, bottom] = axisRange(
-    height,
-    image.height,
-    canvas.y,
-    canvas.height,
-  );
+  const [left, right] = axisRange(width, image.width);
+  const [top, bottom] = axisRange(height, image.height);
   return { x: clamp(x, left, right), y: clamp(y, top, bottom), width, height };
 }
 
-/** 枠を置ける範囲に収めたまま動かす */
+/** 枠を画像に収めたまま動かす */
 function movedCrop(start: CropRect, dx: number, dy: number, image: ImageSize) {
-  return placedCrop(start.x + dx, start.y + dy, start.width, image);
+  return placedCrop(
+    start.x + dx,
+    start.y + dy,
+    start.width,
+    start.height,
+    image,
+  );
 }
 
 /**
- * 角を掴んで大きさを変える。縦横比は 2:3 のまま動かさない。
+ * 右下の角を掴んで大きさを変える。縦横比は固定しない（#146）。
  *
- * 比率を固定するのは、viewer が表紙を 2:3 に切って描くため。自由な比率で
- * 切ると、画面で見た範囲と一覧での見え方がずれる。
- *
- * 縦横どちらへ動かしても効くよう、動きの大きい方の軸を寸法の手がかりにする。
- * 端に当たったら枠の方を寄せて、置ける範囲いっぱいまで広げられるようにする。
+ * 2:3 に足りない分は、切り取った後にサイドカーが余白で足す。比率を固定すると、
+ * 画像の端まで取りたいのに反対の辺が余計に入るか削れるかのどちらかになる。
+ * 左上の角は動かさず、画像の右端・下端までに収める。
  */
 function resizedCrop(
   start: CropRect,
@@ -387,38 +299,40 @@ function resizedCrop(
   dy: number,
   image: ImageSize,
 ) {
-  const requested =
-    Math.abs(dx) >= Math.abs(dy)
-      ? start.width + dx
-      : (start.height + dy) * TARGET_RATIO;
-  const canvas = canvasOf(image);
   const width = clamp(
-    requested,
-    image.width * MIN_WIDTH_FRACTION,
-    Math.min(canvas.width, canvas.height * TARGET_RATIO),
+    start.width + dx,
+    image.width * MIN_FRACTION,
+    image.width - start.x,
   );
-  return placedCrop(start.x, start.y, width, image);
+  const height = clamp(
+    start.height + dy,
+    image.height * MIN_FRACTION,
+    image.height - start.y,
+  );
+  return placedCrop(start.x, start.y, width, height, image);
 }
 
 /**
- * 1 つの軸の範囲を整数へ丸める。丸めた後も画像と 1 画素は重ねる（サイドカーは
- * 画像と重ならない範囲を断る）。
+ * 1 つの軸の範囲を、画像の内側の整数へ丸める。
+ *
+ * 始まりと長さを別々に丸める。両端を丸めると長さが 1 画素ずれ、中央の 2:3 の
+ * ような枠でもサイドカーが 1 画素の余白を足してしまう。
  */
 function roundedAxis(
   start: number,
   length: number,
   size: number,
 ): [number, number] {
-  const first = Math.min(Math.round(start), size - 1);
-  return [first, Math.max(Math.round(start + length), first + 1, 1)];
+  const span = clamp(Math.round(length), 1, size);
+  const first = clamp(Math.round(start), 0, size - span);
+  return [first, first + span];
 }
 
 /**
  * 枠を、サイドカーが受け取る元画像の画素座標 (left, upper, right, lower) に直す。
  *
  * 枠も同じ単位で持っているので、ここでは端数を落とすだけ。表示上の座標を
- * そのまま送ると、縮小されたぶんだけ違う範囲が切られる。画像の外へ広げた枠は
- * そのまま外を指す（#130）。はみ出した所はサイドカーが縁の色で塗る。
+ * そのまま送ると、縮小されたぶんだけ違う範囲が切られる。
  */
 export function toCropBox(
   crop: CropRect,
@@ -436,13 +350,10 @@ type CropFrameProps = {
 };
 
 /**
- * 表示中の画像に重ねる 2:3 の切り抜き枠。
+ * 表示中の画像に重ねる切り抜き枠。縦横比は固定しない（#146）。
  *
  * 枠は元画像の画素で持ち、描画だけを割合に直す。表示は縮小されているので、
  * 画面上の座標のまま持つと、そのまま送ったときに意図しない範囲が切られる。
- *
- * 重ねる先は画像ではなく、枠を置ける範囲（canvasOf）。画像の外まで広げた枠も
- * 描けるように、呼び出し側はその範囲を画面に並べ、この部品を全面に重ねる。
  */
 export function CropFrame({ image, crop, onChange }: CropFrameProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -453,15 +364,13 @@ export function CropFrame({ image, crop, onChange }: CropFrameProps) {
     start: CropRect;
   } | null>(null);
 
-  const canvas = canvasOf(image);
-
   /** 画面上の移動量を元画像の画素へ直す。縮小率は実際の描画から測る */
   const toImagePixels = (dx: number, dy: number) => {
     const box = rootRef.current?.getBoundingClientRect();
     if (!box || box.width === 0 || box.height === 0) return { dx: 0, dy: 0 };
     return {
-      dx: (dx * canvas.width) / box.width,
-      dy: (dy * canvas.height) / box.height,
+      dx: (dx * image.width) / box.width,
+      dy: (dy * image.height) / box.height,
     };
   };
 
@@ -501,10 +410,10 @@ export function CropFrame({ image, crop, onChange }: CropFrameProps) {
         data-testid="crop-frame"
         className="pointer-events-auto absolute cursor-move border-2 border-brand bg-brand/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
         style={{
-          left: percent(crop.x - canvas.x, canvas.width),
-          top: percent(crop.y - canvas.y, canvas.height),
-          width: percent(crop.width, canvas.width),
-          height: percent(crop.height, canvas.height),
+          left: percent(crop.x, image.width),
+          top: percent(crop.y, image.height),
+          width: percent(crop.width, image.width),
+          height: percent(crop.height, image.height),
         }}
         onPointerDown={(event) => beginDrag(event, false)}
         onPointerMove={continueDrag}

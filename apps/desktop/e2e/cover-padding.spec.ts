@@ -3,14 +3,11 @@ import { coloursOf, pageSizesOf, runPython } from "./archive";
 import { startSidecar, type Sidecar } from "./sidecar";
 
 /**
- * サムネイル作成の枠を画像の外まで広げ、はみ出した所を縁の色で塗る（#130）。
+ * サムネイル作成で、切り取った範囲に余白を足して 2:3 にする（#146）。
  *
- * 2:3 に収まらない表紙を切らずに使うため。上限は「画像の全体がちょうど収まる
- * 2:3」で、それより先は余白が増えるだけなので広げられない。見開きは片側を
- * 選んで使う絵なので、今までどおり画像の内側に限る。
- *
- * 見開きでなければ、開いたときの枠がその上限いっぱいで、枠は見えている範囲の
- * 中なら自由に動かせる（#141）。
+ * 切り取る範囲の縦横比は自由。仕上がりの 2:3 はサイドカーが揃え、足りない側は
+ * 切り取った画像のその辺の縁の色で塗る。右の見本も同じ結果を描く。
+ * 開いたときの枠は画像の全体で、見開きだけは中央の 2:3 から始める。
  */
 let sidecar: Sidecar;
 test.beforeAll(async () => {
@@ -65,36 +62,51 @@ async function dragFrom(
   await page.mouse.up();
 }
 
-/** 角を掴んで、窓の右下いっぱいまで運ぶ */
-async function growAsFarAsPossible(page: Page) {
-  const grip = (await page.getByTestId("crop-handle").boundingBox())!;
-  const viewport = page.viewportSize()!;
-  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(viewport.width - 1, viewport.height - 1, {
-    steps: 12,
+async function confirm(page: Page) {
+  await page.getByTestId("apply-thumbnail").click();
+  await expect(page.getByTestId("cover-status")).toContainText("加工しました", {
+    timeout: 30_000,
   });
-  await page.mouse.up();
 }
 
-test.describe("サムネイル作成: 枠を画像の外まで広げる", () => {
-  test("広げて確定すると、画像の全体が 2:3 に収まり、余白は縁の色になる", async ({
+/** 見本（canvas）の 1 点の色。縦横は見本の大きさに対する割合で指す */
+async function previewColourAt(page: Page, x: number, y: number) {
+  return page.getByRole("img", { name: "viewer での見え方" }).evaluate(
+    (canvas: HTMLCanvasElement, [fx, fy]) => {
+      const context = canvas.getContext("2d")!;
+      const [red, green, blue] = context.getImageData(
+        Math.floor(canvas.width * fx),
+        Math.floor(canvas.height * fy),
+        1,
+        1,
+      ).data;
+      return [red, green, blue];
+    },
+    [x, y],
+  );
+}
+
+test.describe("サムネイル作成: 切り取った範囲を 2:3 にする", () => {
+  test("開いたときの枠は画像の全体で、確定すると縁の色の余白を足した 2:3 になる", async ({
     page,
   }) => {
     // Arrange - 750×1000 は 2:3 より横に広い。全体を収める 2:3 は 750×1125
-    const archive = writeBandedCover("広げる.zip", 750, 1000);
+    const archive = writeBandedCover("全体.zip", 750, 1000);
     await openCover(page, archive);
 
-    // Assert - 余白の場所が縁の色で用意されている
-    await expect(page.getByTestId("cover-pad")).toHaveCount(2);
+    // Assert - 枠は絵の全体を囲む
+    const stage = (await page.getByTestId("cover-canvas").boundingBox())!;
+    const frame = (await page.getByTestId("crop-frame").boundingBox())!;
+    expect(Math.abs(frame.width - stage.width)).toBeLessThan(4);
+    expect(Math.abs(frame.height - stage.height)).toBeLessThan(4);
+
+    // Assert - 見本は上下に余白を足した姿。上の余白は上の縁の青に近い色
+    await expect
+      .poll(async () => (await previewColourAt(page, 0.5, 0.01))[2])
+      .toBeGreaterThan(200);
 
     // Act
-    await growAsFarAsPossible(page);
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
+    await confirm(page);
 
     // Assert - 画像は 1 画素も切られず、上下に余白が足された
     const sizes = pageSizesOf(archive);
@@ -105,90 +117,64 @@ test.describe("サムネイル作成: 枠を画像の外まで広げる", () => 
     expect(coloursOf(archive)[cover]).toBe("#2020ff");
   });
 
-  test("開いたときの枠は画像の全体が収まる 2:3 いっぱいで、何も触らずに確定できる", async ({
+  test("横長に切り取ると、切り取った絵の縁の色で上下を塗って 2:3 になる", async ({
     page,
   }) => {
-    // Arrange - 750×1000 は 2:3 より横に広い。全体を収める 2:3 は 750×1125
-    const archive = writeBandedCover("既定.zip", 750, 1000);
+    // Arrange - 上と下の帯を外し、灰色の所だけを横長に切り取る
+    const archive = writeBandedCover("横長.zip", 750, 1000);
     await openCover(page, archive);
-
-    // Assert - 枠は見えている範囲（画像と余白）いっぱい。画像の内側の 2:3 から
-    // 始めると、表紙を切らずに使うたびに広げ直すことになる
     const stage = (await page.getByTestId("cover-canvas").boundingBox())!;
     const frame = (await page.getByTestId("crop-frame").boundingBox())!;
-    expect(Math.abs(frame.width - stage.width)).toBeLessThan(4);
-    expect(Math.abs(frame.height - stage.height)).toBeLessThan(4);
-
-    // Act
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
+    await dragFrom(
+      page,
+      { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 },
+      { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 },
     );
-
-    // Assert
-    const sizes = pageSizesOf(archive);
-    expect(sizes[Object.keys(sizes).sort()[0]]).toEqual([750, 1125]);
-  });
-
-  test("縮めた枠は余白の側へも動かせ、片側だけ余白の付いた表紙になる", async ({
-    page,
-  }) => {
-    // Arrange - 縮めて、上の余白の側へ寄せる。以前は、画像を丸ごと含まない
-    // 枠は余白へ出せず、見えている余白の手前で止まった
-    const archive = writeBandedCover("片側.zip", 750, 1000);
-    await openCover(page, archive);
     const grip = (await page.getByTestId("crop-handle").boundingBox())!;
+    // 右下の角を、縦の 4 割の所まで上げる（幅はそのまま）
     await dragFrom(
       page,
       { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 },
-      { x: grip.x + grip.width / 2 - 60, y: grip.y + grip.height / 2 - 90 },
+      { x: grip.x + grip.width / 2, y: stage.y + stage.height * 0.4 },
     );
     const shrunk = (await page.getByTestId("crop-frame").boundingBox())!;
+    // 枠を下へ運び、上の青い帯から外す
     await dragFrom(
       page,
       { x: shrunk.x + shrunk.width / 2, y: shrunk.y + shrunk.height / 2 },
-      { x: shrunk.x + shrunk.width / 2, y: 1 },
+      {
+        x: shrunk.x + shrunk.width / 2,
+        y: shrunk.y + shrunk.height / 2 + stage.height * 0.2,
+      },
     );
 
-    // Assert - 見えている範囲の上端まで届く
-    const stage = (await page.getByTestId("cover-canvas").boundingBox())!;
-    const moved = (await page.getByTestId("crop-frame").boundingBox())!;
-    expect(Math.abs(moved.y - stage.y)).toBeLessThan(4);
+    // Assert - 見本の上の余白は、切り取った絵の縁（灰色）の色
+    await expect
+      .poll(async () => (await previewColourAt(page, 0.5, 0.01))[0])
+      .toBeLessThan(160);
 
     // Act
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
+    await confirm(page);
 
-    // Assert - 上は縁の色の余白、下は画像の途中で切れている（下の赤い帯は入らない）
+    // Assert - 横長の範囲を 2:3 にしたので、幅 750 なら高さ 1125
     const sizes = pageSizesOf(archive);
     const cover = Object.keys(sizes).sort()[0];
-    expect(sizes[cover][1]).toBeLessThan(1125);
-    expect(coloursOf(archive)[cover]).toBe("#2020ff");
+    expect(sizes[cover]).toEqual([750, 1125]);
+    // 左上の画素は上の余白の中。元の画像の縁（青）ではなく、灰色
+    expect(coloursOf(archive)[cover]).toBe("#808080");
   });
 
-  test("見開きは今までどおり画像の内側に限る", async ({ page }) => {
+  test("見開きは中央の 2:3 から始める", async ({ page }) => {
     // Arrange - 1600×1100 は見開き。片側を選んで使う絵
     const archive = writeBandedCover("見開き.zip", 1600, 1100);
     await openCover(page, archive);
 
-    // Assert - 余白の場所は無い
-    await expect(page.getByTestId("cover-pad")).toHaveCount(0);
+    // Act - 触らずに確定する
+    await confirm(page);
 
-    // Act
-    await growAsFarAsPossible(page);
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
-
-    // Assert - 画像の高さいっぱいの 2:3 までしか広がらない
+    // Assert - 画像の高さいっぱいの 2:3 を切り取る。余白は要らない
     const sizes = pageSizesOf(archive);
     const cover = Object.keys(sizes).sort()[0];
-    expect(sizes[cover][1]).toBeLessThanOrEqual(1100);
+    expect(sizes[cover]).toEqual([733, 1100]);
   });
 });
