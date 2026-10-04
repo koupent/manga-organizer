@@ -1378,3 +1378,36 @@ class SuggestsMergesTest(SplitFixture):
                 {"001.png": right, "002.png": left, "003.png": buffer.getvalue()}
             ),
         )
+
+    def split_wide_page(self, spread: Image.Image) -> list:
+        """横長 1 枚と縦長 1 枚の本を作り、横長を中央で割って読み直す"""
+        buffer = io.BytesIO()
+        spread.save(buffer, "PNG")
+        build_archive(
+            self.archive_path,
+            {"001.png": buffer.getvalue(), "002.png": tall_bytes("#808080")},
+        )
+        self.split_row(self.archive_path, 0, spread.width // 2)
+        return list(self.splitter.scan_rows(self.archive_path))
+
+    def test_halves_of_one_picture_are_suggested_to_rejoin(self):
+        # Arrange - 絵が中央をまたぐ見開きを割る（#154）
+        rows = self.split_wide_page(seam_spread())
+
+        # Assert - 割った対は 1 行に畳まれ、戻す候補になる
+        self.assertEqual(2, len(rows[0].names))
+        self.assertTrue(rows[0].rejoin_suggested)
+        self.assertFalse(rows[1].rejoin_suggested)
+
+    def test_halves_with_a_blank_gutter_are_not_suggested_to_rejoin(self):
+        # Arrange - 2 ページを並べて 1 枚に読み取った本。中央は白い余白
+        spread = Image.new("RGB", (1200, 900), "#ffffff")
+        spread.paste(seam_spread().resize((440, 740)), (80, 80))
+        spread.paste(seam_spread(SEAM_BANDS[::-1]).resize((440, 740)), (680, 80))
+
+        # Act
+        rows = self.split_wide_page(spread)
+
+        # Assert
+        self.assertEqual(2, len(rows[0].names))
+        self.assertFalse(rows[0].rejoin_suggested)
