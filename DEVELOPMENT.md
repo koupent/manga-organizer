@@ -81,14 +81,14 @@ gh workflow run release.yml --ref <ブランチ名>   # または Actions の画
 インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。作ったインストーラを黙って入れ、同梱のサイドカーが応答すること、並べ替え・分割・サムネイルの保存が通ること（`scripts/smoke_saves.py`）、アプリを閉じるとサイドカーも止まることまで確かめます。
 
 - PR: 配布物の作り方に関わるファイル（`src-tauri/`・依存の宣言・`manga_api.spec`・`build_sidecar.sh` など）を変えたときだけ走り、インストーラを Artifacts に残す
-- `v*` タグの push: 作って確かめたうえで、配布用の公開リポジトリ [koupent/manga-organizer-releases](https://github.com/koupent/manga-organizer-releases) に Release を作り、インストーラと `latest.json` を載せる
+- `v*` タグの push: 作って確かめたうえで、このリポジトリに Release を作り、インストーラと `latest.json` を載せる
 - 手動（`workflow_dispatch`）: 作って確かめ、インストーラを Artifacts に残すだけ
 
 Windows ランナーは分数が 2 倍に数えられるため、画面だけの変更では走らせません（そちらは Merge Gate で足ります）。
 
 ### 自動更新
 
-アプリは起動時に `https://github.com/koupent/manga-organizer-releases/releases/latest/download/latest.json` を読み、新しい版があれば知らせます（tauri-plugin-updater）。入れ替える前に、インストーラの署名を `tauri.conf.json` の `plugins.updater.pubkey` で確かめます。ソースのリポジトリは private のままで、公開リポジトリにはインストーラと `latest.json` だけを置きます。
+アプリは起動時に `https://github.com/koupent/manga-organizer/releases/latest/download/latest.json` を読み、新しい版があれば知らせます（tauri-plugin-updater）。入れ替える前に、インストーラの署名を `tauri.conf.json` の `plugins.updater.pubkey` で確かめます。アプリはログインせずに落とすので、このリポジトリは public にしておく必要があります。Release はジョブの `GITHUB_TOKEN` で作ります。
 
 `release.yml` が使う Secrets（`manga-organizer` の Settings → Secrets and variables → Actions）:
 
@@ -96,11 +96,9 @@ Windows ランナーは分数が 2 倍に数えられるため、画面だけの
 |---|---|---|
 | `TAURI_SIGNING_PRIVATE_KEY` | 更新の署名鍵（秘密鍵） | インストーラを作れない |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | その鍵のパスワード | 同上 |
-| `RELEASES_TOKEN` | 公開リポジトリだけに書ける fine-grained PAT（Contents: Read and write） | タグで Release を作れない |
 
 - **署名鍵とパスワードの控えは、利用者の Google Drive（マイドライブ > GitHub > manga-orgaizer）にあります。** Secrets は書き込んだ後に読み出せないので、作り直すときや別の場所で使うときはここから取ります。
 - **署名鍵は失くさないこと。** 配ったアプリは、この鍵で署名された更新しか受け付けません。失くしたら鍵を作り直して公開鍵を差し替え、利用者に一度だけ手でインストールし直してもらうことになります。
-- `RELEASES_TOKEN` は期限が切れると新しい Release を作れなくなるだけで、配ったアプリが更新を受け取るのには影響しません（公開リポジトリは誰でも読めるため）。切れたら作り直して Secrets を差し替えます。
 
 ## バージョンアップ手順
 
@@ -118,7 +116,7 @@ Windows ランナーは分数が 2 倍に数えられるため、画面だけの
    git fetch origin && git tag v4.0.0 origin/main && git push origin v4.0.0
    ```
 
-4. Actions の「Windows インストーラ」が緑になると、配布用の公開リポジトリの Releases に `MangaOrganizer-v4.0.0-setup.exe` と `latest.json` が載り、入れてあるアプリが次の起動で知らせる
+4. Actions の「Windows インストーラ」が緑になると、Releases に `MangaOrganizer-v4.0.0-setup.exe` と `latest.json` が載り、入れてあるアプリが次の起動で知らせる
 
 ## プロジェクト構造
 

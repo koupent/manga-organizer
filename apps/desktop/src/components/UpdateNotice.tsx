@@ -10,8 +10,8 @@ type Phase = "offered" | "downloading" | "installing" | "failed";
 /**
  * 新しい版を知らせ、利用者が受け入れたら入れ替える。
  *
- * 起動したときに 1 回だけ確かめる。配布用の公開リポジトリの latest.json を
- * 読み、署名を確かめてから入れ替えるのは updater プラグイン。Windows では
+ * 起動したときに 1 回だけ確かめる。最新の Release の latest.json を読み、
+ * 署名を確かめてから入れ替えるのは updater プラグイン。Windows では
  * インストーラを起こした時点でアプリが閉じ、入れ替わった版が起ち上がり直す。
  * ブラウザ（開発と e2e）では何もしない。
  */
