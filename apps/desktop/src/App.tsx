@@ -217,15 +217,25 @@ export function App() {
    * 対象が変われば別の本なので、表紙も並べ替えも作り直しになる。作り直しに
    * なる画面は隠れたまま抱えても残せる状態が無く、読み込みだけが走る。
    * keep（移った先の画面）とファイル整理だけを残し、他は一旦落とす。
+   *
+   * ただし、開いている並べ替えの本へ戻るだけなら一覧を捨てない（#145）。
+   * 本も画面も変わらないので一覧を読み直す切っ掛けが来ず、捨てると格子が
+   * 出ないまま空の画面が残る。並べ替えの途中経過もそのまま続けられる。
    */
   const changeArchive = (path: string, keep: Mode = modeRef.current) => {
-    setPages([]);
+    const sameGrid =
+      path === archive && keep === "reorder" && opened.includes("reorder");
+    if (!sameGrid) setPages([]);
     setArchive(path);
     setError("");
     setOpened((current) =>
       current.filter((item) => item === "organize" || item === keep),
     );
   };
+  // ドロップの購読は起動時の一度きりなので、いまの本と画面を読む最新の
+  // changeArchive は ref から呼ぶ
+  const changeArchiveRef = useRef(changeArchive);
+  changeArchiveRef.current = changeArchive;
 
   /**
    * 指定したファイルを読み込んだ状態で、その画面へ移る。
@@ -286,7 +296,7 @@ export function App() {
         // どれも 1 冊ずつしか扱えない。フォルダは本として開けないので飛ばし、
         // まとめて落とされたら最初の 1 冊を採る。フォルダしか無ければ何もしない
         const book = entries.find((entry) => !entry.is_dir);
-        if (book) changeArchive(book.path);
+        if (book) changeArchiveRef.current(book.path);
         return;
       }
       // 整理はフォルダごと受ける。フォルダも本もそのまま入力に足す
@@ -331,11 +341,21 @@ export function App() {
 
   useEffect(() => {
     if (!client || !archive || !hasReorder) return;
+    // 本を替えた後に前の本の返事が届いても使わない（#145）。使うと、新しい
+    // 本の格子が前の本のページ名で並び、名前の合わないサムネイルが出ない
+    let current = true;
     setError("");
     client
       .listPages(archive)
-      .then((payload) => setPages(payload.pages as Page[]))
-      .catch((reason) => setError(String(reason.message ?? reason)));
+      .then((payload) => {
+        if (current) setPages(payload.pages as Page[]);
+      })
+      .catch((reason) => {
+        if (current) setError(String(reason.message ?? reason));
+      });
+    return () => {
+      current = false;
+    };
   }, [client, archive, hasReorder, versions.reorder]);
 
   const archiveName = archive ? baseName(archive) : "";
