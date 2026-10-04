@@ -1,8 +1,9 @@
-import { FolderOpen, Save, Undo2, ZoomIn } from "lucide-react";
+import { Save, Undo2, ZoomIn } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { EditorLayout } from "./EditorLayout";
 import {
   DndContext,
   PointerSensor,
@@ -135,13 +136,10 @@ const namesOf = (pages: Page[]) => pages.map((page) => page.name);
 type PageGridProps = {
   client: SidecarClient;
   archive: string;
-  archiveName?: string;
   pages: Page[];
   /** いま見えている画面かどうか。隠れている間は入力を受けない */
   active?: boolean;
   onSaved?: (message: string) => void;
-  /** 別のアーカイブを選び直す。渡さなければ選び直す導線を出さない */
-  onChangeArchive?: () => void;
   /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
   onArchiveChanged?: () => void;
 };
@@ -150,11 +148,9 @@ type PageGridProps = {
 export function PageGrid({
   client,
   archive,
-  archiveName,
   pages,
   active = true,
   onSaved,
-  onChangeArchive,
   onArchiveChanged,
 }: PageGridProps) {
   // 表示サイズはこの画面だけの設定なので、この画面が持つ。
@@ -374,113 +370,111 @@ export function PageGrid({
   };
 
   return (
-    <section className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2
-          className="text-[13px] font-semibold"
-          data-testid="reorder-archive-name"
-        >
-          {archiveName ?? "ページ修正"}
-        </h2>
-        {onChangeArchive ? (
+    <EditorLayout
+      toolbar={
+        <>
+          {/* 数えるのは、いま並べているページ。プロップの数を出すと、自分で
+              書き込んで読み直した直後だけ画面と数が食い違う */}
+          <span className="tabular shrink-0 text-[12px] text-ink-faint">
+            {order.length} ページ
+          </span>
+          <Badge tone={dirty ? "warn" : "neutral"} data-testid="dirty-state">
+            {dirty ? "未保存の変更があります" : "変更はありません"}
+          </Badge>
+          <span
+            className="tabular shrink-0 text-[12px] text-ink-faint"
+            data-testid="selection-count"
+          >
+            {selection.length} 件選択
+          </span>
+          {/* 画面固有の操作なので、共通ヘッダーではなく保存と同じ並びに置く。
+              伸び縮みする status より左に置き、文字が増えてもつまみの位置が
+              動かないようにする */}
+          <label className="flex shrink-0 items-center gap-2 text-[12px] text-ink-muted">
+            表示サイズ
+            <input
+              type="range"
+              min={CARD_WIDTH_MIN}
+              max={CARD_WIDTH_MAX}
+              step={CARD_WIDTH_STEP}
+              value={cardWidth}
+              data-testid="card-width"
+              onChange={(event) => setCardWidth(Number(event.target.value))}
+              className="h-1 w-28 cursor-pointer accent-brand"
+            />
+          </label>
+          <div className="flex-1" />
+          {/* 見出しの行は 1 行に固定してある。長い報告で折り返させず、
+              全文は吹き出しで読めるようにする */}
+          <span
+            className="min-w-0 truncate text-[12px] text-ink-muted"
+            data-testid="status"
+            title={status}
+          >
+            {status}
+          </span>
           <Button
-            variant="ghost"
-            data-testid="change-archive"
-            onClick={onChangeArchive}
+            variant="secondary"
+            className="shrink-0"
+            data-testid="undo"
+            disabled={history.length === 0}
+            onClick={undo}
           >
-            <FolderOpen />
-            別のファイルを選ぶ
+            <Undo2 />
+            元に戻す
           </Button>
-        ) : null}
-        {/* 数えるのは、いま並べているページ。プロップの数を出すと、自分で
-            書き込んで読み直した直後だけ画面と数が食い違う */}
-        <span className="tabular text-[12px] text-ink-faint">
-          {order.length} ページ
-        </span>
-        <Badge tone={dirty ? "warn" : "neutral"} data-testid="dirty-state">
-          {dirty ? "未保存の変更があります" : "変更はありません"}
-        </Badge>
-        <span
-          className="tabular text-[12px] text-ink-faint"
-          data-testid="selection-count"
-        >
-          {selection.length} 件選択
-        </span>
-        {/* 画面固有の操作なので、共通ヘッダーではなく対象ファイル名や保存と
-            同じ並びに置く。伸び縮みする status より左に置き、文字が増えても
-            つまみの位置が動かないようにする */}
-        <label className="flex items-center gap-2 text-[12px] text-ink-muted">
-          表示サイズ
-          <input
-            type="range"
-            min={CARD_WIDTH_MIN}
-            max={CARD_WIDTH_MAX}
-            step={CARD_WIDTH_STEP}
-            value={cardWidth}
-            data-testid="card-width"
-            onChange={(event) => setCardWidth(Number(event.target.value))}
-            className="h-1 w-28 cursor-pointer accent-brand"
-          />
-        </label>
-        <div className="flex-1" />
-        <span className="text-[12px] text-ink-muted" data-testid="status">
-          {status}
-        </span>
-        <Button
-          variant="secondary"
-          data-testid="undo"
-          disabled={history.length === 0}
-          onClick={undo}
-        >
-          <Undo2 />
-          元に戻す
-        </Button>
-        <Button
-          variant="primary"
-          size="lg"
-          data-testid="save"
-          disabled={!dirty || saving}
-          onClick={save}
-        >
-          <Save />
-          ZIP に保存
-        </Button>
-      </div>
-
-      <p className="text-[11.5px] text-ink-faint">
-        ドラッグで順番を入れ替え ・ <Key>Ctrl</Key>/<Key>Shift</Key>
-        +クリックで複数選択 ・ <Key>Ctrl</Key>+<Key>Z</Key> で元に戻す ・
-        虫眼鏡で原寸表示
-      </p>
-
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <SortableContext items={order} strategy={rectSortingStrategy}>
-          <div
-            className="grid gap-3"
-            style={{
-              gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
-            }}
+          <Button
+            variant="primary"
+            size="lg"
+            className="shrink-0"
+            data-testid="save"
+            disabled={!dirty || saving}
+            onClick={save}
           >
-            {order.map((name, index) => (
-              <PageCard
-                key={name}
-                name={name}
-                position={index + 1}
-                moved={original[index] !== name}
-                selected={selection.includes(name)}
-                thumbnailUrl={`${client.thumbnailUrl(archive, name, cardWidth)}&v=${reloadKey}`}
-                onSelect={select}
-                onZoom={setZoomed}
-              />
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
+            <Save />
+            ZIP に保存
+          </Button>
+        </>
+      }
+      hint={
+        <>
+          ドラッグで順番を入れ替え ・ <Key>Ctrl</Key>/<Key>Shift</Key>
+          +クリックで複数選択 ・ <Key>Ctrl</Key>+<Key>Z</Key> で元に戻す ・
+          虫眼鏡で原寸表示
+        </>
+      }
+    >
+      {/* スクロールするのは格子だけ。見出しの行は器の外側に固定される */}
+      <div className="min-h-0 flex-1 overflow-y-auto" data-testid="page-grid">
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={order} strategy={rectSortingStrategy}>
+            <div
+              className="grid gap-3"
+              style={{
+                gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
+              }}
+            >
+              {order.map((name, index) => (
+                <PageCard
+                  key={name}
+                  name={name}
+                  position={index + 1}
+                  moved={original[index] !== name}
+                  selected={selection.includes(name)}
+                  thumbnailUrl={`${client.thumbnailUrl(archive, name, cardWidth)}&v=${reloadKey}`}
+                  onSelect={select}
+                  onZoom={setZoomed}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      </div>
 
       {zoomed ? (
         <div
@@ -501,7 +495,7 @@ export function PageGrid({
           </span>
         </div>
       ) : null}
-    </section>
+    </EditorLayout>
   );
 }
 

@@ -304,7 +304,7 @@ test.describe("ページ並べ替えの対象選択", () => {
     await dropFiles(page, [dropEntry(archive)]);
 
     // Assert - 落とした 1 件が対象になり、そのページ数だけ並ぶ
-    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
+    await expect(page.getByTestId("archive-name")).toHaveText(
       "投入ドロップ.zip",
     );
     const cards = page.getByTestId("page-card");
@@ -324,7 +324,7 @@ test.describe("ページ並べ替えの対象選択", () => {
     await chooseArchiveViaBrowser(page, archive);
 
     // Assert
-    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
+    await expect(page.getByTestId("archive-name")).toHaveText(
       "投入ブラウザ.zip",
     );
     await expect(page.getByTestId("page-card")).toHaveCount(2);
@@ -411,9 +411,7 @@ test.describe("ページ並べ替えの対象選択", () => {
     await chooseArchiveViaBrowser(page, second);
 
     // Assert - 2 つ目のページが並ぶ
-    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
-      "選び直し 2.zip",
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText("選び直し 2.zip");
     await expect(cards).toHaveCount(4);
 
     // Assert - 1 つ目の編集は残っていない
@@ -443,7 +441,7 @@ test.describe("ページ並べ替えの対象選択", () => {
     await dropFiles(page, [dropEntry(head), dropEntry(tail)]);
 
     // Assert - 先頭の 1 件が対象で、どれを使ったかが画面から分かる
-    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
+    await expect(page.getByTestId("archive-name")).toHaveText(
       "まとめ投入 先頭.zip",
     );
     await expect(page.getByTestId("page-card")).toHaveCount(2);
@@ -548,8 +546,10 @@ async function gridLayout(page: Page): Promise<GridLayout> {
 
 async function toolbarShape(page: Page): Promise<ToolbarShape | null> {
   return page.evaluate(() => {
+    // 本の名前は 1 冊を編集する 3 画面が共有する帯にある（#128）。
+    // ツールバーの基準は、この画面だけの「未保存の変更」の印にする
     const name = document.querySelector<HTMLElement>(
-      '[data-testid="reorder-archive-name"]',
+      '[data-testid="dirty-state"]',
     );
     const save = document.querySelector<HTMLElement>('[data-testid="save"]');
     if (!name || !save) return null;
@@ -642,7 +642,7 @@ test.describe("ページ並べ替えの表示サイズ", () => {
     await openDenseArchive(page, denseArchive);
     await expect(page.getByTestId("card-width")).toHaveCount(1);
 
-    // Act - 対象ファイル名と保存ボタンを含む一番内側の祖先をツールバーとみなす
+    // Act - 未保存の印と保存ボタンを含む一番内側の祖先をツールバーとみなす
     const toolbar = await toolbarShape(page);
 
     // Assert - 測る対象が見つからないまま通らないようにする
@@ -657,11 +657,27 @@ test.describe("ページ並べ替えの表示サイズ", () => {
       "サムネイルまで含む所をツールバーとして測っている",
     ).toBe(false);
 
-    // Assert - 対象ファイル名や保存と同じ並びに表示サイズがある
+    // Assert - 未保存の印や保存と同じ並びに表示サイズがある
     expect(
       toolbar!.holdsSlider,
       "表示サイズのスライダーがツールバーの中に無い",
     ).toBe(true);
+  });
+
+  test("格子をいちばん下まで送っても、保存と表示サイズが見えている", async ({
+    page,
+  }) => {
+    // Arrange
+    await openDenseArchive(page, denseArchive);
+
+    // Act - 格子を最後のページまで送る
+    await page.getByTestId("page-card").last().scrollIntoViewIfNeeded();
+
+    // Assert - 流れるのは格子だけ。見出しの行が一緒に流れると、保存や
+    // 表示サイズのたびに一番上まで戻ることになる（#129）
+    await expect(page.getByTestId("page-card").first()).not.toBeInViewport();
+    await expect(page.getByTestId("save")).toBeInViewport();
+    await expect(page.getByTestId("card-width")).toBeInViewport();
   });
 
   test(`既定でサムネイルが 1 行に ${MIN_CARDS_PER_ROW} 枚以上並ぶ`, async ({

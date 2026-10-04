@@ -257,9 +257,7 @@ test.describe("ファイルブラウザを別窓で出す", () => {
     ).toBeHidden();
 
     // Assert - 選んだ 1 冊が実際に読み込まれている
-    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
-      "窓で選ぶ.zip",
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText("窓で選ぶ.zip");
     await expect(page.getByTestId("page-card")).toHaveCount(REORDER_PAGES);
     expect(archive.endsWith("窓で選ぶ.zip")).toBe(true);
   });
@@ -473,8 +471,6 @@ test.describe("ファイルブラウザを別窓で出す", () => {
 
     // Assert
     await expect(page.getByTestId("file-browser")).toBeHidden();
-    await expect(page.getByTestId("reorder-archive-name")).toHaveText(
-      "開いて選ぶ.zip",
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText("開いて選ぶ.zip");
   });
 });

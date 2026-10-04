@@ -1,9 +1,10 @@
-import { FolderOpen, Loader2, Scissors, Undo2 } from "lucide-react";
+import { Loader2, Scissors, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SidecarClient } from "../api/client";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Empty } from "./ui/empty";
+import { EditorLayout } from "./EditorLayout";
 import { SplitCard } from "./SplitCard";
 import { SplitDialog } from "./SplitDialog";
 import { useStoredNumber } from "../lib/setting";
@@ -44,9 +45,6 @@ const PICTURE_RATIO = 1.5;
 type SplitEditorProps = {
   client: SidecarClient;
   archive: string;
-  archiveName?: string;
-  /** 別のアーカイブを選び直す。渡さなければ選び直す導線を出さない */
-  onChangeArchive?: () => void;
   /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
   onArchiveChanged?: () => void;
 };
@@ -65,8 +63,6 @@ type SplitEditorProps = {
 export function SplitEditor({
   client,
   archive,
-  archiveName,
-  onChangeArchive,
   onArchiveChanged,
 }: SplitEditorProps) {
   const {
@@ -186,109 +182,88 @@ export function SplitEditor({
   const opened = overlay === null ? null : (rows[overlay] ?? null);
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-2">
-      {/* 見出しの行は高さを固定する。文が入れ替わるたびに折り返して格子が
-          押し下がると、いま見ていたページが視界から外れる */}
-      <div className="flex h-7 shrink-0 items-center gap-2">
-        <h2
-          className="min-w-0 truncate text-[13px] font-semibold"
-          data-testid="split-archive-name"
-        >
-          {archiveName ?? "ページ分割"}
-        </h2>
-        {onChangeArchive ? (
-          <Button
-            variant="ghost"
-            className="shrink-0"
-            data-testid="change-archive"
-            onClick={onChangeArchive}
-          >
-            <FolderOpen />
-            別のファイルを選ぶ
-          </Button>
-        ) : null}
-        <span
-          className="tabular shrink-0 text-[12px] text-ink-faint"
-          data-testid="split-page-count"
-        >
-          {pageCount} ページ
-        </span>
-        <span
-          className="flex shrink-0 items-center gap-1.5"
-          title="見開きと判定したページをまとめて選ぶ・外す"
-        >
-          <Checkbox
-            data-testid="split-master"
-            aria-label="見開きと判定したページをまとめて選ぶ・外す"
-            checked={master}
-            disabled={detected.length === 0}
-            onCheckedChange={toggleAll}
-          />
+    <EditorLayout
+      toolbar={
+        <>
           <span
-            className="tabular text-[12px] text-ink-muted"
-            data-testid="split-detected-count"
+            className="tabular shrink-0 text-[12px] text-ink-faint"
+            data-testid="split-page-count"
           >
-            見開き {detected.length} 枚
+            {pageCount} ページ
           </span>
-        </span>
-        <label className="flex shrink-0 items-center gap-2 text-[12px] text-ink-muted">
-          表示サイズ
-          <input
-            type="range"
-            min={CARD_WIDTH_MIN}
-            max={CARD_WIDTH_MAX}
-            step={CARD_WIDTH_STEP}
-            value={cardWidth}
-            data-testid="split-card-width"
-            onChange={(event) => setCardWidth(Number(event.target.value))}
-            className="h-1 w-28 cursor-pointer accent-brand"
-          />
-        </label>
-        <div className="flex-1" />
-        <span
-          role="status"
-          data-testid="split-status"
-          data-state={report.state}
-          className={cn(
-            "max-w-[420px] truncate text-[12px]",
-            report.state === "error" ? "text-danger" : "text-ink-muted",
-          )}
-        >
-          {status}
-        </span>
-        <Button
-          variant="secondary"
-          className="shrink-0"
-          data-testid="split-reset"
-          title="チェックと分割位置を開いたときの状態に戻す"
-          disabled={!pending || busy}
-          onClick={restore}
-        >
-          <Undo2 />
-          変更を戻す
-        </Button>
-        {/* 書き込みが終わって新しい行が並ぶまで押させない。報告が done に
-            なった時点で押せるようにすると、読み直しの最中に 2 つ目の指示が
-            飛ぶ。着いた順で結果が決まり、利用者は自分が最後に選んだ内容と
-            違う本を手にする */}
-        <Button
-          variant="primary"
-          size="lg"
-          className="shrink-0"
-          data-testid="split-confirm"
-          disabled={!pending || busy}
-          onClick={confirm}
-        >
-          <Scissors />
-          この内容で分割する
-        </Button>
-      </div>
-
-      <p className="shrink-0 text-[11.5px] leading-[18px] text-ink-faint">
-        チェックで分ける・分けないを選ぶ ・ 線を掴んで分割位置を動かす ・
-        画像をクリックで大きく表示 ・ 右半分が先のページになります（右綴じ）
-      </p>
-
+          <span
+            className="flex shrink-0 items-center gap-1.5"
+            title="見開きと判定したページをまとめて選ぶ・外す"
+          >
+            <Checkbox
+              data-testid="split-master"
+              aria-label="見開きと判定したページをまとめて選ぶ・外す"
+              checked={master}
+              disabled={detected.length === 0}
+              onCheckedChange={toggleAll}
+            />
+            <span
+              className="tabular text-[12px] text-ink-muted"
+              data-testid="split-detected-count"
+            >
+              見開き {detected.length} 枚
+            </span>
+          </span>
+          <label className="flex shrink-0 items-center gap-2 text-[12px] text-ink-muted">
+            表示サイズ
+            <input
+              type="range"
+              min={CARD_WIDTH_MIN}
+              max={CARD_WIDTH_MAX}
+              step={CARD_WIDTH_STEP}
+              value={cardWidth}
+              data-testid="split-card-width"
+              onChange={(event) => setCardWidth(Number(event.target.value))}
+              className="h-1 w-28 cursor-pointer accent-brand"
+            />
+          </label>
+          <div className="flex-1" />
+          <span
+            role="status"
+            data-testid="split-status"
+            data-state={report.state}
+            className={cn(
+              "max-w-[420px] truncate text-[12px]",
+              report.state === "error" ? "text-danger" : "text-ink-muted",
+            )}
+          >
+            {status}
+          </span>
+          <Button
+            variant="secondary"
+            className="shrink-0"
+            data-testid="split-reset"
+            title="チェックと分割位置を開いたときの状態に戻す"
+            disabled={!pending || busy}
+            onClick={restore}
+          >
+            <Undo2 />
+            変更を戻す
+          </Button>
+          {/* 書き込みが終わって新しい行が並ぶまで押させない。報告が done に
+              なった時点で押せるようにすると、読み直しの最中に 2 つ目の指示が
+              飛ぶ。着いた順で結果が決まり、利用者は自分が最後に選んだ内容と
+              違う本を手にする */}
+          <Button
+            variant="primary"
+            size="lg"
+            className="shrink-0"
+            data-testid="split-confirm"
+            disabled={!pending || busy}
+            onClick={confirm}
+          >
+            <Scissors />
+            この内容で分割する
+          </Button>
+        </>
+      }
+      hint="チェックで分ける・分けないを選ぶ ・ 線を掴んで分割位置を動かす ・ 画像をクリックで大きく表示 ・ 右半分が先のページになります（右綴じ）"
+    >
       {/* スクロールするのはこの格子であって窓ではない。行の高さは中身に
           合わせる（auto-rows-max）。auto のままだと、高さの決まった格子を
           行数で割った高さへ押し込められる */}
@@ -343,6 +318,6 @@ export function SplitEditor({
           onWalk={walk}
         />
       ) : null}
-    </section>
+    </EditorLayout>
   );
 }

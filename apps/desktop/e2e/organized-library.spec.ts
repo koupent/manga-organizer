@@ -1530,7 +1530,7 @@ test.describe("整理済みの行の仕上げ", () => {
       "true",
     );
     await expect(
-      page.getByTestId("thumbnail-archive-name"),
+      page.getByTestId("archive-name"),
       "移った先が別のファイルを読んでいる",
     ).toHaveText(source.split("/").pop()!);
     // ファイル整理は隠れるだけで残る（#67）ので、その中のドロップ領域も
@@ -1562,7 +1562,7 @@ test.describe("整理済みの行の仕上げ", () => {
       "true",
     );
     await expect(
-      page.getByTestId("reorder-archive-name"),
+      page.getByTestId("archive-name"),
       "移った先が別のファイルを読んでいる",
     ).toHaveText(another.split("/").pop()!);
     // 名前だけなら見出しを書き換えるだけでも通る。中身まで読めていることを

@@ -557,9 +557,7 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
     await page.getByTestId("change-archive").click();
     await expect(page.getByTestId("dropzone")).toBeVisible();
     await chooseArchiveViaBrowser(page, second);
-    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
-      "無傷 2.zip",
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText("無傷 2.zip");
 
     // Assert - 触っていたファイルは 1 バイトも変わっていない
     expect(archiveState(first)).toEqual(before);
@@ -812,7 +810,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     await dropFiles(page, [dropEntry(archive)]);
 
     // Assert - 落とした 1 件が対象になり、既定で先頭ページが選ばれている
-    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
+    await expect(page.getByTestId("archive-name")).toHaveText(
       "サムネイル投入.zip",
     );
     await expect(page.getByTestId("cover-name")).toHaveText("page-a.jpg");
@@ -833,7 +831,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     await dropFiles(page, [dropEntry(head), dropEntry(tail)]);
 
     // Assert
-    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
+    await expect(page.getByTestId("archive-name")).toHaveText(
       "サムネイルまとめ 先頭.zip",
     );
     await expect(page.getByTestId("cover-name")).toHaveText("page-a.jpg");
@@ -848,7 +846,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     await chooseArchiveViaBrowser(page, archive);
 
     // Assert
-    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
+    await expect(page.getByTestId("archive-name")).toHaveText(
       "サムネイル ブラウザ.zip",
     );
     await expect(page.getByTestId("cover-name")).toHaveText("page-a.jpg");
@@ -1007,7 +1005,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     await chooseArchiveViaBrowser(page, second);
 
     // Assert - 選んだ画像は 2 つ目の先頭に戻る
-    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
+    await expect(page.getByTestId("archive-name")).toHaveText(
       "サムネイル選び直し 2.zip",
     );
     await expect(page.getByTestId("cover-name")).toHaveText("cover-a.jpg");

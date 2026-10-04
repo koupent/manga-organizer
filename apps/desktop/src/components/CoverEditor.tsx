@@ -1,6 +1,5 @@
 import {
   Check,
-  FolderOpen,
   Image as ImageIcon,
   Images,
   RotateCcw,
@@ -29,6 +28,7 @@ import {
   type QuarterTurn,
 } from "./CropFrame";
 import { Empty } from "./ui/empty";
+import { EditorLayout } from "./EditorLayout";
 import { SectionTitle } from "./ui/section-title";
 import { fitInside, useBoxSize } from "../lib/stage";
 import type { SidecarClient } from "../api/client";
@@ -88,8 +88,6 @@ function initialEdit(cover: Cover): {
 type CoverEditorProps = {
   client: SidecarClient;
   archive: string;
-  archiveName?: string;
-  onChangeArchive?: () => void;
   /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
   onArchiveChanged?: () => void;
 };
@@ -107,8 +105,6 @@ type CoverEditorProps = {
 export function CoverEditor({
   client,
   archive,
-  archiveName,
-  onChangeArchive,
   onArchiveChanged,
 }: CoverEditorProps) {
   const [pages, setPages] = useState<string[]>([]);
@@ -269,76 +265,62 @@ export function CoverEditor({
       ワークベンチ型。判断の材料である絵に高さを全部渡し、操作は幅の決まった
       右の列へ寄せる。絵の上下に操作を積むと、積んだぶんだけ絵が縮む。
     */
-    <section className="flex min-h-0 flex-1 flex-col gap-2">
-      {/* いま何を見ているか。1 行に収め、絵の取り分を削らない */}
-      <div className="flex shrink-0 items-center gap-2">
-        <h2
-          className="min-w-0 truncate text-[13px] font-semibold"
-          data-testid="thumbnail-archive-name"
-        >
-          {archiveName ?? "表紙"}
-        </h2>
-        {onChangeArchive ? (
-          <Button
-            variant="ghost"
-            data-testid="change-archive"
-            onClick={onChangeArchive}
-          >
-            <FolderOpen />
-            別のファイルを選ぶ
-          </Button>
-        ) : null}
-        {/* この行に並ぶ名前・寸法・枠の判定は、いま保存されている 1 枚の値。
+    <EditorLayout
+      toolbar={
+        <>
+          {/* この行に並ぶ名前・寸法・枠の判定は、いま保存されている 1 枚の値。
             見えている絵と枠は加工前の画像なので、見出しを付けないと
             1600×1200 の見開きを見ながら「800×1200」「枠に合っています」と
             書かれた画面になり、矛盾しているようにしか読めない */}
-        <span className="shrink-0 text-[12px] text-ink-faint">
-          保存されている表紙
-        </span>
-        <span
-          className="shrink-0 text-[12px] text-ink-faint"
-          data-testid="cover-name"
-        >
-          {cover.name}
-        </span>
-        <Badge tone="neutral" data-testid="cover-size">
-          <span className="tabular">
-            {cover.width}×{cover.height}
-          </span>
-        </Badge>
-        {/* 保留の加工は、確定するまでファイルに残らない。回した角度は
-            見えている絵からは読み取れないので、数値で添えておく */}
-        {angle === 0 ? null : (
-          <Badge tone="neutral" data-testid="pending-rotation">
-            <span className="tabular">{angle} 度回転（未確定）</span>
-          </Badge>
-        )}
-        {/* ここには枠に収まっているかどうかだけを出す。見開きの警告は
-            右の列の先頭に置く */}
-        {cover.is_spread ? null : (
-          <p
-            className="shrink-0 text-[12px] text-ink-faint"
-            data-testid="fits-frame"
-          >
-            {fitsFrame ? "枠に合っています" : "枠と縦横比が異なります"}
-          </p>
-        )}
-        {/* 枠は掴めると分かって初めて使われる。説明は枠のある作業面の
-            すぐ上に出す。枠が退いている間は言っても指す先が無い */}
-        {choosing ? null : (
           <span className="shrink-0 text-[12px] text-ink-faint">
-            枠を掴んで動かせます（2:3 固定）
+            保存されている表紙
           </span>
-        )}
-        <div className="flex-1" />
-        <span
-          className="shrink-0 text-[12px] text-ink-muted"
-          data-testid="cover-status"
-        >
-          {status}
-        </span>
-      </div>
-
+          <span
+            className="shrink-0 text-[12px] text-ink-faint"
+            data-testid="cover-name"
+          >
+            {cover.name}
+          </span>
+          <Badge tone="neutral" data-testid="cover-size">
+            <span className="tabular">
+              {cover.width}×{cover.height}
+            </span>
+          </Badge>
+          {/* 保留の加工は、確定するまでファイルに残らない。回した角度は
+            見えている絵からは読み取れないので、数値で添えておく */}
+          {angle === 0 ? null : (
+            <Badge tone="neutral" data-testid="pending-rotation">
+              <span className="tabular">{angle} 度回転（未確定）</span>
+            </Badge>
+          )}
+          {/* ここには枠に収まっているかどうかだけを出す。見開きの警告は
+            右の列の先頭に置く */}
+          {cover.is_spread ? null : (
+            <p
+              className="shrink-0 text-[12px] text-ink-faint"
+              data-testid="fits-frame"
+            >
+              {fitsFrame ? "枠に合っています" : "枠と縦横比が異なります"}
+            </p>
+          )}
+          {/* 枠は掴めると分かって初めて使われる。説明は枠のある作業面の
+            すぐ上に出す。枠が退いている間は言っても指す先が無い */}
+          {choosing ? null : (
+            <span className="shrink-0 text-[12px] text-ink-faint">
+              枠を掴んで動かせます（2:3 固定）
+            </span>
+          )}
+          <div className="flex-1" />
+          <span
+            className="min-w-0 truncate text-[12px] text-ink-muted"
+            data-testid="cover-status"
+            title={status}
+          >
+            {status}
+          </span>
+        </>
+      }
+    >
       <div className="flex min-h-0 flex-1 gap-3">
         {/* 作業面。切り抜きの面と候補一覧が、同じ場所を入れ替わりで使う。
             200 ページから 1 枚を探すには、帯ではなくこの面の広さが要る */}
@@ -493,6 +475,6 @@ export function CoverEditor({
           </div>
         </aside>
       </div>
-    </section>
+    </EditorLayout>
   );
 }

@@ -1,7 +1,7 @@
-import { BookOpen, TriangleAlert } from "lucide-react";
+import { BookOpen, FolderOpen, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "./lib/utils";
-import { parentDirectory } from "./path";
+import { baseName, parentDirectory } from "./path";
 import { SidecarClient } from "./api/client";
 import { CoverEditor } from "./components/CoverEditor";
 import { FilePicker } from "./components/FilePicker";
@@ -16,6 +16,7 @@ import {
 } from "./connection";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { Alert } from "./components/ui/alert";
+import { Button } from "./components/ui/button";
 import { Segmented } from "./components/ui/segmented";
 
 type Page = { name: string; size: number; modified: string };
@@ -28,12 +29,22 @@ const FLASH_MS = 600;
 // 使う順に並べる。整理はほぼ必ず通り、サムネイルは良し悪しが一目で分かる。
 // ページ順の異常は読んで初めて気づくもので、後から戻ってくる使い方が主になる。
 // 見開きを割るのは、順序を直し終えてから最後に通る
-const MODES: { id: Mode; label: string }[] = [
+//
+// 整理は複数のファイルをまとめて処理し、残りの 3 つは 1 冊を開いて編集する。
+// 性質が違うので組を分けて並べる（#128）。同じ並びに置くと、4 つが同じ作りの
+// 画面に見え、整理の画面だけ勝手が違うことに戸惑う
+const BATCH_MODES: { id: Mode; label: string }[] = [
   { id: "organize", label: "ファイル整理" },
+];
+const BOOK_MODES: { id: Mode; label: string }[] = [
   { id: "thumbnail", label: "サムネイル作成" },
   { id: "reorder", label: "ページ並べ替え" },
   { id: "split", label: "ページ分割" },
 ];
+const MODES = [...BATCH_MODES, ...BOOK_MODES];
+
+const withTestIds = (items: { id: Mode; label: string }[]) =>
+  items.map((item) => ({ ...item, testId: `mode-${item.id}` }));
 
 /** 1 冊を読み込んで使う画面。アーカイブが書き換わると中身が古くなる */
 type ArchiveMode = "thumbnail" | "reorder" | "split";
@@ -308,7 +319,7 @@ export function App() {
       .catch((reason) => setError(String(reason.message ?? reason)));
   }, [client, archive, hasReorder, versions.reorder]);
 
-  const archiveName = archive ? (archive.split("/").pop() ?? archive) : "";
+  const archiveName = archive ? baseName(archive) : "";
 
   return (
     /* 窓の高さを枠として使う。文書が窓より伸びると、下にある主操作を
@@ -324,11 +335,20 @@ export function App() {
           </h1>
         </div>
 
-        <Segmented
-          items={MODES.map((m) => ({ ...m, testId: `mode-${m.id}` }))}
-          value={mode}
-          onChange={changeMode}
-        />
+        <nav className="flex items-center gap-2" aria-label="機能">
+          <Segmented
+            items={withTestIds(BATCH_MODES)}
+            value={mode}
+            onChange={changeMode}
+          />
+          <span className="h-4 w-px bg-line" aria-hidden />
+          <span className="text-[11.5px] text-ink-faint">1 冊を編集</span>
+          <Segmented
+            items={withTestIds(BOOK_MODES)}
+            value={mode}
+            onChange={changeMode}
+          />
+        </nav>
 
         <div className="flex-1" />
 
@@ -359,6 +379,37 @@ export function App() {
           </Alert>
         ) : null}
 
+        {/* 1 冊を編集する 3 画面が共有する「いま開いている本」（#128）。
+            画面ごとの見出しに置くと、タブを移るたびに同じ本の名前が別の場所に
+            出直し、3 つの道具が同じ 1 冊を相手にしていることが伝わらない */}
+        {isArchiveMode(mode) && archive ? (
+          <div
+            className="flex h-8 shrink-0 items-center gap-2 rounded-card border border-line bg-surface px-3"
+            data-testid="book-bar"
+          >
+            <BookOpen className="size-3.5 shrink-0 text-ink-faint" />
+            <span className="shrink-0 text-[11.5px] text-ink-faint">
+              編集中の本
+            </span>
+            <h2
+              className="min-w-0 truncate text-[13px] font-semibold"
+              data-testid="archive-name"
+              title={archive}
+            >
+              {archiveName}
+            </h2>
+            <Button
+              variant="ghost"
+              className="shrink-0"
+              data-testid="change-archive"
+              onClick={() => changeArchive("")}
+            >
+              <FolderOpen />
+              別のファイルを選ぶ
+            </Button>
+          </div>
+        ) : null}
+
         {/* 一度開いた画面は、別の画面へ移っても作り直さない。作品名も
             並べ替えの途中経過も切り抜き枠も、戻ってくればそのまま続けられる */}
         {opened.includes("organize") && client ? (
@@ -386,8 +437,6 @@ export function App() {
               key={`${archive}:${versions.thumbnail}`}
               client={client}
               archive={archive}
-              archiveName={archiveName}
-              onChangeArchive={() => changeArchive("")}
               onArchiveChanged={() => archiveChanged("thumbnail")}
             />
           </Panel>
@@ -401,9 +450,7 @@ export function App() {
               active={mode === "reorder"}
               client={client}
               archive={archive}
-              archiveName={archiveName}
               pages={pages}
-              onChangeArchive={() => changeArchive("")}
               onArchiveChanged={() => archiveChanged("reorder")}
             />
           </Panel>
@@ -415,8 +462,6 @@ export function App() {
               key={`${archive}:${versions.split}`}
               client={client}
               archive={archive}
-              archiveName={archiveName}
-              onChangeArchive={() => changeArchive("")}
               onArchiveChanged={() => archiveChanged("split")}
             />
           </Panel>

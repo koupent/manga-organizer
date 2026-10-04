@@ -320,9 +320,7 @@ test.describe("画面を切り替えても状態が残る", () => {
       .filter({ hasText: expected[1] })
       .getByTestId("produced-to-thumbnail")
       .click();
-    await expect(page.getByTestId("thumbnail-archive-name")).toHaveText(
-      expected[1],
-    );
+    await expect(page.getByTestId("archive-name")).toHaveText(expected[1]);
     await switchMode(page, "organize");
 
     // Assert - 出来たファイルの一覧はまだそこにある。
