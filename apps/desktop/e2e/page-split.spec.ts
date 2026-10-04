@@ -272,7 +272,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     );
     await expect(page.getByTestId("split-page-count")).toHaveText("5 ページ");
     await expect(page.getByTestId("split-status")).toHaveText(
-      "見開き 1 枚が見つかりました。分けるページにチェックを入れてください",
+      "見開き 1 枚が見つかりました。分けるページを選んでください",
     );
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 

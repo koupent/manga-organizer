@@ -64,7 +64,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await open(page, writeBook("結合の保留.zip", WITH_SPREAD), 5);
     // 開いた時点では何も保留にしない（#142）
     await expect(page.getByTestId("split-status")).toHaveText(
-      "見開き 1 枚が見つかりました。分けるページにチェックを入れてください",
+      "見開き 1 枚が見つかりました。分けるページを選んでください",
     );
 
     // Assert - 単ページ 2 枚が続くところにだけ結合の操作が出る。見開きと、
@@ -101,7 +101,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     // Assert
     await expect(page.locator('[data-testid="split-card"]')).toHaveCount(5);
     await expect(page.getByTestId("split-status")).toHaveText(
-      "見開き 1 枚が見つかりました。分けるページにチェックを入れてください",
+      "見開き 1 枚が見つかりました。分けるページを選んでください",
     );
   });
 

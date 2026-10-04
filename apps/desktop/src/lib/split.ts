@@ -381,7 +381,7 @@ export function summaryOf(rows: SplitRow[]): string {
     // 何も選んでいないときは、次に何をすればよいかを言う（#142）
     const unchosen = rows.filter((row) => row.detected && !row.checked).length;
     if (unchosen > 0) {
-      return `見開き ${unchosen} 枚が見つかりました。分けるページにチェックを入れてください`;
+      return `見開き ${unchosen} 枚が見つかりました。分けるページを選んでください`;
     }
     // 見開きのまま残すと決めた横長（kept_whole）は勧めないが、見開きはある
     return rows.some((row) => isCandidate(row) || isWide(row))
