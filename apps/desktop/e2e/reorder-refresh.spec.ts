@@ -259,6 +259,57 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
     );
   });
 
+  test("別の画面が本を書き換えて作り直されても、カードの絵は新しいページのもの", async ({
+    page,
+  }) => {
+    // Arrange - 並べ替えを開き、1 度保存しておく。保存すると絵の URL の世代が
+    // 進み、その世代の URL で保存後の絵がブラウザに覚えられる
+    const archive = writeArchive(sidecar.workDir, "作り直し後の絵.zip", [
+      { name: "001.jpg", color: "#ff0000" },
+      { name: "002.jpg", color: "#00ff00" },
+      { name: "003.jpg", color: "#0000ff" },
+    ]);
+    await openReorder(page, archive);
+    await expectPainted(
+      page,
+      ["赤", "緑", "青"],
+      "開いた直後の絵を読めていない",
+    );
+    await dragCard(page, 0, 2);
+    await page.getByTestId("save").click();
+    await expect(page.getByTestId("status")).toContainText(SAVED_MESSAGE, {
+      timeout: 30_000,
+    });
+    await expectPainted(
+      page,
+      ["緑", "青", "赤"],
+      "保存した後の絵を読めていない",
+    );
+
+    // Act - サムネイル作成で 3 枚目（赤）を表紙にする。先頭へ移すので連番が
+    // 振り直され、同じ名前が別の絵を指すようになる
+    await page.getByTestId("mode-thumbnail").click();
+    await page.getByTestId("choose-page").click();
+    await page
+      .locator('[data-testid="thumbnail-candidate"][data-name="003.jpg"]')
+      .click();
+    await expect(page.getByTestId("cover-name")).toHaveText("003.jpg");
+    await page.getByTestId("apply-thumbnail").click();
+    await expect(page.getByTestId("cover-status")).toContainText(
+      "加工しました",
+      { timeout: 30_000 },
+    );
+    await page.getByTestId("mode-reorder").click();
+
+    // Assert - 並べ替えの画面は作り直される。世代を数え直して作り直す前と
+    // 同じ URL になると、ブラウザが覚えている保存後の古い絵が出る
+    await expectPainted(
+      page,
+      ["赤", "緑", "青"],
+      "作り直されたのに、カードには書き換える前の絵が描かれたまま",
+    );
+  });
+
   test("保存の後の読み直しに失敗したら、古い並びで押し直させない", async ({
     page,
   }) => {

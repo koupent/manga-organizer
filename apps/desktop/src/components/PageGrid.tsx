@@ -1,6 +1,6 @@
 import { Save, Undo2, ZoomIn } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cn } from "../lib/utils";
+import { cn, firstImageGeneration } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { EditorLayout } from "./EditorLayout";
@@ -185,7 +185,7 @@ export function PageGrid({
    * 絵が古い格子を渡された利用者は、直したはずの順序がまた崩れて見え、
    * 並べ直してもう一度保存する。
    */
-  const [reloadKey, setReloadKey] = useState(0);
+  const [reloadKey, setReloadKey] = useState(firstImageGeneration);
   const lastClicked = useRef<string | null>(null);
 
   const sensors = useSensors(

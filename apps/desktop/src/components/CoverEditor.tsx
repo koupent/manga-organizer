@@ -34,6 +34,7 @@ import { Empty } from "./ui/empty";
 import { EditorLayout } from "./EditorLayout";
 import { SectionTitle } from "./ui/section-title";
 import { fitInside, useBoxSize } from "../lib/stage";
+import { firstImageGeneration } from "../lib/utils";
 import type { SidecarClient } from "../api/client";
 
 /** 絵を囲う枠線の太さ。この画面で唯一、絵の縁を背景から切り分けるもの */
@@ -127,7 +128,7 @@ export function CoverEditor({
   // 行かないので、確定のたびにここを進めて読み直させる。
   // これは「同じ画面で加工した」ときの合図でしかない。開き直したときに古い絵を
   // 出さないことは、サイドカー側の ETag による再確認が受け持つ
-  const [reloadKey, setReloadKey] = useState(0);
+  const [reloadKey, setReloadKey] = useState(firstImageGeneration);
 
   // 絵を置ける面の実寸。候補一覧の開け閉てや窓の大きさで変わる
   const [stageRef, stage] = useBoxSize<HTMLDivElement>();
