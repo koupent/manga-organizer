@@ -306,6 +306,29 @@ class CacheTest(unittest.TestCase):
         self.assertEqual(1, len(calls))
         self.assertIn("ワンピース", json.dumps(calls[0], ensure_ascii=False))
 
+    def test_asks_again_after_an_empty_answer(self):
+        # Arrange - 通信の失敗も空で返ってくる。覚えると、回線が戻っても
+        # しばらく「見つからない」を返し続ける
+        item = media("One Piece", "ワンピース", [("Story", "Oda", "尾田栄一郎")])
+        answers = [[], [item]]
+        calls = []
+
+        def post(self, url, json=None, timeout=None):  # noqa: A002
+            calls.append(json)
+            return FakeResponse({"data": {"Page": {"media": answers.pop(0)}}})
+
+        fetcher = MangaMetadataFetcher()
+
+        # Act
+        with mock.patch("requests.Session.post", new=post):
+            first = fetcher.get_author_candidates("ワンピース")
+            second = fetcher.get_author_candidates("ワンピース")
+
+        # Assert
+        self.assertEqual([], first)
+        self.assertEqual(["尾田栄一郎"], [c["author"] for c in second])
+        self.assertEqual(2, len(calls))
+
 
 if __name__ == "__main__":
     unittest.main()

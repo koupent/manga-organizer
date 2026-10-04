@@ -99,6 +99,10 @@ class AniListClient(MangaAPIClient):
 
     BASE_URL = "https://graphql.anilist.co"
     RATE_LIMIT_DELAY = 0.5  # Conservative rate limiting
+    # (接続, 読み取り) の待ち時間。接続を短くするのは、宛先が IPv4 と IPv6 の
+    # 両方を返すため。requests は 1 つずつ順に試し、届かない宛先で待ち切って
+    # から次へ移る。IPv6 の届かない回線では 1 回の検索がほぼこの秒数になる（#125）
+    TIMEOUT = (3.05, 10)
 
     def __init__(self):
         self.last_request_time = 0
@@ -153,7 +157,9 @@ class AniListClient(MangaAPIClient):
 
         try:
             response = self.session.post(
-                self.BASE_URL, json={"query": query, "variables": variables}, timeout=10
+                self.BASE_URL,
+                json={"query": query, "variables": variables},
+                timeout=self.TIMEOUT,
             )
             response.raise_for_status()
 
@@ -256,9 +262,11 @@ class MangaMetadataFetcher:
         try:
             results = self.anilist_client.search_manga(title)
 
-            # Cache the results with timestamp
-            self._cache[cache_key] = results
-            self._cache_timestamps[cache_key] = current_time
+            # 空は覚えない。通信の失敗も空で返ってくるので、覚えると回線が
+            # 戻ってもしばらく「見つからない」を返し続ける
+            if results:
+                self._cache[cache_key] = results
+                self._cache_timestamps[cache_key] = current_time
 
             logger.info(f"Found {len(results)} results for '{title}' from AniList")
             return results

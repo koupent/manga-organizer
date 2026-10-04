@@ -121,7 +121,12 @@ export interface paths {
     };
     /**
      * List Entries
-     * @description タイトルと著者の辞書。query を与えると絞り込む
+     * @description タイトルと著者の辞書。query を与えると絞り込む。
+     *
+     *     絞り込まないときは全件を返す。画面はこの一覧の完全一致で著者を即座に
+     *     埋め、外れたときだけ外部検索へ回る（元の Tkinter 版も辞書全体を引いて
+     *     いた）。件数で切ると、辞書に入っている作品名でも毎回ネットワークへ出て
+     *     数秒待たされる（#125）。
      */
     get: operations["list_entries_api_library_entries_get"];
     put?: never;

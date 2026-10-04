@@ -273,7 +273,7 @@
     "/api/library/entries": {
       "get": {
         "summary": "List Entries",
-        "description": "タイトルと著者の辞書。query を与えると絞り込む",
+        "description": "タイトルと著者の辞書。query を与えると絞り込む。\n\n絞り込まないときは全件を返す。画面はこの一覧の完全一致で著者を即座に\n埋め、外れたときだけ外部検索へ回る（元の Tkinter 版も辞書全体を引いて\nいた）。件数で切ると、辞書に入っている作品名でも毎回ネットワークへ出て\n数秒待たされる（#125）。",
         "operationId": "list_entries_api_library_entries_get",
         "parameters": [
           {
