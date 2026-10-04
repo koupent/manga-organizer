@@ -204,7 +204,7 @@ test.describe("ページ分割: 書き込んだ後の走査が失敗したとき
     });
 
     await openSplit(page, archive, BEFORE_PAGES);
-    await page.getByTestId("split-master").click();
+    await page.getByTestId("split-accept-all").click();
 
     // 制御 - 見張りが「押せる」を観測できている。ここが取れないと、後の
     // 「一度も押せなかった」は見張りが壊れているだけでも成り立つ

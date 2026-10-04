@@ -407,7 +407,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     await cardAt(page, 2).getByTestId("split-check").click();
     await expect(cardAt(page, 2).getByTestId("split-number")).toHaveText("3");
     await expect(page.getByTestId("split-status")).toHaveText(
-      "1 枚を 1 ページに戻します（全 4 ページになります）",
+      "1 枚を 1 ページに戻します → 全 4 ページ",
     );
     await confirmSplit(page);
 
@@ -433,13 +433,15 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     );
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
-    // Assert - 開き直しても同じ。戻した見開きは、割っていない見開きとして
-    // 数える（#148）
+    // Assert - 開き直しても同じ。戻した見開きは見開きのまま残し、分割は
+    // 提案しない（#151）
     await page.reload();
     await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4);
     await expect(cardAt(page, 2)).toHaveAttribute("data-checked", "false");
+    await expect(cardAt(page, 2).getByTestId("split-kept-whole")).toBeVisible();
+    await expect(cardAt(page, 2)).toHaveAttribute("data-proposal", "none");
     await expect(page.getByTestId("split-status")).toHaveText(
-      "見開き 1 枚が見つかりました。分けるページを選んでください",
+      "変更はありません",
     );
 
     await page.context().close();

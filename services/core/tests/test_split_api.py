@@ -116,6 +116,7 @@ ROW_KEYS = {
     "is_spread",
     "split",
     "displaced",
+    "kept_whole",
     "merge_suggested",
 }
 SCAN_KEYS = {"archive", "page_count", "token", "rows"}
@@ -623,8 +624,10 @@ class SplitRestoreTest(SplitApiTestBase):
         self.assertEqual(
             (SPREAD_WIDTH, SPREAD_HEIGHT), (restored["width"], restored["height"])
         )
-        # 戻した見開きも、ほかの見開きと同じに見開きとして出る（#148）
+        # 見開きのまま残すと決めた印が付く（#138）。画面はこれを見て分割を
+        # 提案しない（#151）
         self.assertIs(True, restored["is_spread"], restored)
+        self.assertIs(True, restored["kept_whole"], restored)
 
         # Assert - 枚数と寸法だけでは、片方の半分を引き伸ばした絵も通る。
         # 左が赤・右が青の 1 枚に戻っていることまで見る
@@ -722,10 +725,11 @@ class MergeTest(SplitApiTestBase):
         self.assertEqual(1, result["merged_count"], result)
         self.assertEqual(2, result["page_count"], result)
 
-        # Assert - 開き直すと、割っていない見開きとして出る（#148）
+        # Assert - 開き直すと、見開きのまま残すページとして出る
         after = self.scan(self.archive)
         merged = after["rows"][0]
         self.assertIs(True, merged["is_spread"], merged)
+        self.assertIs(True, merged["kept_whole"], merged)
         self.assertIsNone(merged["split"], merged)
 
     def test_pages_that_are_not_adjacent_are_refused(self):

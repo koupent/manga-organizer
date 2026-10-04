@@ -8,7 +8,7 @@ import { startSidecar, type Sidecar } from "./sidecar";
  * 分割と同じく保留にし、確定したときに 1 回だけ書き込む。結合する 2 枚は、
  * 確定する前から結合した後の見開きの姿（右に先のページ、左に次のページ）で出す。
  *
- * 継ぎ目の色がつながる 2 枚は、結合の候補として示す（#149）。
+ * 継ぎ目の色がつながる 2 枚は、結合の提案として示す（#149 #151）。
  *
  * サイドカー側の契約は `services/core/tests/test_page_splitter.py` の
  * `MergesTwoPagesTest`・`SuggestsMergesTest` と `test_split_api.py` の
@@ -67,7 +67,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await open(page, writeBook("結合の保留.zip", WITH_SPREAD), 5);
     // 開いた時点では何も保留にしない（#142）
     await expect(page.getByTestId("split-status")).toHaveText(
-      "見開き 1 枚が見つかりました。分けるページを選んでください",
+      "採用する提案を選んでください",
     );
 
     // Assert - 単ページ 2 枚が続くところにだけ結合の操作が出る。見開きと、
@@ -88,7 +88,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
       "結合をやめる",
     );
     await expect(page.getByTestId("split-status")).toHaveText(
-      "1 組を 1 ページに結合します（全 4 ページになります）",
+      "1 組を 1 ページに結合します → 全 4 ページ",
     );
 
     // Assert - 右綴じなので、次のページ（3 枚目）が左に並ぶ
@@ -104,7 +104,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     // Assert
     await expect(page.locator('[data-testid="split-card"]')).toHaveCount(5);
     await expect(page.getByTestId("split-status")).toHaveText(
-      "見開き 1 枚が見つかりました。分けるページを選んでください",
+      "採用する提案を選んでください",
     );
   });
 
@@ -115,7 +115,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     const archive = writeBook("結合する.zip", SINGLES_ONLY);
     await open(page, archive, 4);
     await expect(page.getByTestId("split-status")).toHaveText(
-      "見開きは見つかりませんでした",
+      "変更はありません",
     );
 
     // Act
@@ -136,11 +136,17 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await expect(card(page, 1)).toHaveAttribute("data-checked", "false");
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
-    // Assert - ほかの見開きと同じに見開きとして数え、まとめて選べる（#148）
-    await expect(page.getByTestId("split-detected-count")).toHaveText(
-      "見開き 1 枚を選ぶ",
+    // Assert - 結合した見開きには分割を提案しない（#151）。自分で結合した
+    // ものを、また分けるよう勧めることになる。見開きであることは札で示し、
+    // 分けたければ手で選べる
+    await expect(card(page, 1).getByTestId("split-kept-whole")).toHaveText(
+      "見開きのまま",
     );
-    await page.getByTestId("split-master").click();
+    await expect(card(page, 1)).toHaveAttribute("data-proposal", "none");
+    await expect(page.getByTestId("split-proposals")).toHaveText(
+      "提案はありません",
+    );
+    await card(page, 1).getByTestId("split-check").click();
     await expect(card(page, 1)).toHaveAttribute("data-checked", "true");
 
     // Assert - ZIP の中身。2 ページ目が 1200 幅の 1 枚になり、右に先の
@@ -160,9 +166,10 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
 
 /**
  * 1 枚の絵（横縞に左右のグラデーション）を 2 ページに分けて入れた本。
- * 先のページ（右半分）・次のページ（左半分）・無地の単ページの順
+ * 先のページ（右半分）・次のページ（左半分）・無地の単ページの順。
+ * withSpread なら、最後に横長の 1 枚（分割の提案が出る）を足す
  */
-function writeSeamBook(name: string): string {
+function writeSeamBook(name: string, withSpread = false): string {
   const target = `${sidecar.workDir}/${name}`;
   runPython(
     `
@@ -186,54 +193,140 @@ pages = [
     spread.crop((0, 0, 600, 900)),
     Image.new("RGB", (600, 900), "#808080"),
 ]
+if sys.argv[2] == "1":
+    pages.append(Image.new("RGB", (1200, 900), "#404040"))
 with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     for index, image in enumerate(pages, 1):
         archive.writestr(f"{index:03d}.png", png(image))
 `,
     target,
+    withSpread ? "1" : "0",
   );
   return target;
 }
 
-test.describe("ページ分割・結合: 結合の候補（#149）", () => {
-  test("継ぎ目の色がつながる 2 枚を候補として示し、送りボタンで辿れる", async ({
+test.describe("ページ分割・結合: 結合の提案（#149 #151）", () => {
+  test("継ぎ目の色がつながる 2 枚を、結合した姿で提案する", async ({
     page,
   }) => {
     // Arrange
-    await open(page, writeSeamBook("結合の候補.zip"), 3);
+    await open(page, writeSeamBook("結合の提案.zip"), 2);
 
-    // Assert - 開いた時点では何も保留にせず、候補の数を言う
+    // Assert - 開いた時点では何も採用せず、提案の数と次にすることを言う
+    await expect(page.getByTestId("split-proposals")).toHaveText(
+      "結合 1 の提案",
+    );
     await expect(page.getByTestId("split-status")).toHaveText(
-      "結合の候補が 1 組見つかりました。「次と結合」で 1 枚にできます",
+      "採用する提案を選んでください",
     );
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
-    // Assert - 候補のカードだけ、結合の操作を隠さずに出す
-    await expect(card(page, 0)).toHaveAttribute("data-suggested", "true");
-    await expect(card(page, 0).getByTestId("split-merge")).toHaveCSS(
-      "opacity",
-      "1",
+    // Assert - 提案は結合した後の姿（1 枚の見開き）で、まだ 2 ページのまま
+    await expect(card(page, 0)).toHaveAttribute("data-proposal", "merge");
+    await expect(card(page, 0)).toHaveAttribute("data-proposal-state", "open");
+    await expect(card(page, 0)).toHaveAttribute("data-merging", "true");
+    await expect(card(page, 0).getByTestId("split-proposal")).toHaveText(
+      "結合の提案",
     );
-    await expect(card(page, 1)).toHaveAttribute("data-suggested", "false");
-    await expect(card(page, 1).getByTestId("split-merge")).toHaveCSS(
-      "opacity",
-      "0",
+    await expect(card(page, 0).getByTestId("split-number")).toHaveText("1–2");
+
+    // Act - 採用する
+    await card(page, 0).getByTestId("split-accept").click();
+
+    // Assert
+    await expect(card(page, 0)).toHaveAttribute(
+      "data-proposal-state",
+      "accepted",
+    );
+    await expect(card(page, 0).getByTestId("split-proposal")).toHaveText(
+      "結合します",
+    );
+    await expect(card(page, 0).getByTestId("split-number")).toHaveText("1");
+    await expect(page.getByTestId("split-status")).toHaveText(
+      "1 組を 1 ページに結合します → 全 2 ページ",
     );
 
-    // Act - 送りボタンで候補を指す
+    // Act - 「変更を戻す」で未決へ戻し、今度は「このまま」と答える
+    await page.getByTestId("split-reset").click();
+    await card(page, 0).getByTestId("split-decline").click();
+
+    // Assert - 2 枚は別々のカードに戻り、提案に戻す操作だけが残る
+    await expect(page.locator('[data-testid="split-card"]')).toHaveCount(3);
+    await expect(card(page, 0)).toHaveAttribute(
+      "data-proposal-state",
+      "declined",
+    );
+    await expect(card(page, 0).getByTestId("split-proposal")).toHaveCount(0);
+    await expect(page.getByTestId("split-status")).toHaveText(
+      "変更はありません",
+    );
+    await expect(page.getByTestId("split-accept-all")).toBeDisabled();
+
+    // Act - 提案に戻す
+    await card(page, 0).getByTestId("split-reopen").click();
+
+    // Assert
+    await expect(card(page, 0)).toHaveAttribute("data-proposal-state", "open");
+    await expect(page.getByTestId("split-accept-all")).toBeEnabled();
+  });
+
+  test("送りボタンで提案を指し、Enter で採用・Backspace でこのまま", async ({
+    page,
+  }) => {
+    // Arrange - 結合の提案 1 組と、分割の提案 1 枚
+    await open(page, writeSeamBook("キーで答える.zip", true), 3);
+    await expect(page.getByTestId("split-proposals")).toHaveText(
+      "分割 1・結合 1 の提案",
+    );
+
+    // Act - 最初の提案を指す
     await page.getByTestId("split-next").click();
 
     // Assert
     await expect(card(page, 0)).toHaveAttribute("data-focused", "true");
-    await expect(page.getByTestId("split-focus-position")).toHaveText("1 / 1");
+    await expect(page.getByTestId("split-focus-position")).toHaveText("1 / 2");
 
-    // Act - 結合する
-    await card(page, 0).getByTestId("split-merge").click();
+    // Act - Enter で採用すると、次の提案へ進む
+    await page.keyboard.press("Enter");
 
     // Assert
-    await expect(card(page, 0)).toHaveAttribute("data-merging", "true");
-    await expect(page.getByTestId("split-status")).toHaveText(
-      "1 組を 1 ページに結合します（全 2 ページになります）",
+    await expect(card(page, 0)).toHaveAttribute(
+      "data-proposal-state",
+      "accepted",
     );
+    await expect(card(page, 3)).toHaveAttribute("data-focused", "true");
+    await expect(page.getByTestId("split-focus-position")).toHaveText("2 / 2");
+
+    // Act - Backspace で「このまま」
+    await page.keyboard.press("Backspace");
+
+    // Assert - 断った提案は残り、結合だけが保留になる
+    await expect(card(page, 3)).toHaveAttribute(
+      "data-proposal-state",
+      "declined",
+    );
+    await expect(page.getByTestId("split-status")).toHaveText(
+      "1 組を 1 ページに結合します → 全 3 ページ",
+    );
+  });
+
+  test("すべて採用は、答えていない提案だけを採用する", async ({ page }) => {
+    // Arrange
+    await open(page, writeSeamBook("すべて採用.zip", true), 3);
+    await card(page, 3).getByTestId("split-decline").click();
+
+    // Act
+    await page.getByTestId("split-accept-all").click();
+
+    // Assert - 結合は採用され、断った分割はそのまま
+    await expect(card(page, 0)).toHaveAttribute(
+      "data-proposal-state",
+      "accepted",
+    );
+    await expect(card(page, 3)).toHaveAttribute(
+      "data-proposal-state",
+      "declined",
+    );
+    await expect(page.getByTestId("split-accept-all")).toBeDisabled();
   });
 });

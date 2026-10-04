@@ -5,7 +5,7 @@ import { startSidecar, type Sidecar } from "./sidecar";
 /**
  * ページ分割で候補へ送る・割ったことが見える・左から右の並びで出る（#131 #132 #137）。
  *
- * - 数百ページの本でも、見開きの候補へスクロールせずに移れる（#131）
+ * - 数百ページの本でも、提案（#151）へスクロールせずに移れる（#131）
  * - 割った対は割る前の見開きの絵で出るので、割れていることを印で示す（#132）
  * - 格子は 2 画面とも左から右へ並ぶ。右綴じに合わせて右から左にしたところ、
  *   実機で違和感が強かった（#137）
@@ -51,7 +51,7 @@ const card = (page: Page, index: number) =>
   page.locator(`[data-testid="split-card"][data-index="${index}"]`);
 
 test.describe("ページ分割: 候補へ送る・割った印・左から右の並び", () => {
-  test("前後のボタンで、見開きの候補だけを順に指す", async ({ page }) => {
+  test("前後のボタンで、提案だけを順に指す", async ({ page }) => {
     // Arrange
     await open(page, writeTwoSpreads("送る.zip"), "split");
     await expect(page.locator('[data-testid="split-card"]')).toHaveCount(7);
@@ -60,14 +60,14 @@ test.describe("ページ分割: 候補へ送る・割った印・左から右の
     // Assert - まだ何も指していない
     await expect(position).toHaveText("– / 2");
 
-    // Act / Assert - 次へ送ると 1 つ目の見開き（2 枚目）を指す。その前に
-    // 候補は無いので、前へは送れない
+    // Act / Assert - 次へ送ると 1 つ目の提案（2 枚目の見開き）を指す。その
+    // 前に提案は無いので、前へは送れない
     await page.getByTestId("split-next").click();
     await expect(card(page, 1)).toHaveAttribute("data-focused", "true");
     await expect(position).toHaveText("1 / 2");
     await expect(page.getByTestId("split-previous")).toBeDisabled();
 
-    // Act / Assert - 候補でないページは飛ばして、5 枚目の見開きへ
+    // Act / Assert - 提案の無いページは飛ばして、5 枚目の見開きへ
     await page.getByTestId("split-next").click();
     await expect(card(page, 4)).toHaveAttribute("data-focused", "true");
     await expect(card(page, 1)).toHaveAttribute("data-focused", "false");
@@ -94,8 +94,8 @@ test.describe("ページ分割: 候補へ送る・割った印・左から右の
     const second = await card(page, 1).boundingBox();
     expect(first!.x, "1 枚目が 2 枚目より左に無い").toBeLessThan(second!.x);
 
-    // Act - 見つかった見開きを選んで確定する
-    await page.getByTestId("split-master").click();
+    // Act - 提案をすべて採用して確定する
+    await page.getByTestId("split-accept-all").click();
     await page.getByTestId("split-confirm").click();
     await expect(page.getByTestId("split-status")).toContainText(
       "2 枚を分割しました",
