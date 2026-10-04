@@ -85,6 +85,9 @@ ZIP_SUFFIXES = frozenset({".zip", ".cbz", ".epub"})
 RAR_SUFFIXES = frozenset({".rar", ".cbr"})
 SEVENZIP_SUFFIXES = frozenset({".7z", ".cb7"})
 
+# 入れ物 1 つの目次をどこまで読んだか（0〜1）を受け取る関数（#157）
+ReadProgress = Callable[[float], None]
+
 # 入れ子の目次を読む合間に打ち切りを見に行く間隔（入れ子の数）。走査の側
 # （``manga_api.analysis_job.SCAN_CHECKPOINT_PATHS``）と同じ考え方で、1 つごとに
 # 見に行くと ``JobStore._report`` のロックと確定が読み出しそのものより重くなる。
@@ -176,6 +179,7 @@ def analyze_stream(
     author: str,
     title: str,
     checkpoint: Callable[[], None] = lambda: None,
+    progress: ReadProgress | None = None,
 ) -> Iterator[AnalysisScan | AnalysisStep]:
     """投入されたパスを「走査 → 1 つずつ目次を読む」の流れで返す。
 
@@ -191,6 +195,10 @@ def analyze_stream(
     目次を読んでいる最中にも呼ぶ。入れ子だらけの 1 冊は読み切るまでに数分
     かかるので、切れ目でしか見に行かないと、その数分は打ち切りが何も止め
     られない。
+
+    ``progress`` は、入れ物 1 つの目次をどこまで読んだか（0〜1）を受け取る関数
+    （#157）。いまは RAR だけが知らせる。大きな RAR 1 つを読み終えるまで、
+    件数の進捗は 0 から動かないため。
     """
     containers = tuple(expand_inputs(paths))
     yield AnalysisScan(containers=containers)
@@ -199,11 +207,14 @@ def analyze_stream(
     # ``_1`` の付き方が実処理とずれる
     planner = _Planner(author, title)
     for container in containers:
-        yield _read_container(planner, container, checkpoint)
+        yield _read_container(planner, container, checkpoint, progress)
 
 
 def _read_container(
-    planner: "_Planner", container: Path, checkpoint: Callable[[], None]
+    planner: "_Planner",
+    container: Path,
+    checkpoint: Callable[[], None],
+    progress: ReadProgress | None = None,
 ) -> AnalysisStep:
     """入れ物 1 つを読む。読めなくても理由を添えて返し、流れは止めない。
 
@@ -220,7 +231,7 @@ def _read_container(
         books = (
             (planner.plan_folder(container, checkpoint),)
             if container.is_dir()
-            else tuple(planner.plan_archive(container, checkpoint))
+            else tuple(planner.plan_archive(container, checkpoint, progress))
         )
     except OperationCancelled:
         # 打ち切りは「読めなかった」ではない。この行は下の ``except Exception``
@@ -340,10 +351,13 @@ class _Planner:
         self._taken: set[str] = set()
 
     def plan_archive(
-        self, archive_path: Path, checkpoint: Callable[[], None]
+        self,
+        archive_path: Path,
+        checkpoint: Callable[[], None],
+        progress: ReadProgress | None = None,
     ) -> list[PlannedBook]:
         """アーカイブ 1 つから出来る本を並べる"""
-        candidates = locate_books(archive_path, checkpoint)
+        candidates = locate_books(archive_path, checkpoint, progress)
         total = len(candidates)
         return [
             self._plan(
@@ -455,19 +469,25 @@ class _Toc:
     read: Callable[[str], bytes] | None
 
 
-# 目次を開く関数。パスでも、入れ子のためにメモリへ読んだバイト列でも受ける
-_Opener = Callable[[Path | BytesIO], AbstractContextManager[_Toc]]
+# 目次を開く関数。パスでも、入れ子のためにメモリへ読んだバイト列でも受ける。
+# 2 つ目の引数は目次をどこまで読んだかを受け取る関数で、知らせない形式もある
+_Opener = Callable[[Path | BytesIO, ReadProgress | None], AbstractContextManager[_Toc]]
 
 
 @contextmanager
-def _open_zip(source: Path | BytesIO) -> Iterator[_Toc]:
-    """ZIP の目次を開く"""
+def _open_zip(
+    source: Path | BytesIO, progress: ReadProgress | None = None
+) -> Iterator[_Toc]:
+    """ZIP の目次を開く。目次は末尾にまとまっていて一息で読めるので、
+    どこまで読んだかは知らせない"""
     with zipfile.ZipFile(source) as archive:
         yield _Toc(names=tuple(archive.namelist()), read=archive.read)
 
 
 @contextmanager
-def _open_rar(source: Path | BytesIO) -> Iterator[_Toc]:
+def _open_rar(
+    source: Path | BytesIO, progress: ReadProgress | None = None
+) -> Iterator[_Toc]:
     """RAR の目次を開く。
 
     ``rarfile`` は RAR3 / RAR5 の解析器を自前で持つので、目次を読むだけなら
@@ -479,8 +499,19 @@ def _open_rar(source: Path | BytesIO) -> Iterator[_Toc]:
     目次が空で返るため、素直に書くと「読めたうえで本が 0 冊」になり、#70 で
     無くしたかった silent skip がそのまま残る。鍵が無い以上、中身は実行時にも
     永遠に取り出せないので、読めなかったこととして扱う。
+
+    RAR の目次は書庫全体に散らばっていて、要素の見出しを 1 つずつ辿って読む。
+    大きな書庫を遅い置き場所から読むと数分かかることがあるので、見出しを
+    1 つ読むごとに、書庫の中のどこまで来たかを ``progress`` へ知らせる（#157）。
     """
-    with rarfile.RarFile(source) as archive:
+    size = source.stat().st_size if isinstance(source, Path) else 0
+    tell = None
+    if progress is not None and size > 0:
+
+        def tell(info: rarfile.RarInfo) -> None:
+            progress(min(info.header_offset / size, 1.0))
+
+    with rarfile.RarFile(source, info_callback=tell) as archive:
         names = tuple(archive.namelist())
         if not names and archive.needs_password():
             raise rarfile.PasswordRequired(
@@ -490,7 +521,9 @@ def _open_rar(source: Path | BytesIO) -> Iterator[_Toc]:
 
 
 @contextmanager
-def _open_7z(source: Path | BytesIO) -> Iterator[_Toc]:
+def _open_7z(
+    source: Path | BytesIO, progress: ReadProgress | None = None
+) -> Iterator[_Toc]:
     """7z の目次を開く。
 
     ``py7zr`` は純 Python で、目次も要素の取り出しもこの中で完結する。目次ごと
@@ -583,7 +616,9 @@ class _NestedReadCheckpoint:
 
 
 def locate_books(
-    archive_path: Path, checkpoint: Callable[[], None] = lambda: None
+    archive_path: Path,
+    checkpoint: Callable[[], None] = lambda: None,
+    progress: ReadProgress | None = None,
 ) -> list[BookLocation]:
     """アーカイブの目次から、1 冊になる場所を拾う。
 
@@ -609,7 +644,7 @@ def locate_books(
     opener = _reader_for(archive_path.name)
     if opener is None:
         return []
-    with opener(archive_path) as toc:
+    with opener(archive_path, progress) as toc:
         # 展開先は一時領域の「アーカイブ名」フォルダ。巻数はその名前から読まれる
         return _scan(
             toc,
@@ -711,7 +746,7 @@ def _scan_nested(
 
     try:
         checkpoint.before_read()
-        with opener(BytesIO(toc.read(stored_name))) as nested:
+        with opener(BytesIO(toc.read(stored_name)), None) as nested:
             return _scan(nested, place, depth + 1, checkpoint)
     except OperationCancelled:
         # 打ち切りは「入れ子が読めなかった」ではない。この行は下の

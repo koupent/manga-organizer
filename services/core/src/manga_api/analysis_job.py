@@ -148,6 +148,9 @@ def analysis_work(
         containers: list[str] = []
         books: list[dict[str, Any]] = []
         unreadable: list[dict[str, str]] = []
+        # いま読んでいる入れ物の進み（0〜1）（#157）。大きな RAR 1 つを読む
+        # 数分のあいだ、件数の進捗は 0 から動かない。画面はこれを足して進捗を出す
+        reading = 0.0
 
         def snapshot() -> dict[str, Any]:
             """いまの時点までに分かったこと。
@@ -163,6 +166,7 @@ def analysis_work(
                 "containers": list(containers),
                 "books": list(books),
                 "unreadable": list(unreadable),
+                "reading": reading,
             }
 
         # 進捗の分母は入れ物の数、分子は目次を読み終えた数。本を数えると、
@@ -170,10 +174,25 @@ def analysis_work(
         read = 0
         # 途中経過を最後に書いた時刻。None は「まだ一度も書いていない」
         written: float | None = None
+
+        def tell(fraction: float) -> None:
+            """入れ物 1 つの中の進みを受け取り、間隔を空けて途中経過に書く。
+
+            RAR は要素の見出しを 1 つ読むごとに知らせてくるので、全部を書くと
+            1 万件の書庫で 1 万回の確定になる。書く間隔は途中経過と同じにする
+            """
+            nonlocal reading, written
+            reading = fraction
+            now = time.monotonic()
+            if written is not None and now - written < RESULT_WRITE_INTERVAL:
+                return
+            report(result=snapshot())
+            written = now
+
         # 目次読みの最中にも打ち切りを見に行く。切れ目（1 件返るごと）でしか
         # 見ないと、入れ子だらけの 1 冊を読んでいる数分は打ち切りが効かず、
         # しかもその打ち切りは ``unreadable`` の「目次を読めません」に化ける
-        for event in analyze_stream(found, author, title, report):
+        for event in analyze_stream(found, author, title, report, tell):
             if isinstance(event, AnalysisScan):
                 # 走査が終わった時点で入れ物を全部渡す。画面はここで行を
                 # 並べ切ってしまい、あとは本が生えるだけになる
@@ -182,6 +201,8 @@ def analysis_work(
                 continue
 
             read += 1
+            # 次の入れ物は頭から読む
+            reading = 0.0
             books.extend(_book_view(book) for book in event.books)
             if event.error:
                 unreadable.append(

@@ -41,6 +41,11 @@ export type Analysis = {
   books: PlannedBook[];
   /** 目次を読めなかった入れ物 */
   unreadable: string[];
+  /**
+   * いま読んでいる入れ物の進み（0〜1）（#157）。大きな RAR 1 つを読む間、
+   * 件数の進捗は 0 から動かないので、これを足して進み具合を見せる
+   */
+  reading: number;
 };
 
 export const IDLE_ANALYSIS: Analysis = {
@@ -49,6 +54,7 @@ export const IDLE_ANALYSIS: Analysis = {
   containers: [],
   books: [],
   unreadable: [],
+  reading: 0,
 };
 
 /**
@@ -64,11 +70,13 @@ export function analysisResult(
     containers?: string[];
     books?: PlannedBook[];
     unreadable?: { source: string; reason: string }[];
+    reading?: number;
   } | null;
   return {
     containers: value?.containers ?? [],
     books: value?.books ?? [],
     unreadable: (value?.unreadable ?? []).map((item) => item.source),
+    reading: typeof value?.reading === "number" ? value.reading : 0,
   };
 }
 
