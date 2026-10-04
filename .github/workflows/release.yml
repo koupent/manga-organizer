@@ -1,9 +1,9 @@
 name: Windows インストーラ
 
 # インストーラを Windows ランナーで作り、黙って入れて同梱のサイドカーが
-# 起動し、保存まで通るかを確かめる。v で始まるタグのときだけ、配布用の公開
-# リポジトリ（koupent/manga-organizer-releases）へ、インストーラと自動更新の
-# 案内（latest.json）を載せる。lint・テストは ci.yml が受け持つ。
+# 起動し、保存まで通るかを確かめる。v で始まるタグのときだけ、このリポジトリの
+# Release に、インストーラと自動更新の案内（latest.json）を載せる。
+# lint・テストは ci.yml が受け持つ。
 #
 # PR では配布物の作り方に関わる変更のときだけ走らせる。Windows ランナーは
 # 分数が 2 倍に数えられ、画面だけの変更は Merge Gate で足りるため。
@@ -204,17 +204,16 @@ jobs:
             out/${{ steps.version.outputs.asset }}.sig
           if-no-files-found: error
 
-  # 配布用の公開リポジトリへ載せる。書き込みには、そのリポジトリだけに
-  # 書けるトークン（Secrets の RELEASES_TOKEN）を使う。ソースの private
-  # リポジトリには Release を作らない（置き場を 1 つにする）
+  # このリポジトリの Release に載せる。アプリはログインせずに latest.json と
+  # インストーラを落とすので、リポジトリは public であることが前提
   release:
     name: GitHub Release に載せる
     needs: build
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      PUBLIC_REPO: koupent/manga-organizer-releases
+    permissions:
+      contents: write
     steps:
       # 変更点は前のタグからのコミットの題名で作る。履歴を全部取る
       - uses: actions/checkout@v4
@@ -244,7 +243,7 @@ jobs:
             --rawfile notes out/notes.md \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --rawfile signature "out/$ASSET.sig" \
-            --arg url "https://github.com/$PUBLIC_REPO/releases/download/$GITHUB_REF_NAME/$ASSET" \
+            --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ASSET" \
             '{version: $version, notes: $notes, pub_date: $pub_date,
               platforms: {"windows-x86_64": {signature: $signature, url: $url}}}' \
             > out/latest.json
@@ -252,7 +251,7 @@ jobs:
 
       - name: Release を作る
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           ASSET: ${{ needs.build.outputs.asset }}
         run: |
           set -Eeuo pipefail
@@ -263,13 +262,14 @@ jobs:
             echo "2. 「Windows によって PC が保護されました」と出たら「詳細情報」→「実行」を押します（署名していないために出る警告です）。"
             echo "3. 終わるとスタートメニューに「Manga Organizer」が入ります。"
             echo
-            echo "v4.1.1 以降を入れてあれば、次の版からはアプリが知らせて、そのまま更新できます。RAR / CBR を扱うときだけ 7-Zip が要ります。"
+            echo "v4.1.2 以降を入れてあれば、次の版からはアプリが知らせて、そのまま更新できます。RAR / CBR を扱うときだけ 7-Zip が要ります。"
             echo
             echo "## 変更点"
             echo
             cat out/notes.md
           } > out/body.md
           gh release create "$GITHUB_REF_NAME" "out/$ASSET" out/latest.json \
-            --repo "$PUBLIC_REPO" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
             --title "Manga Organizer $GITHUB_REF_NAME" \
             --notes-file out/body.md
