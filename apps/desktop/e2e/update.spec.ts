@@ -170,3 +170,68 @@ test("落とせなかったら理由を出し、サイドカーは止めずイ�
     "ok",
   );
 });
+
+test.describe("設定から更新を確かめ直す（#136）", () => {
+  test("あとで を押した後も、設定の「更新を確認」で案内を出し直せる", async ({
+    page,
+  }) => {
+    // Arrange - 起動時の案内を閉じる
+    await openAsTauri(page, {
+      update: { version: "4.3.0", body: "- 結合できるようにした" },
+    });
+    const notice = page.getByTestId("update-notice");
+    await notice.getByRole("button", { name: "あとで" }).click();
+    await expect(notice).toHaveCount(0);
+
+    // Act
+    await page.getByTestId("open-settings").click();
+    const dialog = page.getByTestId("settings-dialog");
+    await expect(dialog.getByTestId("app-version")).toHaveText(
+      /^v\d+\.\d+\.\d+$/,
+    );
+    await dialog.getByTestId("check-update").click();
+
+    // Assert - 確かめ直して見つかったことを伝え、案内を出し直す
+    await expect(dialog.getByTestId("update-check-status")).toHaveText(
+      "新しい版 v4.3.0 があります。画面上部の案内から更新できます",
+    );
+    expect(
+      (await calls(page)).filter((call) => call === "plugin:updater|check"),
+    ).toHaveLength(2);
+    await page.keyboard.press("Escape");
+    await expect(notice).toContainText("v4.3.0");
+  });
+
+  test("新しい版が無ければ、最新の版だと伝える", async ({ page }) => {
+    // Arrange
+    await openAsTauri(page, { update: null });
+
+    // Act
+    await page.getByTestId("open-settings").click();
+    await page.getByTestId("check-update").click();
+
+    // Assert
+    await expect(page.getByTestId("update-check-status")).toHaveText(
+      "最新の版です",
+    );
+    await expect(page.getByTestId("update-notice")).toHaveCount(0);
+  });
+
+  test("ブラウザで開いているときは、確かめられないことを伝える", async ({
+    page,
+  }) => {
+    // Arrange - Tauri の外（開発と e2e のふだんの開き方）
+    await page.goto(
+      `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}`,
+    );
+
+    // Act
+    await page.getByTestId("open-settings").click();
+
+    // Assert
+    await expect(page.getByTestId("check-update")).toBeDisabled();
+    await expect(page.getByTestId("update-check-status")).toHaveText(
+      "ブラウザで開いているときは確認できません",
+    );
+  });
+});

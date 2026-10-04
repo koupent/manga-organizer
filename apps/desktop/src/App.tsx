@@ -1,5 +1,6 @@
 import { BookOpen, FolderOpen, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { cn } from "./lib/utils";
 import { baseName, parentDirectory } from "./path";
 import { SidecarClient } from "./api/client";
@@ -14,7 +15,8 @@ import {
   onFilesDropped,
   resolveConnection,
 } from "./connection";
-import { UpdateNotice } from "./components/UpdateNotice";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { findUpdate, UpdateNotice } from "./components/UpdateNotice";
 import { Alert } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
 import { Segmented } from "./components/ui/segmented";
@@ -124,6 +126,8 @@ export function App() {
   const [pages, setPages] = useState<Page[]>([]);
   const [error, setError] = useState("");
   const [health, setHealth] = useState("");
+  // 新しい版の案内。起動時と、設定の「更新を確認」が出す（#136）
+  const [update, setUpdate] = useState<Update | null>(null);
   const [versions, setVersions] = useState<ArchiveVersions>(FIRST_VERSIONS);
 
   /**
@@ -238,6 +242,21 @@ export function App() {
     changeArchive(path, next);
     changeMode(next);
   };
+
+  // 起動したときに 1 回だけ、新しい版があるか確かめる
+  useEffect(() => {
+    let cancelled = false;
+    findUpdate()
+      .then((found) => {
+        if (!cancelled && found) setUpdate(found);
+      })
+      // 確かめられなくても今の版は使い続けられる。オフラインのたびに
+      // 失敗を知らせても、利用者にできることが無い
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -365,13 +384,16 @@ export function App() {
           />
           {health === "ok" ? "接続済み" : "未接続"}
         </span>
+        <SettingsDialog onUpdateFound={setUpdate} />
       </header>
 
       {/* 中央寄せの上限を置かない。広い窓では左右に余白が積み上がるだけで、
           その間ずっと入力欄や一覧は狭いまま使うことになる。
           溢れたときにスクロールするのはこの中であって、窓ではない */}
       <div className="flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-3">
-        <UpdateNotice />
+        {update ? (
+          <UpdateNotice update={update} onDismiss={() => setUpdate(null)} />
+        ) : null}
         {error ? (
           <Alert tone="danger" data-testid="error">
             <TriangleAlert />
