@@ -116,10 +116,21 @@ async function reopen(
       `&mode=split&archive=${encodeURIComponent(archive)}`,
   );
   await expect(page.getByTestId("split-grid")).toBeVisible({ timeout: 30_000 });
+  // 割り終えた本は②「見開きにする」から開く。分割の線を触るので①へ移る（#153）
+  await showSplitStep(page);
   await expect(page.locator('[data-testid="split-card"]')).toHaveCount(cards, {
     timeout: 30_000,
   });
   return page;
+}
+
+/** ①「単ページにする」へ移る。保存していない変更は無い前提 */
+async function showSplitStep(page: Page) {
+  await page.getByTestId("split-step-split").click();
+  await expect(page.getByTestId("split-step-split")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 }
 
 function cardAt(page: Page, index: number) {
@@ -424,8 +435,14 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     ).toBeTruthy();
 
     // Assert - 読み直した画面でも、戻した見開きにチェックは入り直さない
-    // （#138）。入り直すと「割る」が保留になり、戻せなかったように見える
+    // （#138）。入り直すと「割る」が保留になり、戻せなかったように見える。
+    // 保存すると②へ進むので、①へ戻って確かめる（#153）
     await expect(page.getByTestId("split-page-count")).toHaveText("4 ページ");
+    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await showSplitStep(page);
     await expect(cardAt(page, 2)).toHaveAttribute("data-checked", "false");
     await expect(cardAt(page, 2).getByTestId("split-number")).toHaveAttribute(
       "data-pending",
@@ -433,13 +450,18 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     );
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
-    // Assert - 開き直しても同じ。戻した見開きは見開きのまま残し、分割は
-    // 提案しない（#151）
+    // Assert - 開き直しても同じ。戻した見開きは見開きのまま残し、①の
+    // 「すべて分割」の対象にしない（#151 #153）。①の対象が無いので②から開く
     await page.reload();
+    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await showSplitStep(page);
     await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4);
     await expect(cardAt(page, 2)).toHaveAttribute("data-checked", "false");
     await expect(cardAt(page, 2).getByTestId("split-kept-whole")).toBeVisible();
-    await expect(cardAt(page, 2)).toHaveAttribute("data-proposal", "none");
+    await expect(cardAt(page, 2)).toHaveAttribute("data-target", "false");
     await expect(page.getByTestId("split-status")).toHaveText(
       "変更はありません",
     );

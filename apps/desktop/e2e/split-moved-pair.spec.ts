@@ -72,6 +72,9 @@ async function open(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=split&archive=${encodeURIComponent(archive)}`,
   );
+  // 離れた対がある本は①から開く。入れ替えただけの対の本は②から開くので、
+  // ①へ移る（#153）
+  await page.getByTestId("split-step-split").click();
   await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4, {
     timeout: 30_000,
   });

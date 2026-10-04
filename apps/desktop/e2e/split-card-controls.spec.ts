@@ -168,7 +168,7 @@ test.describe("ページ分割: 拡大表示のまま前後へ移る", () => {
     // 1 / 2–3 / 4 / 5–6 / 7 になる
     const archive = writeTwoSpreadArchive("前後の移動.zip");
     await openSplit(page, archive, 5);
-    await page.getByTestId("split-accept-all").click();
+    await page.getByTestId("split-all").click();
     expect(await chipsOf(page), "番号の並びが前提と違う").toEqual([
       "1",
       `2${RANGE}3`,
@@ -267,7 +267,7 @@ test.describe("ページ分割: 操作の読み上げ名", () => {
     // Arrange - 分割の提案をすべて採用する
     const archive = writeTwoSpreadArchive("読み上げ名.zip");
     await openSplit(page, archive, 5);
-    await page.getByTestId("split-accept-all").click();
+    await page.getByTestId("split-all").click();
     const chips = await chipsOf(page);
 
     // 制御 - 番号が互いに紛れない並びであること。どれかが他の一部に

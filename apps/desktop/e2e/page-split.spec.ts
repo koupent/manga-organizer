@@ -197,11 +197,6 @@ async function toggle(page: Page, index: number) {
   await cardAt(page, index).getByTestId("split-check").click();
 }
 
-/** 1 枚への提案を採用する（#151） */
-async function accept(page: Page, index: number) {
-  await cardAt(page, index).getByTestId("split-accept").click();
-}
-
 async function boxOf(page: Page, locator: ReturnType<Page["locator"]>) {
   const box = await locator.boundingBox();
   if (!box) throw new Error("要素が描画されていません");
@@ -244,7 +239,7 @@ async function confirmSplit(page: Page) {
 }
 
 test.describe("ページ分割: 開いた直後と確定", () => {
-  test("開いた時点では何も採用せず、すべて採用すると見開きだけが分かれる", async ({
+  test("開いた時点では何も選ばず、すべて分割すると見開きだけが分かれる", async ({
     page,
   }) => {
     // Arrange - 縦長・比 1.333 の見開き・比 1.15 の横長が混ざった本
@@ -268,29 +263,29 @@ test.describe("ページ分割: 開いた直後と確定", () => {
       "ページ分割・結合",
     ]);
 
-    // Assert - 開いた時点では何も採用しない（#142）。黙ってチェックを入れて
-    // おくと、気づかずに確定した見開きが割れる。提案の数と、次に何を
-    // すればよいかを伝える（#151）
+    // Assert - まだ分けていない横長があるので①「単ページにする」から開く
+    // （#153）。開いた時点では何も選ばない（#142）。黙ってチェックを入れて
+    // おくと、気づかずに確定した見開きが割れる
+    await expect(page.getByTestId("split-step-split")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("split-step-split")).toHaveText(
+      "① 単ページにする1",
+    );
     expect(await checkedIndexes(page)).toEqual([]);
-    await expect(page.getByTestId("split-proposals")).toHaveText(
-      "分割 1 の提案",
-    );
-    await expect(cardAt(page, 1)).toHaveAttribute("data-proposal", "split");
-    await expect(cardAt(page, 1)).toHaveAttribute(
-      "data-proposal-state",
-      "open",
-    );
+    await expect(cardAt(page, 1)).toHaveAttribute("data-target", "true");
     await expect(page.getByTestId("split-page-count")).toHaveText("5 ページ");
     await expect(page.getByTestId("split-status")).toHaveText(
-      "採用する提案を選んでください",
+      "変更はありません",
     );
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
     // Assert - 2 列ぶんを占めるのは横長の 1 枚だけ。準見開きは列をまたがない
     expect(await wideIndexes(page)).toEqual([1]);
 
-    // Act - 提案をすべて採用する
-    await page.getByTestId("split-accept-all").click();
+    // Act - すべて分割する
+    await page.getByTestId("split-all").click();
 
     // Assert - チェックが入るのは 2 枚目だけ。全部に付けて回る実装は、
     // 4 枚目（比 1.15）に付くことでここで落ちる。利用者から見れば、
@@ -310,7 +305,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     // Arrange - 分割の提案をすべて採用する
     const archive = writeMixedArchive("番号.zip");
     await openSplit(page, archive, 5);
-    await page.getByTestId("split-accept-all").click();
+    await page.getByTestId("split-all").click();
 
     // Assert - 2 枚目が 2 ページ分になり、3 枚目以降が繰り下がっている
     expect(await chipsOf(page)).toEqual(["1", `2${RANGE}3`, "4", "5", "6"]);
@@ -341,7 +336,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     // Arrange - 分割の提案をすべて採用する
     const archive = writeMixedArchive("確定.zip");
     await openSplit(page, archive, 5);
-    await page.getByTestId("split-accept-all").click();
+    await page.getByTestId("split-all").click();
     expect(pageEntriesOf(archive)).toHaveLength(5);
 
     // Act - 中央（1200）から右へずらす。中央のままだと、位置を読まずに
@@ -387,8 +382,14 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     // Arrange - 縦長しか入っていない本
     const archive = writeTallOnlyArchive("見開きなし.zip");
 
-    // Act
-    await openSplit(page, archive, 4);
+    // Act - ①の対象が無いので②から開く。①へ移る（#153）
+    await openSplit(page, archive, 0);
+    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await page.getByTestId("split-step-split").click();
+    await expect(cardsOf(page)).toHaveCount(4);
 
     // Assert - 空の画面にはしない。判定は外れうるので、一覧は出したまま
     // 見つからなかったことを言う。ここを Empty にすると、判定から漏れた
@@ -418,8 +419,8 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     const archive = writeMixedArchive("競合.zip");
     const first = await openIn(browser, archive, 5);
     const second = await openIn(browser, archive, 5);
-    await first.getByTestId("split-accept-all").click();
-    await second.getByTestId("split-accept-all").click();
+    await first.getByTestId("split-all").click();
+    await second.getByTestId("split-all").click();
 
     // Act - 先の窓で確定する。ここで本は書き直され、後の窓が持つ印は古くなる
     await confirmSplit(first);
@@ -500,8 +501,7 @@ test.describe("ページ分割: 配置", () => {
     const loading = await boxOf(page, page.getByTestId("split-loading"));
     await expectNoWindowScroll(page, "読み込み中");
 
-    // Assert - 読み込みが終わった直後。開いた時点で既に「見開き 1 枚が
-    // 見つかりました。…」という長い文が出ている
+    // Assert - 読み込みが終わった直後
     await expect(page.getByTestId("split-grid")).toBeVisible({
       timeout: 30_000,
     });
@@ -517,8 +517,8 @@ test.describe("ページ分割: 配置", () => {
       "読み込み中と読み込み後で、作業面の下端がずれる",
     ).toBeLessThanOrEqual(SLACK);
 
-    // Act - 提案を採用する。状態欄の文が入れ替わる
-    await accept(page, 1);
+    // Act - チェックを入れる。状態欄の文が入れ替わる
+    await toggle(page, 1);
     await expect(page.getByTestId("split-status")).toHaveText(
       "1 枚を 2 ページに分けます → 全 6 ページ",
     );
@@ -534,8 +534,10 @@ test.describe("ページ分割: 配置", () => {
     await confirmSplit(page);
 
     // Assert - 書き込んだ後の文（枚数とページ数）でも縁は同じ。
-    // 読み直した後も行は 5 つ。割った対は 1 行に畳まれて戻ってくる
-    await expect(cardsOf(page)).toHaveCount(5, { timeout: 30_000 });
+    // 保存すると②「見開きにする」へ進む（#153）
+    await expect(page.locator('[data-testid="merge-card"]')).toHaveCount(5, {
+      timeout: 30_000,
+    });
     const saved = await gridEdges(page);
     expect(Math.abs(saved.top - loaded.top)).toBeLessThanOrEqual(SLACK);
     expect(Math.abs(saved.bottom - loaded.bottom)).toBeLessThanOrEqual(SLACK);

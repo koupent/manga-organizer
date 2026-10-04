@@ -42,7 +42,7 @@ export type SplitScanRow = {
   displaced: boolean;
   /**
    * 見開きのまま残すと決めたページか。割ってから戻した（#138）・2 ページを
-   * 結合した（#139）ページ。分割を提案しない（#151）
+   * 結合した（#139）ページ。①の「すべて分割」から外す（#151 #153）
    */
   kept_whole: boolean;
   /** 次の行と継ぎ目の色がつながっていて、2 枚で 1 枚の見開きらしいか（#149） */
@@ -81,7 +81,7 @@ export type SplitRow = {
   source: string;
   /** 見開き（横長）と判定した行 */
   detected: boolean;
-  /** 見開きのまま残すと決めた行（kept_whole）。分割を提案しない */
+  /** 見開きのまま残すと決めた行（kept_whole）。①の「すべて分割」から外す */
   keptWhole: boolean;
   checked: boolean;
   /** 割る位置。元画像の画素で持ち、描画のときだけ割合に直す */
@@ -102,11 +102,6 @@ export type SplitRow = {
    * だけで保留にはしない。開いた時点で何も選ばないのは分割と同じ（#142）
    */
   suggested: boolean;
-  /**
-   * この行への提案に「このまま」と答えたか（#151）。本には書かない。
-   * 開き直せば、同じ提案がまた出る
-   */
-  declined: boolean;
   stored: { checked: boolean; x: number };
 };
 
@@ -211,7 +206,7 @@ export function clampSplit(x: number, width: number): number {
  * 開き直しただけで「割る前へ戻します」になってしまう。
  *
  * 割ってから戻した・結合した見開き（kept_whole）は、見開きとして扱うが
- * 分割は提案しない（#151）。
+ * ①の「すべて分割」からは外す（#151 #153）。
  */
 export function rowsFrom(result: SplitScanResult): SplitRow[] {
   return result.rows.map((row) => {
@@ -229,7 +224,6 @@ export function rowsFrom(result: SplitScanResult): SplitRow[] {
       displaced: row.displaced,
       mergeNext: false,
       suggested: row.merge_suggested,
-      declined: false,
       stored: { checked: row.split !== null, x },
     };
   });
@@ -281,62 +275,55 @@ export function canMergeNext(rows: SplitRow[], index: number): boolean {
   );
 }
 
-/** 提案の種類と、それへの答え（#151） */
-export type Proposal = {
-  kind: "split" | "merge";
-  state: "open" | "accepted" | "declined";
-};
-
-/** 提案への答え。reopen は答えを取り消して未決へ戻す */
-export type Answer = "accept" | "decline" | "reopen";
+/** 画面のステップ（#153）。①単ページにする・②見開きにする */
+export type Step = "split" | "merge";
 
 /**
- * index の行への提案。無ければ null（#151）。
+ * ①で分ける対象（#153）。まだ割っていない横長のページ。
  *
- * 分割は、横長でまだ割っておらず、見開きのまま残すと決めた行でもないページに
- * 出す。自分で結合した・戻した見開きにまで出すと、また分けるよう勧めることに
- * なる。結合は、継ぎ目の色がつながっていて（#149）いま結合できる 2 枚に出す。
- *
- * 答えは提案の有無を変えず、状態だけを変える。前後の送りの並びが、答える
- * たびに動かないようにするため。
+ * ②で作った見開き（結合した・分割を戻した、kept_whole）は除く。縦横比だけでは
+ * 「まだ分けていない横長」と見分けが付かず、混ぜると①の「すべて分割」が②の
+ * 結果を壊す。
  */
-export function proposalOf(rows: SplitRow[], index: number): Proposal | null {
-  const row = rows[index];
-  const state = (accepted: boolean): Proposal["state"] =>
-    accepted ? "accepted" : row.declined ? "declined" : "open";
-  if (row.detected && !row.keptWhole && !row.stored.checked) {
-    return { kind: "split", state: state(row.checked) };
-  }
-  if (row.suggested && canMergeNext(rows, index)) {
-    return { kind: "merge", state: state(row.mergeNext) };
-  }
-  return null;
-}
-
-/** index の行の提案に答えた一覧。提案の無い行なら何も変えない */
-export function answeredRows(
-  rows: SplitRow[],
-  index: number,
-  answer: Answer,
-): SplitRow[] {
-  const proposal = proposalOf(rows, index);
-  if (proposal === null) return rows;
-  const on = answer === "accept";
-  return replaceRow(rows, index, {
-    ...(proposal.kind === "split" ? { checked: on } : { mergeNext: on }),
-    declined: answer === "decline",
-  });
+export function isSplitTarget(row: SplitRow): boolean {
+  return row.detected && !row.keptWhole && !row.stored.checked;
 }
 
 /**
- * まだ答えていない提案を、すべて採用した一覧。「このまま」と答えた提案は
- * そのまま残す。利用者が一度断ったものを、まとめての操作で覆さないため
+ * ②の結合候補（#149 #153）。継ぎ目の色がつながっていて、いま結合できる 2 枚。
+ * index は先のページの行
  */
-export function acceptedAll(rows: SplitRow[]): SplitRow[] {
+export function isMergeCandidate(rows: SplitRow[], index: number): boolean {
+  return rows[index].suggested && canMergeNext(rows, index);
+}
+
+/**
+ * 開いたときのステップ。①の対象があれば①から始める。中身が全部見開きの本は
+ * ①から、ふつうの本や仕上げた本は②から始まる。
+ *
+ * 離れた対（#133）がある本も①から始める。離れた対は開いた時点で保留に数えるので、
+ * ②から開くと、何も触っていないのに①へ移るたび「保存していない変更」を
+ * 確かめられる
+ */
+export function firstStep(rows: SplitRow[]): Step {
+  return rows.some((row) => isSplitTarget(row) || row.displaced)
+    ? "split"
+    : "merge";
+}
+
+/** ①の対象をすべて分ける（中央で） */
+export function splitAll(rows: SplitRow[]): SplitRow[] {
+  return rows.map((row) =>
+    isSplitTarget(row) ? { ...row, checked: true } : row,
+  );
+}
+
+/** ②の候補をすべて結合する */
+export function mergeAll(rows: SplitRow[]): SplitRow[] {
   let next = rows;
   for (let index = 0; index < next.length; index += 1) {
-    if (proposalOf(next, index)?.state === "open") {
-      next = answeredRows(next, index, "accept");
+    if (isMergeCandidate(next, index) && !next[index].mergeNext) {
+      next = replaceRow(next, index, { mergeNext: true });
     }
   }
   return next;
@@ -354,7 +341,6 @@ export function restoredRows(rows: SplitRow[]): SplitRow[] {
     checked: row.stored.checked,
     x: row.stored.x,
     mergeNext: false,
-    declined: false,
   }));
 }
 
@@ -455,11 +441,7 @@ export function summaryOf(rows: SplitRow[]): string {
   if (joined > 0) parts.push(`離れた見開き ${joined} 組を隣り合わせに戻します`);
   if (merged > 0) parts.push(`${merged} 組を 1 ページに結合します`);
   if (parts.length === 0) {
-    // 何も採用していないときは、次に何をすればよいかを言う（#142 #151）
-    const open = rows.filter(
-      (_, index) => proposalOf(rows, index)?.state === "open",
-    ).length;
-    return open > 0 ? "採用する提案を選んでください" : "変更はありません";
+    return "変更はありません";
   }
   const changesCount = fresh > 0 || reverted > 0 || merged > 0;
   // 分割と結合をまとめて採用すると文が長くなる。ツールバーに収まるよう短く書く
