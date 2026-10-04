@@ -38,6 +38,26 @@ test.beforeAll(async () => {
 test.afterAll(() => sidecar?.stop());
 
 /** 画面を開く。接続情報はクエリ文字列で渡す */
+/** 整理して出来た本の行（#160）。整理済みの印と、編集への近道が出る */
+function madeRows(page: Page) {
+  return page.locator('[data-testid="plan-row"][data-made]');
+}
+
+/** 出来上がった名前で引いた、整理して出来た本の行 */
+function madeRow(page: Page, name: string) {
+  return page.locator(
+    `[data-testid="plan-row"][data-made][data-output-name="${name}"]`,
+  );
+}
+
+/** 整理して出来た本の行の、出来上がった名前。並びは名前順にそろえる */
+async function madeNames(page: Page): Promise<string[]> {
+  const names = await madeRows(page).evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute("data-output-name") ?? ""),
+  );
+  return names.sort();
+}
+
 async function openApp(page: Page, params: Record<string, string>) {
   const query = new URLSearchParams({
     api: sidecar.baseUrl,
@@ -291,7 +311,7 @@ test.describe("画面を切り替えても状態が残る", () => {
     await expect(page.getByTestId("output-directory")).toHaveValue(output);
   });
 
-  test("整理して出来たファイルの一覧は、サムネイル作成へ往復しても残る", async ({
+  test("整理して出来た本の印は、サムネイル作成へ往復しても残る", async ({
     page,
   }) => {
     // Arrange - 最後まで走らせ、出来たファイルが並んだ状態を作る
@@ -310,24 +330,20 @@ test.describe("画面を切り替えても状態が残る", () => {
 
     const expected = producedNames(output);
     expect(expected).toHaveLength(2);
-    await expect(page.getByTestId("produced-item")).toHaveCount(2);
-    await expect(page.getByTestId("produced-name")).toHaveText(expected);
+    await expect(madeRows(page)).toHaveCount(2);
+    expect(await madeNames(page)).toEqual([...expected].sort());
 
-    // Act - 利用者が指摘した動き。出来たファイルの行からサムネイル作成へ
+    // Act - 利用者が指摘した動き。出来た本の行からサムネイル作成へ
     // 移り、そこからファイル整理へ戻って次の作業を選ぼうとする
-    await page
-      .getByTestId("produced-item")
-      .filter({ hasText: expected[1] })
-      .getByTestId("produced-to-thumbnail")
-      .click();
+    await madeRow(page, expected[1]).getByTestId("plan-to-thumbnail").click();
     await expect(page.getByTestId("archive-name")).toHaveText(expected[1]);
     await switchMode(page, "organize");
 
-    // Assert - 出来たファイルの一覧はまだそこにある。
+    // Assert - 出来た本の印はまだそこにある。
     // 戻った先が「待機中」の空の画面なら、次にどれを並べ替えるかを
     // 選び直す手がかりが無い
-    await expect(page.getByTestId("produced-item")).toHaveCount(2);
-    await expect(page.getByTestId("produced-name")).toHaveText(expected);
+    await expect(madeRows(page)).toHaveCount(2);
+    expect(await madeNames(page)).toEqual([...expected].sort());
     await expect(page.getByTestId("organize-status")).toContainText(
       "整理しました",
     );

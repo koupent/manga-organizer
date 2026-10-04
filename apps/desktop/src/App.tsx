@@ -9,7 +9,7 @@ import { FilePicker } from "./components/FilePicker";
 import { PageGrid } from "./components/PageGrid";
 import { OrganizePanel } from "./components/OrganizePanel";
 import { SplitEditor } from "./components/SplitEditor";
-import type { HandoffMode } from "./components/ProducedList";
+import type { HandoffMode } from "./components/EditShortcuts";
 import {
   onFilesDragging,
   onFilesDropped,

@@ -2,7 +2,7 @@ import logging
 import os
 import tempfile
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -38,6 +38,11 @@ class ProcessResult:
     success: bool
     error_message: str | None = None
     volume_number: int | None = None
+
+
+# 1 冊を書き終えるたびに呼ぶ関数（#160）。結果と、その本の位置（``_location_key``
+# と同じ鍵）を受け取る。整理が全部済むのを待たずに、出来た本から画面へ出すため
+BookDone = Callable[[ProcessResult, str | None], None]
 
 
 class FileOrganizer:
@@ -395,6 +400,7 @@ class FileOrganizer:
         skip_locations: frozenset[str] = frozenset(),
         series: SeriesName | None = None,
         volumes: Mapping[str, int | None] = NO_VOLUME_OVERRIDES,
+        on_book: BookDone | None = None,
     ) -> list[ProcessResult]:
         """Process a single archive file.
 
@@ -409,6 +415,9 @@ class FileOrganizer:
         間違えた本を利用者が直せるようにする。鍵は ``skip_locations`` と同じ
         鍵空間（``_location_key``）で、値の ``None`` は「巻数を付けない」。
         省くと全冊が自動判定のまま、つまり今までどおりになる。
+
+        ``on_book`` は 1 冊を書き終えるたびに呼ぶ（#160）。アーカイブ全体が
+        済むのを待たずに、出来た本を知らせるため。
         """
         series = series or SeriesName(self.author, self.title)
 
@@ -416,7 +425,11 @@ class FileOrganizer:
         # フォルダは丸ごと 1 冊なので、外すかどうかは呼び出し側が決めている。
         # 巻数の訂正はそうはいかないので、あちらの経路にも渡す
         if archive_path.is_dir():
-            return self._process_image_directory(archive_path, series, volumes)
+            results = self._process_image_directory(archive_path, series, volumes)
+            if on_book is not None:
+                for result in results:
+                    on_book(result, IMAGE_DIRECTORY_KEY)
+            return results
 
         self._log(f"Processing: {archive_path}")
         results = []
@@ -487,6 +500,8 @@ class FileOrganizer:
                     self._log(f"  Skipped (already at destination): volume {vol_idx}")
                     continue
                 results.append(result)
+                if on_book is not None:
+                    on_book(result, self._location_key(image_dir))
 
             # Step 4: Handle original deletion
             self._handle_original_deletion(archive_path, results, skipped)

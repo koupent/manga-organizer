@@ -48,6 +48,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -488,6 +489,101 @@ class PlanSelectionTest(PlanApiTestBase):
         # 実行したときに全部作られる
         self.assertEqual([], job["result"]["produced"], job["result"])
         self.assertEqual([], self.files_under(output), "外したはずの本が出来ている")
+
+
+class OrganizeProgressByBookTest(PlanApiTestBase):
+    """整理の進捗を冊数で数え、出来た本を途中から返す（#159 #160）。
+
+    進捗を入れ物の数で数えると、何十冊も入ったアーカイブ 1 つでは始めた瞬間に
+    1 / 1 になり、終わるまで動かない。出来た本も、全部済んでから返すのでは
+    整理の途中で編集へ移れない。
+    """
+
+    def latest_organize(self):
+        """実行中のジョブを、画面が読むのと同じ値で覗く（ジョブは同期実行）"""
+        return next(
+            job for job in self.app.state.jobs.list_jobs() if job.kind == "organize"
+        )
+
+    def test_counts_books_inside_one_archive_and_reports_each_as_it_is_made(self):
+        # Arrange - 2 冊入りの ZIP 1 つと、1 冊の ZIP 1 つ。入れ物は 2、本は 3
+        from manga_core.file_organizer import FileOrganizer
+
+        folder = self.work_dir / "冊数"
+        self.write_compound(folder / "合本.zip")
+        self.write_archive(folder / "単体_03.zip")
+        books = self.analyzed_books([folder])
+        chosen = self.selection(books, [book["output_name"] for book in books])
+        output = self.work_dir / "out-冊数"
+
+        # 1 冊を書き出す直前ごとに、そのときの進捗と途中の結果を控える
+        observed: list[tuple[int, int, int]] = []
+        process_volume = FileOrganizer._process_volume
+
+        def watched(organizer, *args, **kwargs):
+            job = self.latest_organize()
+            finished = (job.result or {}).get("finished", [])
+            observed.append((job.current, job.total, len(finished)))
+            return process_volume(organizer, *args, **kwargs)
+
+        # Act
+        with mock.patch.object(FileOrganizer, "_process_volume", watched):
+            job = self.organize([folder], output, chosen)
+
+        # Assert - 1 冊ごとに進む。総数は入れ物の数（2）ではなく冊数（3）。
+        # 出来た本も、その時点までのぶんが途中の結果に載っている
+        self.assertEqual(
+            [(0, 3, 0), (1, 3, 1), (2, 3, 2)],
+            observed,
+            f"1 冊ごとに進んでいない: {observed}",
+        )
+        self.assertEqual((3, 3), (job["current"], job["total"]), job)
+
+        # Assert - 出来た本は、解析が返した本（= 一覧の行）と元・位置で対応し、
+        # 実際に出来たファイルを指す
+        finished = job["result"]["finished"]
+        self.assertEqual(
+            sorted((book["source"], book["entry"]) for book in books),
+            sorted((book["source"], book["entry"]) for book in finished),
+            f"出来た本が一覧の行と対応しない: {finished}",
+        )
+        self.assertEqual(
+            sorted(job["result"]["produced"]),
+            sorted(book["path"] for book in finished),
+        )
+        for book in finished:
+            self.assertTrue(Path(book["path"]).is_file(), book)
+
+    def test_reaches_the_total_even_when_a_book_is_not_made(self):
+        # Arrange - 出来上がる名前を持たない（作品名が空の）本は失敗として
+        # 外れ、1 冊も書き出されない。それでも進捗は最後に 100% へ届く
+        folder = self.work_dir / "届く"
+        self.write_compound(folder / "合本.zip")
+        books = self.analyzed_books([folder])
+        chosen = self.selection(books, [book["output_name"] for book in books])
+        output = self.work_dir / "out-届く"
+
+        # Act - 依頼の作品名を空にする
+        accepted = self.client.post(
+            "/api/jobs/organize",
+            params=self.auth(),
+            json={
+                "archives": [str(folder)],
+                "output_directory": str(output),
+                "title": "",
+                "author": AUTHOR,
+                "keep_originals": True,
+                "books": chosen,
+            },
+        )
+
+        # Assert
+        self.assertEqual(202, accepted.status_code, accepted.text)
+        job_id = accepted.json()["id"]
+        job = self.client.get(f"/api/jobs/{job_id}", params=self.auth()).json()
+        self.assertEqual("succeeded", job["state"], job.get("error"))
+        self.assertEqual([], job["result"]["finished"])
+        self.assertEqual((2, 2), (job["current"], job["total"]), job)
 
 
 if __name__ == "__main__":

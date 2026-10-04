@@ -21,6 +21,36 @@ const FOCUS_SETTLE_MS = 15_000;
 /** 焦点を奪われたことを見切る幅。残っているなら即座に通る */
 const FOCUS_CHECK_MS = 1_000;
 
+/** 整理して出来た本の行（#160）。整理済みの印と、編集への近道が出る */
+function madeRows(page: Page) {
+  return page.locator('[data-testid="plan-row"][data-made]');
+}
+
+/** 出来上がった名前で引いた、整理して出来た本の行 */
+function madeRow(page: Page, name: string) {
+  return page.locator(
+    `[data-testid="plan-row"][data-made][data-output-name="${name}"]`,
+  );
+}
+
+/** 整理して出来た本の行の、出来上がった名前。並びは名前順にそろえる */
+async function madeNames(page: Page): Promise<string[]> {
+  const names = await madeRows(page).evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute("data-output-name") ?? ""),
+  );
+  return names.sort();
+}
+
+/** 差し替えた応答。サイドカーとはオリジンが違うので、素通しできるよう明示する */
+function asJson(status: number, payload: unknown) {
+  return {
+    status,
+    contentType: "application/json",
+    headers: { "access-control-allow-origin": "*" },
+    body: JSON.stringify(payload),
+  };
+}
+
 let sidecar: Sidecar;
 
 test.beforeAll(async () => {
@@ -822,7 +852,7 @@ test.describe("出力先の既定", () => {
 });
 
 /**
- * 整理した直後に、出来たファイルから次の作業へ移れること。
+ * 整理した直後に、出来た本の行から次の作業へ移れること（#160）。
  *
  * 3 つの機能はそれぞれ単独で完結する。ここで見るのは任意の近道であって、
  * 強制的なパイプラインではない。単独利用を壊していないことも併せて見る。
@@ -896,9 +926,10 @@ test.describe("整理後の受け渡し", () => {
     ];
   }
 
-  test("整理が終わると出来たファイルが一覧で出る", async ({ page }) => {
-    // Arrange - 元のファイル名と出来るファイル名は違う。名前が付け替わった
-    // 後のものが並ぶことを見たいので、元の名前をそのまま出す実装は落とす
+  test("整理が終わると、出来た本の行に整理済みの印と編集への近道が出る（#160）", async ({
+    page,
+  }) => {
+    // Arrange
     const paths = writeVolumes("受け渡し一覧");
     const output = join(sidecar.workDir, "out-handoff-list");
     mkdirSync(output, { recursive: true });
@@ -907,39 +938,107 @@ test.describe("整理後の受け渡し", () => {
     // Act
     await organizeAll(page, "受け渡しの作品", "受け渡しの著者", paths);
 
-    // Assert - 実際に出来たファイルと、並んだ行が 1 対 1 で対応する
+    // Assert - 出来たファイルの枠は無くした。出来た本は一覧の行そのものに出る
+    await expect(page.getByTestId("produced-list")).toHaveCount(0);
     const expected = producedNames(output);
     expect(expected).toHaveLength(2);
-    const items = page.getByTestId("produced-item");
-    await expect(items).toHaveCount(2);
-    await expect(page.getByTestId("produced-name")).toHaveText(expected);
+    await expect(madeRows(page)).toHaveCount(2);
+    expect(await madeNames(page)).toEqual([...expected].sort());
 
-    // Assert - 行は出来たファイルの実パスを持つ。名前だけの飾りではない
+    // Assert - 行は出来たファイルの実パスを持つ。元のアーカイブではない
     const absolute = producedFiles(output).map((path) => join(output, path));
     expect(
-      await items.evaluateAll((nodes) =>
-        nodes.map((node) => node.getAttribute("data-path")),
-      ),
-    ).toEqual(absolute);
+      (
+        await madeRows(page).evaluateAll((nodes) =>
+          nodes.map((node) => node.getAttribute("data-made")),
+        )
+      ).sort(),
+    ).toEqual([...absolute].sort());
 
-    // Assert - 各行から 1 冊を編集する 3 画面へ移る導線がある（#143）。
-    // アイコンだけで、何をするかは乗せたときの説明で分かる。整理しただけの
-    // 本には、まだ編集済みの印は無い
-    for (const index of [0, 1]) {
-      const name = expected[index];
+    // Assert - 投入した時点で整理済みの本と同じく、整理済みの印と、1 冊を
+    // 編集する 3 画面へ移る近道が出る（#143）。整理しただけの本には、まだ
+    // 編集済みの印は無い
+    for (const name of expected) {
+      const row = madeRow(page, name);
+      await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
       for (const [mode, action] of [
         ["thumbnail", "サムネイルを作る"],
         ["reorder", "ページを並べ替える"],
         ["split", "ページを分割・結合する"],
       ] as const) {
-        const shortcut = items.nth(index).getByTestId(`produced-to-${mode}`);
+        const shortcut = row.getByTestId(`plan-to-${mode}`);
         await expect(shortcut).toHaveAttribute("title", `${name} の${action}`);
         await expect(shortcut).toHaveAttribute("data-edited", "false");
       }
     }
   });
 
-  test("出来たファイルの行からサムネイル作成へ移ると、そのファイルが読み込まれている", async ({
+  test("整理の途中でも、出来た本の行から編集へ移れ、進捗は冊数で進む（#159 #160）", async ({
+    page,
+  }) => {
+    // Arrange - 解析は本物のサイドカーで済ませ、整理のジョブだけを途中の姿に
+    // 差し替える。2 冊のうち 1 冊目だけが出来たところで止まっている
+    const paths = writeVolumes("途中の受け渡し");
+    const output = join(sidecar.workDir, "out-handoff-midway");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "途中の作品", "途中の著者");
+    await selectArchives(page, paths);
+    const books = page.locator('[data-testid="plan-row"][data-kind="book"]');
+    await expect(books).toHaveCount(2);
+    const source = (await books.nth(0).getAttribute("data-source"))!;
+    const entry = (await books.nth(0).getAttribute("data-entry")) ?? "";
+    const name = (await books.nth(0).getAttribute("data-output-name"))!;
+    await page.route("**/api/jobs/**", (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      if (request.method() === "POST" && path.endsWith("/api/jobs/organize"))
+        return route.fulfill(asJson(202, { id: "midway" }));
+      if (!path.endsWith("/api/jobs/midway")) return route.continue();
+      return route.fulfill(
+        asJson(200, {
+          id: "midway",
+          kind: "organize",
+          state: "running",
+          current: 1,
+          total: 2,
+          message: "",
+          // 出来たファイルの代わりに元のアーカイブを指す。開けることだけを見る
+          result: { finished: [{ source, entry, path: source }] },
+          error: null,
+          created_at: "2026-01-01T00:00:00+00:00",
+          updated_at: "2026-01-01T00:00:00+00:00",
+          log: [],
+        }),
+      );
+    });
+
+    // Act
+    await page.getByTestId("confirm").click();
+
+    // Assert - 進捗は冊数で出る。入れ物の数で数えると、始めた時点で 100% になる
+    await expect(page.getByTestId("progress-count")).toHaveText("1 / 2 · 50%");
+
+    // Assert - 出来た 1 冊の行にだけ、整理済みの印と近道が出る
+    await expect(madeRows(page)).toHaveCount(1);
+    const row = madeRow(page, name);
+    await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
+    await expect(books.nth(1).getByTestId("plan-to-thumbnail")).toHaveCount(0);
+
+    // Act - 整理が終わるのを待たずに、出来た本のサムネイル作成へ移る
+    await row.getByTestId("plan-to-thumbnail").click();
+
+    // Assert - その本を読み込んだ状態で移る
+    await expect(page.getByTestId("mode-thumbnail")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("archive-name")).toHaveText(
+      source.split(/[/\\]/).pop()!,
+    );
+  });
+
+  test("出来た本の行からサムネイル作成へ移ると、そのファイルが読み込まれている", async ({
     page,
   }) => {
     // Arrange
@@ -952,11 +1051,7 @@ test.describe("整理後の受け渡し", () => {
     // Act - 先頭を渡して済ませる実装を落とすため、2 件目の行から移る
     const expected = producedNames(output);
     expect(expected).toHaveLength(2);
-    await page
-      .getByTestId("produced-item")
-      .filter({ hasText: expected[1] })
-      .getByTestId("produced-to-thumbnail")
-      .click();
+    await madeRow(page, expected[1]).getByTestId("plan-to-thumbnail").click();
 
     // Assert - サムネイル作成へ移り、ドロップ領域ではなく編集面が出る
     await expect(page.getByTestId("mode-thumbnail")).toHaveAttribute(
@@ -974,7 +1069,7 @@ test.describe("整理後の受け渡し", () => {
     await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(3);
   });
 
-  test("出来たファイルの行からページ並べ替えへ移ると、そのファイルが読み込まれている", async ({
+  test("出来た本の行からページ並べ替えへ移ると、そのファイルが読み込まれている", async ({
     page,
   }) => {
     // Arrange
@@ -987,11 +1082,7 @@ test.describe("整理後の受け渡し", () => {
     // Act - こちらも 2 件目から移る
     const expected = producedNames(output);
     expect(expected).toHaveLength(2);
-    await page
-      .getByTestId("produced-item")
-      .filter({ hasText: expected[1] })
-      .getByTestId("produced-to-reorder")
-      .click();
+    await madeRow(page, expected[1]).getByTestId("plan-to-reorder").click();
 
     // Assert - ページ並べ替えへ移り、ドロップ領域ではなく格子が出る
     await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
@@ -1006,7 +1097,7 @@ test.describe("整理後の受け渡し", () => {
     await expect(page.getByTestId("page-card")).toHaveCount(3);
   });
 
-  test("出来たファイルの行からページ分割・結合へも移れ、編集した画面には印が付く", async ({
+  test("出来た本の行からページ分割・結合へも移れ、編集した画面には印が付く", async ({
     page,
   }) => {
     // Arrange
@@ -1017,11 +1108,10 @@ test.describe("整理後の受け渡し", () => {
     await organizeAll(page, "印を見る作品", "印を見る著者", paths);
     const expected = producedNames(output);
     expect(expected).toHaveLength(2);
-    const item = (name: string) =>
-      page.getByTestId("produced-item").filter({ hasText: name });
+    const item = (name: string) => madeRow(page, name);
 
     // Act - ページ分割・結合へ移る（#143）
-    await item(expected[1]).getByTestId("produced-to-split").click();
+    await item(expected[1]).getByTestId("plan-to-split").click();
 
     // Assert - そのファイルを読み込んだ状態で移る
     await expect(page.getByTestId("mode-split")).toHaveAttribute(
@@ -1032,7 +1122,7 @@ test.describe("整理後の受け渡し", () => {
 
     // Act - 戻って、同じ本のサムネイルを作る
     await page.getByTestId("mode-organize").click();
-    await item(expected[1]).getByTestId("produced-to-thumbnail").click();
+    await item(expected[1]).getByTestId("plan-to-thumbnail").click();
     await page.getByTestId("apply-thumbnail").click();
     await expect(page.getByTestId("cover-status")).toContainText(
       "加工しました",
@@ -1042,20 +1132,20 @@ test.describe("整理後の受け渡し", () => {
 
     // Assert - サムネイルの近道にだけ編集済みの印が付く。見ただけの分割・
     // 結合と、触っていないもう 1 冊には付かない
-    const thumbnail = item(expected[1]).getByTestId("produced-to-thumbnail");
+    const thumbnail = item(expected[1]).getByTestId("plan-to-thumbnail");
     await expect(thumbnail).toHaveAttribute("data-edited", "true");
     await expect(thumbnail).toHaveAttribute(
       "title",
       `${expected[1]} のサムネイルを作る（編集済み）`,
     );
     await expect(
-      item(expected[1]).getByTestId("produced-to-split"),
+      item(expected[1]).getByTestId("plan-to-split"),
     ).toHaveAttribute("data-edited", "false");
     await expect(
-      item(expected[1]).getByTestId("produced-to-reorder"),
+      item(expected[1]).getByTestId("plan-to-reorder"),
     ).toHaveAttribute("data-edited", "false");
     await expect(
-      item(expected[0]).getByTestId("produced-to-thumbnail"),
+      item(expected[0]).getByTestId("plan-to-thumbnail"),
     ).toHaveAttribute("data-edited", "false");
   });
 
@@ -1069,10 +1159,7 @@ test.describe("整理後の受け渡し", () => {
     await openOrganize(page, output);
     await organizeAll(page, "同じ本へ戻る作品", "同じ本へ戻る著者", paths);
     const expected = producedNames(output);
-    const shortcut = page
-      .getByTestId("produced-item")
-      .filter({ hasText: expected[1] })
-      .getByTestId("produced-to-reorder");
+    const shortcut = madeRow(page, expected[1]).getByTestId("plan-to-reorder");
     await shortcut.click();
     await expect(page.getByTestId("page-card")).toHaveCount(3);
     await page.getByTestId("mode-organize").click();
@@ -1119,10 +1206,7 @@ test.describe("整理後の受け渡し", () => {
       await route.continue();
     });
     const shortcut = (name: string) =>
-      page
-        .getByTestId("produced-item")
-        .filter({ hasText: name })
-        .getByTestId("produced-to-reorder");
+      madeRow(page, name).getByTestId("plan-to-reorder");
 
     // Act - 1 件目へ移り、返事を待たずに戻って 2 件目（3 ページ）へ移る
     await shortcut(expected[0]).click();
@@ -1137,7 +1221,7 @@ test.describe("整理後の受け渡し", () => {
     await expect(page.getByTestId("page-card")).toHaveCount(3);
   });
 
-  test("整理する前は出来たファイルの一覧が出ない", async ({ page }) => {
+  test("整理する前は、どの行にも出来た本の印が付かない", async ({ page }) => {
     // Arrange
     const paths = writeVolumes("受け渡し実行前");
     const output = join(sidecar.workDir, "out-handoff-before");
@@ -1145,22 +1229,20 @@ test.describe("整理後の受け渡し", () => {
     await openOrganize(page, output);
 
     // Assert - 開いた直後は何も無い
-    await expect(page.getByTestId("produced-item")).toHaveCount(0);
-    await expect(page.getByTestId("produced-list")).toHaveCount(0);
+    await expect(madeRows(page)).toHaveCount(0);
 
     // Act - 作品情報を入れ、対象を並べるところまで進める
     await fillMangaInfo(page, "実行前の作品", "実行前の著者");
     await selectArchives(page, paths);
 
-    // Assert - 処理対象が並んでも、出来たファイルはまだ無い。
+    // Assert - 処理対象が並んでも、出来た本の印はまだ無い。
     // 選んだファイルをそのまま出す実装はここで落ちる
     await expect(page.getByTestId("selected-count")).toHaveText("2 件");
-    await expect(page.getByTestId("produced-item")).toHaveCount(0);
-    await expect(page.getByTestId("produced-list")).toHaveCount(0);
+    await expect(madeRows(page)).toHaveCount(0);
     expect(producedFiles(output)).toEqual([]);
   });
 
-  test("整理が失敗したときは出来たファイルの一覧が出ない", async ({ page }) => {
+  test("整理が失敗したときは、前回出来た本の印も残らない", async ({ page }) => {
     // Arrange - 一度は成功させる。成功時の一覧が失敗後も居座らないことまで
     // 見たいので、何も出来ていない状態から失敗させるのでは足りない
     const paths = writeVolumes("受け渡し失敗");
@@ -1168,7 +1250,7 @@ test.describe("整理後の受け渡し", () => {
     mkdirSync(output, { recursive: true });
     await openOrganize(page, output);
     await organizeAll(page, "失敗する作品", "失敗する著者", paths);
-    await expect(page.getByTestId("produced-item")).toHaveCount(2);
+    await expect(madeRows(page)).toHaveCount(2);
 
     // Act - 処理対象を選んだ後に元ファイルが消えた状況を作り、もう一度実行する
     for (const path of paths) rmSync(path);
@@ -1181,8 +1263,7 @@ test.describe("整理後の受け渡し", () => {
     );
 
     // Assert - 出来ていないものの一覧は出ない。前回ぶんも残らない
-    await expect(page.getByTestId("produced-item")).toHaveCount(0);
-    await expect(page.getByTestId("produced-list")).toHaveCount(0);
+    await expect(madeRows(page)).toHaveCount(0);
   });
 
   test("サムネイル作成とページ並べ替えは、直接開いても単独で使える", async ({
@@ -1201,7 +1282,7 @@ test.describe("整理後の受け渡し", () => {
     // Assert - 受け渡しの一覧は目に入らず、今までどおりの入口が出る
     await expect(page.getByTestId("dropzone")).toBeVisible();
     await expect(page.getByTestId("open-browser")).toBeVisible();
-    await expect(page.getByTestId("produced-item")).toHaveCount(0);
+    await expect(madeRows(page)).toHaveCount(0);
 
     // Act / Assert - 単独で最後まで使える
     await chooseArchiveViaBrowser(page, archive);
@@ -1214,7 +1295,7 @@ test.describe("整理後の受け渡し", () => {
     // Assert
     await expect(page.getByTestId("dropzone")).toBeVisible();
     await expect(page.getByTestId("open-browser")).toBeVisible();
-    await expect(page.getByTestId("produced-item")).toHaveCount(0);
+    await expect(madeRows(page)).toHaveCount(0);
 
     // Act / Assert
     await chooseArchiveViaBrowser(page, archive);
@@ -1462,8 +1543,8 @@ test.describe("整理の失敗", () => {
     // Assert - 出来たぶんは今までどおり数と名前で見える
     const produced = producedNames(output);
     expect(produced).toHaveLength(2);
-    await expect(page.getByTestId("produced-item")).toHaveCount(2);
-    await expect(page.getByTestId("produced-name")).toHaveText(produced);
+    await expect(madeRows(page)).toHaveCount(2);
+    expect(await madeNames(page)).toEqual([...produced].sort());
 
     // Assert - 失敗したぶんも、件数が分かる形で並ぶ。2 件を 1 行に
     // まとめて数を伏せる実装は、片方が見つからずここで落ちる
@@ -1473,7 +1554,7 @@ test.describe("整理の失敗", () => {
     await expectFailuresVisible(page, failures);
   });
 
-  test("全件失敗したときは、出来たファイルの一覧に何も出ない", async ({
+  test("全件失敗したときは、どの行にも出来た本の印が付かない", async ({
     page,
   }) => {
     // Arrange - 先に成功させておく。失敗しても produced が空なだけなので、
@@ -1495,7 +1576,7 @@ test.describe("整理の失敗", () => {
     await fillMangaInfo(page, "一覧が消える作品", "一覧が消える著者");
     await selectArchives(page, good);
     await organizeAndReadJob(page);
-    await expect(page.getByTestId("produced-item")).toHaveCount(2);
+    await expect(madeRows(page)).toHaveCount(2);
     const before = producedFiles(output);
     expect(before).toHaveLength(2);
 
@@ -1508,9 +1589,8 @@ test.describe("整理の失敗", () => {
     // Assert - 出来たものは増えていない
     expect(producedFiles(output)).toEqual(before);
 
-    // Assert - 失敗した件を「出来たファイル」として並べない。前回ぶんも残らない
-    await expect(page.getByTestId("produced-item")).toHaveCount(0);
-    await expect(page.getByTestId("produced-list")).toHaveCount(0);
+    // Assert - 失敗した件に出来た本の印を付けない。前回ぶんも残らない
+    await expect(madeRows(page)).toHaveCount(0);
 
     // Assert - そのうえで、失敗したことは理由付きで見えている。
     // 一覧が消えるだけでは、何も起きなかったのと区別が付かない

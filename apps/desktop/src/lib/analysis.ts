@@ -10,13 +10,25 @@ import type { PlannedBook } from "./plan";
 export function organizeResult(result: unknown): {
   produced: string[];
   failed: OrganizeFailure[];
+  finished: FinishedBook[];
 } {
   const value = result as {
     produced?: string[];
     failed?: OrganizeFailure[];
+    finished?: FinishedBook[];
   } | null;
-  return { produced: value?.produced ?? [], failed: value?.failed ?? [] };
+  return {
+    produced: value?.produced ?? [],
+    failed: value?.failed ?? [],
+    finished: value?.finished ?? [],
+  };
 }
+
+/**
+ * 整理して出来た本と、それが一覧のどの行か（#160）。整理の途中から届く。
+ * ``source`` と ``entry`` は解析が返した本と同じで、行の鍵（``bookId``）になる
+ */
+export type FinishedBook = { source: string; entry: string; path: string };
 
 /**
  * 解析ジョブから読み取った、いまの解析の様子。

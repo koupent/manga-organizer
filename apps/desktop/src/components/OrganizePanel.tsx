@@ -13,6 +13,7 @@ import {
   refusedPaths,
   snapshotMark,
   type Analysis,
+  type FinishedBook,
 } from "../lib/analysis";
 import { resolveDroppedPaths } from "../lib/dropped";
 import {
@@ -21,6 +22,7 @@ import {
   planSummary,
 } from "../lib/organize-text";
 import {
+  bookId,
   buildPlanRows,
   collidingBooks,
   droppedBookCount,
@@ -54,7 +56,7 @@ import { SourceList, type SourceProblem } from "./organize/SourceList";
 import { OrganizeLog } from "./OrganizeLog";
 import { PlanActions } from "./PlanActions";
 import { PlanList } from "./PlanList";
-import { ProducedList, type EditMarks, type HandoffMode } from "./ProducedList";
+import { type EditMarks, type HandoffMode } from "./EditShortcuts";
 import { Button } from "./ui/button";
 import { Empty } from "./ui/empty";
 import { SectionTitle } from "./ui/section-title";
@@ -162,9 +164,9 @@ export function OrganizePanel({
   // たびに書き潰され、利用者の選択が消える
   const [decisions, setDecisions] = useState<Decisions>(new Map());
 
-  // 整理して出来たファイルの絶対パス。実際に出来たものだけを持つので、
-  // 中断・失敗のときは空のままになる
-  const [produced, setProduced] = useState<string[]>([]);
+  // 整理して出来た本。実際に出来たものだけを持ち、整理の途中から 1 冊ずつ
+  // 増える（#160）。その本の行に整理済みの印と編集への近道を出す
+  const [finished, setFinished] = useState<FinishedBook[]>([]);
 
   // 整理できなかったアーカイブと、その理由。ジョブは失敗しても succeeded で
   // 終わるため、ここに出さないと処理ログを開くまで失敗に気づけない
@@ -413,7 +415,7 @@ export function OrganizePanel({
       ...rows
         .filter((row) => row.kind === "book" && row.organized)
         .map((row) => row.source),
-      ...produced,
+      ...finished.map((book) => book.path),
     ]),
   ].join("\n");
   useEffect(() => {
@@ -437,6 +439,11 @@ export function OrganizePanel({
   const names = useMemo(
     () => outputNames(rows, author, title, off),
     [rows, author, title, off],
+  );
+  // 整理して出来た本の行 → 出来たファイル（#160）
+  const made = useMemo(
+    () => new Map(finished.map((book) => [bookId(book), book.path])),
+    [finished],
   );
   // 作る本どうしで名前が重なる本。後ろの本は黙って _1 で出来てしまう
   const collided = useMemo(
@@ -628,6 +635,8 @@ export function OrganizePanel({
           // 外した本のぶんも引かれるので、画面の件数で補うと食い違う（#65）
           setProgress({ current: snapshot.current, total: snapshot.total });
           setLog(snapshot.log ?? []);
+          // 出来た本から、その行で編集へ移れるようにする。全部済むのを待たない
+          setFinished(organizeResult(snapshot.result).finished);
         },
         { signal },
       );
@@ -644,7 +653,7 @@ export function OrganizePanel({
       // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
       // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
       const outcome = organizeResult(job.result);
-      setProduced(outcome.produced);
+      setFinished(outcome.finished);
       setFailures(outcome.failed);
       // 投入した本そのものが作り直された（行き先が自分自身だった）なら、
       // 一覧はまだ作り直す前の判定を見せている。解析し直して新しい姿にする。
@@ -690,7 +699,7 @@ export function OrganizePanel({
     setLog([]);
     // 前回の結果はここで捨てる。今回が中断・失敗に終わったとき、前回の
     // 一覧が残っていると「今回出来たもの」に見えてしまう
-    setProduced([]);
+    setFinished([]);
     setFailures([]);
     setStatus("整理しています...");
     // 総数はサイドカーが投入時に決める。ここで見込みを入れると、外した本の
@@ -948,8 +957,9 @@ export function OrganizePanel({
                 outputDirectory={outputDirectory}
                 locked={running}
                 onToggle={toggleRows}
-                // 整理済みの行の近道は、出来たファイルの一覧と同じ受け渡しを
-                // 通る。行が渡すのは、いまディスク上に在る元のファイル
+                made={made}
+                // 整理済みの行の近道は、いまディスク上に在るファイルを渡す。
+                // 整理して出来た本の行なら、出来たファイル
                 onOpenArchive={onOpenProduced}
                 edits={edits}
                 corrected={new Set(volumes.keys())}
@@ -965,7 +975,6 @@ export function OrganizePanel({
           出来たぶんの一覧に押し下げられて見落とすと元も子もない。
         */}
         <FailedList failures={failures} />
-        <ProducedList paths={produced} edits={edits} onOpen={onOpenProduced} />
         <OrganizeLog lines={log} />
       </div>
 

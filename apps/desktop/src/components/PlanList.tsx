@@ -24,7 +24,7 @@ import {
   EditShortcuts,
   type EditMarks,
   type HandoffMode,
-} from "./ProducedList";
+} from "./EditShortcuts";
 import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
 
@@ -126,6 +126,8 @@ type PlanListProps = {
   locked: boolean;
   /** 行のチェックを付け外しする。Shift で押すと、範囲の行がまとめて来る */
   onToggle: (rows: PlanRow[], keep: boolean) => void;
+  /** 整理して出来た本の行の鍵 → 出来たファイル（#160）。整理の途中から増える */
+  made: ReadonlyMap<string, string>;
   /** 整理済みの本を、そのまま次の画面へ読み込ませる */
   onOpenArchive: (path: string, mode: HandoffMode) => void;
   /** 本ごとの編集済みの種類。整理済みの行の近道に印を出す（#143） */
@@ -166,6 +168,7 @@ export function PlanList({
   outputDirectory,
   locked,
   onToggle,
+  made,
   onOpenArchive,
   edits,
   corrected,
@@ -195,29 +198,35 @@ export function PlanList({
       className="min-h-0 flex-1 divide-y divide-line/60 overflow-y-auto p-1"
       data-testid="plan-list"
     >
-      {rows.map((row) => (
-        <PlanListRow
-          key={row.id}
-          row={row}
-          state={checkStateOf(row, excluded)}
-          name={names.get(row.id) ?? ""}
-          outputDirectory={outputDirectory}
-          locked={locked}
-          onToggle={toggle}
-          onOpenArchive={onOpenArchive}
-          edited={edits[row.source] ?? []}
-          corrected={corrected.has(row.id)}
-          collided={collided.has(row.id)}
-          onCorrect={onCorrect}
-          onFill={onFill}
-        />
-      ))}
+      {rows.map((row) => {
+        const madePath = made.get(row.id);
+        return (
+          <PlanListRow
+            key={row.id}
+            row={row}
+            madePath={madePath}
+            state={checkStateOf(row, excluded)}
+            name={names.get(row.id) ?? ""}
+            outputDirectory={outputDirectory}
+            locked={locked}
+            onToggle={toggle}
+            onOpenArchive={onOpenArchive}
+            edited={edits[madePath ?? row.source] ?? []}
+            corrected={corrected.has(row.id)}
+            collided={collided.has(row.id)}
+            onCorrect={onCorrect}
+            onFill={onFill}
+          />
+        );
+      })}
     </ul>
   );
 }
 
 type PlanListRowProps = {
   row: PlanRow;
+  /** 整理して出来たファイル。まだ出来ていなければ無い */
+  madePath?: string;
   state: CheckState;
   name: string;
   outputDirectory: string;
@@ -233,6 +242,7 @@ type PlanListRowProps = {
 
 function PlanListRow({
   row,
+  madePath,
   state,
   name,
   outputDirectory,
@@ -250,8 +260,10 @@ function PlanListRow({
   const correctable = row.kind === "book" && !row.organized;
   const dim = off ? DIMMED : undefined;
   // 整理済みの本は、既にディスク上に最終形で在る。整理を待たずにそのまま
-  // 開けるので、行から次の作業へ渡せる（作る・作らないとは関わりが無い）
-  const finished = row.kind === "book" && row.organized;
+  // 開けるので、行から次の作業へ渡せる（作る・作らないとは関わりが無い）。
+  // 整理して出来た本も、出来た時点から同じに扱う（#160）
+  const finished =
+    row.kind === "book" && (row.organized || madePath !== undefined);
   const showsDestination = finished && state === true;
 
   return (
@@ -269,9 +281,10 @@ function PlanListRow({
       ].join(" ")}
       data-organized={String(row.organized)}
       data-organized-reason={row.organizedReason}
+      data-made={madePath}
       // 印を出さない理由でも、行に乗せれば何が違うのかを読める。
       // 整理済みの行には説明を付けない（印そのものが説明を持っている）
-      title={reasonTip(row) || undefined}
+      title={finished ? undefined : reasonTip(row) || undefined}
       tabIndex={0}
       style={{ paddingLeft: 8 + row.level * INDENT_PX }}
       className={cn(
@@ -357,7 +370,7 @@ function PlanListRow({
           </span>
         </>
       )}
-      <RowBadges row={row} collided={collided} dim={dim} />
+      <RowBadges row={row} finished={finished} collided={collided} dim={dim} />
       {/*
         近道は印の右に置く。左へ割り込ませると整理済みの印が行の中ほどまで
         押し戻され、その行にすることが無いと一目で読めなくなる。
@@ -366,8 +379,8 @@ function PlanListRow({
         <EditShortcuts
           name={name}
           // 渡すのは今ディスク上に在るファイル。これから作られる行き先では
-          // まだ開けない
-          path={row.source}
+          // まだ開けない。整理して出来た本なら、出来たファイル
+          path={madePath ?? row.source}
           edited={edited}
           testIdPrefix="plan"
           onOpen={onOpenArchive}
@@ -386,10 +399,13 @@ function PlanListRow({
  */
 function RowBadges({
   row,
+  finished,
   collided,
   dim,
 }: {
   row: PlanRow;
+  /** 整理済みか。整理して出来た本も含む（#160） */
+  finished: boolean;
   collided: boolean;
   dim?: string;
 }) {
@@ -401,13 +417,13 @@ function RowBadges({
         そのもので、一緒に薄めると「なぜ作られないのか」の答えが一番読みにくい
         所に置かれることになる。
       */}
-      {row.organized ? (
+      {finished ? (
         <Badge tone="ok" data-testid="plan-row-state" title={ORGANIZED_TIP}>
           <CircleCheck className="size-3" />
           整理済み
         </Badge>
       ) : null}
-      {reasonBadge ? (
+      {reasonBadge && !finished ? (
         <Badge
           tone="neutral"
           data-testid="plan-row-reason"

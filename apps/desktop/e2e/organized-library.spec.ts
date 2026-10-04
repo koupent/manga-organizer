@@ -1143,8 +1143,8 @@ test.describe("整理済みの本の見せ方", () => {
  *   本は元の場所も出来上がる形も同じなので、行き先を出さないと入れ直した
  *   ことが行から読めない
  * - **整理済みの行にだけ、次の作業への近道を置く。** 整理済みの本は既に
- *   ディスク上に最終形で在るので、整理を待たずにそのまま開ける。行き先は
- *   出来たファイルの一覧（`ProducedList`）と同じ 2 つで、同じ受け渡し
+ *   ディスク上に最終形で在るので、整理を待たずにそのまま開ける。整理して
+ *   出来た本の行と同じ近道で、同じ受け渡し
  *   （`onOpenProduced` → `App.openArchiveIn`）を通る。各画面は今までどおり
  *   単独で使えるのが主で、これは任意の近道でしかない
  *
@@ -1424,8 +1424,8 @@ test.describe("整理済みの行の仕上げ", () => {
       library.organized.split("/").pop(),
     );
 
-    // Assert - 出来たファイルの一覧（ProducedList）と同じ 3 つ（#143）。同じ
-    // ことをする近道が画面ごとに違う顔をしていると、押す前に読み直すことになる。
+    // Assert - 1 冊を編集する 3 画面への近道（#143）。整理して出来た本の行と
+    // 同じ顔にする。違う顔をしていると、押す前に読み直すことになる。
     // アイコンだけにして、何をするかは乗せたときの説明で伝える
     for (const [testId, icon, tip] of [
       ["plan-to-thumbnail", "svg.lucide-image", `${name} のサムネイルを作る`],
@@ -1442,10 +1442,7 @@ test.describe("整理済みの行の仕上げ", () => {
     ] as const) {
       const button = row.getByTestId(testId);
       await expect(button, `整理済みの行に ${testId} が無い`).toHaveCount(1);
-      await expect(
-        button.locator(icon),
-        `${testId} の絵が ProducedList と違う`,
-      ).toHaveCount(1);
+      await expect(button.locator(icon), `${testId} の絵が違う`).toHaveCount(1);
       await expect(
         button,
         `${testId} に、どの本を開くのかの説明が無い`,
