@@ -26,6 +26,7 @@ import {
   bookId,
   buildPlanRows,
   collidingBooks,
+  compaction,
   droppedBookCount,
   effectiveOff,
   isInside,
@@ -38,7 +39,6 @@ import {
   organizedSkippedCount,
   oneEachState,
   outputNames,
-  renumbering,
   reuseRows,
   sameVolumeCounts,
   selectedBooks,
@@ -843,9 +843,20 @@ export function OrganizePanel({
       if (outcome.produced.some((path) => analyzed.has(path))) {
         setAnalysisRound((round) => round + 1);
       }
-      setStatus(
-        organizeSummary(outcome.produced.length, outcome.failed.length),
+      // 番号を詰め終えるまでは実行中のまま（ごみ箱も出さない）。終わりを
+      // 告げてから詰めると、その間に押されたごみ箱の詰め直しと重なる
+      const summary = organizeSummary(
+        outcome.produced.length,
+        outcome.failed.length,
       );
+      const settled = await settleNumbers([
+        ...earlierFinished.current,
+        ...outcome.finished,
+      ]);
+      // 詰め直せなかったときは、その理由を settleNumbers が出している
+      if (settled === "renamed")
+        setStatus(`${summary}。同じ巻の番号を詰め直しました`);
+      else if (settled === "unchanged") setStatus(summary);
       loadEntries();
     } catch (error) {
       // 画面が消えた・隠れたことによる打ち切りは、利用者に見せる失敗ではない
@@ -945,18 +956,6 @@ export function OrganizePanel({
    */
   const trash = async (target: TrashTarget) => {
     setTrashing(null);
-    changingOutput.current = true;
-    try {
-      await trashAndRenumber(target);
-    } finally {
-      // 終わってから出力先を読み直す。途中で届いた答えは当てていない
-      changingOutput.current = false;
-      setOutputRound((round) => round + 1);
-    }
-  };
-
-  /** ``trash`` の中身。出力先の読み直しは呼び出し側が終わってから行う */
-  const trashAndRenumber = async (target: TrashTarget) => {
     try {
       await client.trashFile(target.path);
     } catch (error) {
@@ -969,9 +968,8 @@ export function OrganizePanel({
         toggleLeaves(current, [bookId(madeBook)], false),
       );
     }
-    setFinished((current) =>
-      current.filter((book) => book.path !== target.path),
-    );
+    const remaining = finished.filter((book) => book.path !== target.path);
+    setFinished(remaining);
     setOutputBooks((current) =>
       current.filter((book) => book.path !== target.path),
     );
@@ -979,31 +977,68 @@ export function OrganizePanel({
     if (sources.includes(target.path)) {
       onSourcesChange(sources.filter((path) => path !== target.path));
     }
-    setStatus(`${baseName(target.path)} をごみ箱へ移しました`);
-    if (!doneBooks.some((book) => book.path === target.path)) return;
-    const renames = renumbering(
-      doneBooks.map((book) => book.path).filter((path) => path !== target.path),
-      target.path,
-    );
-    if (renames.length > 0) {
-      try {
-        await client.renameFiles(renames);
-        const moved = new Map(
-          renames.map((rename) => [rename.source, rename.target]),
-        );
-        // 読み直しを待たずに新しい名前で出す
-        const rename = <T extends { path: string }>(book: T): T => {
-          const next = moved.get(book.path);
-          return next ? { ...book, path: next } : book;
-        };
-        setFinished((current) => current.map(rename));
-        setOutputBooks((current) => current.map(rename));
-        setStatus(
-          `${baseName(target.path)} をごみ箱へ移し、同じ巻の残りの番号を詰め直しました`,
-        );
-      } catch (error) {
-        setStatus(sidecarReason(error));
-      }
+    const moved = `${baseName(target.path)} をごみ箱へ移しました`;
+    setStatus(moved);
+    if ((await settleNumbers(remaining, target.path)) === "renamed") {
+      setStatus(`${moved}。同じ巻の残りの番号を詰め直しました`);
+    }
+  };
+
+  /**
+   * 出来ている本の番号を、同じ巻ごとに先着順の 無印 → _1 → _2 に詰める（#178）。
+   *
+   * 出力先は画面が覚えている一覧ではなく、その場で読み直した中身を見る。
+   * 付け替えが一度しくじって番号が飛んだまま残っても（出力先が同期中の
+   * フォルダで、作った直後のファイルが掴まれていた等）、次にごみ箱へ移したり
+   * 整理したりしたときに詰まる。
+   *
+   * この間に届いた出力先の読み直しは当てない。付け替える前の答えに、
+   * 付け替えた名前を重ねて当てることになる。終わってから読み直す。
+   *
+   * 詰め直したか・詰めるものが無かったか・しくじったか（理由はここで状態の
+   * 行に出す）を返す。``removed`` は消したばかりのファイル（同期中の
+   * フォルダでは、消した直後もしばらく一覧に残ることがある）。
+   */
+  const settleNumbers = async (
+    made: FinishedBook[],
+    removed = "",
+  ): Promise<"renamed" | "unchanged" | "failed"> => {
+    changingOutput.current = true;
+    try {
+      const found =
+        outputDirectory.trim() && title.trim() && author.trim()
+          ? await client
+              .outputBooks(outputDirectory, title, author)
+              .catch(() => [] as OutputBook[])
+          : [];
+      // 投入したものの中のファイルは付け替えない。投入の行が指す先が消える
+      const paths = [
+        ...new Set([...made, ...found].map((book) => book.path)),
+      ].filter(
+        (path) =>
+          path !== removed &&
+          !sources.some((source) => source === path || isInside(source, path)),
+      );
+      const renames = compaction(paths);
+      if (renames.length === 0) return "unchanged";
+      await client.renameFiles(renames);
+      const moved = new Map(
+        renames.map((rename) => [rename.source, rename.target]),
+      );
+      const rename = <T extends { path: string }>(book: T): T => {
+        const next = moved.get(book.path);
+        return next ? { ...book, path: next } : book;
+      };
+      // 読み直しを待たずに新しい名前で出す
+      setFinished((current) => current.map(rename));
+      setOutputBooks((current) => current.map(rename));
+      return "renamed";
+    } catch (error) {
+      setStatus(`番号を詰め直せませんでした: ${sidecarReason(error)}`);
+      return "failed";
+    } finally {
+      changingOutput.current = false;
+      setOutputRound((round) => round + 1);
     }
   };
 

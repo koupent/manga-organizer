@@ -118,9 +118,14 @@ function Panel({ active, children }: { active: boolean; children: ReactNode }) {
 /** ファイル整理・サムネイル作成・ページ並べ替え・ページ分割を切り替えて使う */
 export function App() {
   const [client, setClient] = useState<SidecarClient | null>(null);
+  // 起動したら、まずファイル整理を出す（#180）。1 冊を編集する画面は、整理した
+  // 本の行の近道から移って使う。本を名指しして開いたときだけ、その本の
+  // ページ並べ替えを出す
   const [mode, setMode] = useState<Mode>(() => {
-    const requested = startupParams().get("mode");
-    return isMode(requested) ? requested : "reorder";
+    const params = startupParams();
+    const requested = params.get("mode");
+    if (isMode(requested)) return requested;
+    return params.get("archive") ? "reorder" : "organize";
   });
   const [archive, setArchive] = useState(
     () => startupParams().get("archive") ?? "",

@@ -4,6 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -113,6 +114,32 @@ class RenameFilesTest(OutputBooksTestBase):
         with self.assertRaises(ValueError):
             rename_files([(source, self.output / f"{SERIES} 第003巻.zip")])
         self.assertEqual([f"{SERIES} 第003巻_1.zip"], self.names())
+
+
+class RenameRetryTest(OutputBooksTestBase):
+    def test_retries_while_the_file_is_held(self):
+        """作った直後のファイルが掴まれていても、待ってやり直して付け替える"""
+        # Arrange - 最初の 2 回だけ断られる（同期中のフォルダが掴んでいる姿）
+        source = self.write(f"{SERIES} 第025巻_1.zip", b"kept")
+        target = self.series / f"{SERIES} 第025巻.zip"
+        real_rename = Path.rename
+        refusals = iter([True, True])
+
+        def flaky_rename(path: Path, destination: Path):
+            if next(refusals, False):
+                raise PermissionError("使用中です")
+            return real_rename(path, destination)
+
+        # Act
+        with (
+            mock.patch.object(Path, "rename", flaky_rename),
+            mock.patch("manga_core.output_books.RENAME_WAIT", 0),
+        ):
+            rename_files([(source, target)])
+
+        # Assert
+        self.assertEqual([f"{SERIES} 第025巻.zip"], self.names())
+        self.assertEqual(b"kept", target.read_bytes())
 
 
 class OutputBooksApiTest(OutputBooksTestBase):

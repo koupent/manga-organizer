@@ -471,34 +471,39 @@ function parentOf(path: string): string {
 }
 
 /**
- * 同じ巻の出来ている本のうち 1 冊を消したあと、残りに付け直す名前（#178）。
+ * 出来ている本の番号を、同じ巻ごとに詰め直す付け替え（#178）。
  *
- * 残りを今の番号の順（番号なし → ``_1`` → ``_2``）に並べ、先頭から番号なし・
- * ``_1``・``_2`` と付け直す。先に在った本ほど小さい番号を持っているので、
- * 今の番号の順がそのまま先着の順になる。名前の変わらない本は載せない。
+ * 同じフォルダ・同じ巻の名前の本を今の番号の順（番号なし → ``_1`` →
+ * ``_2``）に並べ、先頭から番号なし・``_1``・``_2`` と付け直す。先に在った
+ * 本ほど小さい番号を持っているので、今の番号の順がそのまま先着の順になる。
+ * 名前の変わらない本は載せない。
  *
- * ``remaining`` には消した後に残っている、出来ている本のパスを全部渡す。
- * 消した本と同じフォルダ・同じ巻の名前のものだけを相手にする。
+ * ``paths`` には、出来ている本のパスを全部渡す（消した本は除く）。1 冊を
+ * 消した後だけでなく、付け替えが一度しくじって番号が飛んだままの巻も、
+ * 次に呼んだときに詰まる。
  */
-export function renumbering(
-  remaining: string[],
-  trashed: string,
+export function compaction(
+  paths: string[],
 ): { source: string; target: string }[] {
-  const folder = parentOf(trashed);
-  const base = withoutNumber(fileName(trashed));
-  return remaining
-    .filter(
-      (path) =>
-        parentOf(path) === folder && withoutNumber(fileName(path)) === base,
-    )
-    .sort((a, b) => numberOf(fileName(a)) - numberOf(fileName(b)))
-    .map((path, index) => ({
-      source: path,
-      target:
-        path.slice(0, path.length - fileName(path).length) +
-        (index === 0 ? `${base}.zip` : `${base}_${index}.zip`),
-    }))
-    .filter((rename) => rename.source !== rename.target);
+  const groups = new Map<string, string[]>();
+  for (const path of paths) {
+    const key = `${parentOf(path)}\u0000${withoutNumber(fileName(path))}`;
+    groups.set(key, [...(groups.get(key) ?? []), path]);
+  }
+  return [...groups.values()].flatMap((members) =>
+    members
+      .sort((a, b) => numberOf(fileName(a)) - numberOf(fileName(b)))
+      .map((path, index) => {
+        const base = withoutNumber(fileName(path));
+        return {
+          source: path,
+          target:
+            path.slice(0, path.length - fileName(path).length) +
+            (index === 0 ? `${base}.zip` : `${base}_${index}.zip`),
+        };
+      })
+      .filter((rename) => rename.source !== rename.target),
+  );
 }
 
 /** パスの末尾の名前 */

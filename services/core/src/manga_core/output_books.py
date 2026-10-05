@@ -9,6 +9,7 @@
 """
 
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,12 @@ from manga_core.naming import natural_sort_key
 from manga_core.volume_detector import format_series_dir
 
 OUTPUT_SUFFIX = ".zip"
+
+# 掴まれていて名前を変えられないときに、待ってやり直す回数と間隔（秒）。
+# 同期中のフォルダ（Google ドライブなど）やウイルス対策は、作った直後の
+# ファイルをしばらく掴む。Windows では掴まれたファイルの名前を変えられない
+RENAME_ATTEMPTS = 10
+RENAME_WAIT = 0.3
 
 
 @dataclass(frozen=True)
@@ -95,7 +102,7 @@ def rename_files(renames: list[tuple[Path, Path]]) -> None:
     try:
         for source, target in renames:
             temporary = source.with_name(f".{source.name}.{token}")
-            source.rename(temporary)
+            _rename(source, temporary)
             parked.append((source, temporary, target))
     except OSError:
         _restore(parked)
@@ -109,12 +116,12 @@ def rename_files(renames: list[tuple[Path, Path]]) -> None:
                 raise FileExistsError(
                     f"同じ名前のファイルが既にあります: {target.name}"
                 )
-            temporary.rename(target)
+            _rename(temporary, target)
             done.append(entry)
     except OSError:
         # 付け直した分も含めて、全部を元の名前へ戻す
         for _source, temporary, target in done:
-            target.rename(temporary)
+            _rename(target, temporary)
         _restore(parked)
         raise
 
@@ -123,4 +130,16 @@ def _restore(parked: list[tuple[Path, Path, Path]]) -> None:
     """仮の名前へ逃がしたファイルを、元の名前へ戻す"""
     for source, temporary, _ in reversed(parked):
         if temporary.exists():
-            temporary.rename(source)
+            _rename(temporary, source)
+
+
+def _rename(source: Path, target: Path) -> None:
+    """名前を変える。掴まれていて断られたら、少し待ってやり直す"""
+    for attempt in range(RENAME_ATTEMPTS):
+        try:
+            source.rename(target)
+            return
+        except PermissionError:
+            if attempt == RENAME_ATTEMPTS - 1:
+                raise
+            time.sleep(RENAME_WAIT)

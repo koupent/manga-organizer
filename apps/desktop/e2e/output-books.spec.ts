@@ -251,3 +251,68 @@ test("出力先の本は、作品名・著者が違えば一覧に出さない�
   await expect(row(page, `${VOLUME_3}.zip`, true)).toHaveCount(1);
   await expect(books).toHaveCount(2);
 });
+
+test("番号が飛んだまま残った巻は、次に整理したときに番号なしから詰める（#180）", async ({
+  page,
+}) => {
+  // Arrange - 番号なしを消したのに付け替えがしくじり、_1 だけが残った出力先
+  const output = join(sidecar.workDir, "out-gap");
+  const folder = join(output, SERIES);
+  mkdirSync(folder, { recursive: true });
+  writeArchive(
+    sidecar.workDir,
+    join("out-gap", SERIES, `${SERIES} 第025巻_1.zip`),
+    pages(2, "#aa0000"),
+  );
+  writeArchive(sidecar.workDir, "飛び番_26.zip", pages(1, "#0000aa"));
+  await page.route("**/api/library/suggest*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ author: null, candidates: [] }),
+    }),
+  );
+  await page.goto(
+    `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
+      `&mode=organize&output=${encodeURIComponent(output)}`,
+  );
+  await page.getByTestId("organize-title").fill(TITLE);
+  await page.getByTestId("organize-author").fill(AUTHOR);
+  await page.getByTestId("open-browser").click();
+  await page
+    .locator(
+      '[data-testid="browse-entry"][data-name="飛び番_26.zip"] .browser-name',
+    )
+    .click();
+  await page.getByTestId("open-browser").click();
+  await expect(row(page, `${SERIES} 第025巻_1.zip`, true)).toHaveCount(1);
+
+  // Act - 別の巻を整理する
+  await page.getByTestId("confirm").click();
+  await expect(page.getByTestId("organize-status")).toContainText(
+    "番号を詰め直しました",
+    { timeout: 30_000 },
+  );
+
+  // Assert - 残っていた _1 が番号なしになり、整理済みとして出る
+  expect(filesIn(folder)).toEqual([
+    `${SERIES} 第025巻.zip`,
+    `${SERIES} 第026巻.zip`,
+  ]);
+  await expect(
+    row(page, `${SERIES} 第025巻.zip`, true).getByTestId("plan-row-state"),
+  ).toHaveText("整理済み");
+});
+
+test("起動すると、まずファイル整理の画面が出る（#180）", async ({ page }) => {
+  // Act
+  await page.goto(
+    `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}`,
+  );
+
+  // Assert
+  await expect(page.getByTestId("mode-organize")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
