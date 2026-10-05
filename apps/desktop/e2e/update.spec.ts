@@ -172,7 +172,7 @@ test("落とせなかったら理由を出し、サイドカーは止めずイ�
 });
 
 test.describe("設定から更新を確かめ直す（#136）", () => {
-  test("あとで を押した後も、設定の「更新を確認」で案内を出し直せる", async ({
+  test("あとで を押した後も、設定の「更新を確認」で見つけ、設定を閉じずに更新できる（#176）", async ({
     page,
   }) => {
     // Arrange - 起動時の案内を閉じる
@@ -191,15 +191,35 @@ test.describe("設定から更新を確かめ直す（#136）", () => {
     );
     await dialog.getByTestId("check-update").click();
 
-    // Assert - 確かめ直して見つかったことを伝え、案内を出し直す
-    await expect(dialog.getByTestId("update-check-status")).toHaveText(
-      "新しい版 v4.3.0 があります。画面上部の案内から更新できます",
-    );
+    // Assert - 確かめ直して見つけた版と変更点を、設定の中に出す。
+    // 設定の中では閉じれば済むので「あとで」は出さない
+    const offer = dialog.getByTestId("update-notice");
+    await expect(offer).toContainText("v4.3.0");
     expect(
       (await calls(page)).filter((call) => call === "plugin:updater|check"),
     ).toHaveLength(2);
-    await page.keyboard.press("Escape");
-    await expect(notice).toContainText("v4.3.0");
+    await expect(offer).toContainText("結合できるようにした");
+    await expect(offer.getByRole("button", { name: "あとで" })).toHaveCount(0);
+
+    // Act - 設定を閉じずに、その場で更新する
+    await offer.getByRole("button", { name: "更新する" }).click();
+
+    // Assert - 画面上部から更新したときと同じ順で入れ替える
+    await expect
+      .poll(async () =>
+        (await calls(page)).filter((call) =>
+          [
+            "plugin:updater|download",
+            "stop_sidecar",
+            "plugin:updater|install",
+          ].includes(call),
+        ),
+      )
+      .toEqual([
+        "plugin:updater|download",
+        "stop_sidecar",
+        "plugin:updater|install",
+      ]);
   });
 
   test("新しい版が無ければ、最新の版だと伝える", async ({ page }) => {

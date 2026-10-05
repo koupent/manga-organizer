@@ -1,5 +1,6 @@
 import { Play, Square, TriangleAlert } from "lucide-react";
 import { masterCheckState, type PlanRow } from "../lib/plan";
+import { cn } from "../lib/utils";
 import { issueLabel } from "./PlanList";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -32,6 +33,11 @@ type PlanActionsProps = {
   running: boolean;
   /** 主操作を押せないか。理由は status に出す */
   blocked: boolean;
+  /**
+   * 利用者が直さないと押せないままか（#175）。status を警告として見せる。
+   * 灰色の文字のままだと、解析を待っているだけだと取り違える
+   */
+  warning?: boolean;
   onToggleAll: (keep: boolean) => void;
   /**
    * 同じ巻の本が、どの巻も 1 冊以下しか入っていないか（#169）。同じ巻の本が
@@ -62,6 +68,7 @@ export function PlanActions({
   partial = 0,
   running,
   blocked,
+  warning = false,
   onToggleAll,
   oneEach,
   onToggleOneEach,
@@ -108,12 +115,17 @@ export function PlanActions({
         </label>
         <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
         <span
-          className="truncate text-[12px] text-ink-muted"
+          className={cn(
+            "flex min-w-0 items-center gap-1 text-[12px]",
+            warning ? "text-warn" : "text-ink-muted",
+          )}
           data-testid="organize-status"
+          data-warning={warning || undefined}
           role="status"
           title={statusTitle}
         >
-          {status}
+          {warning ? <TriangleAlert className="size-3.5 shrink-0" /> : null}
+          <span className="truncate">{status}</span>
         </span>
         {/* 直せる問題は件数だけ添える。行の側にも同じ印が付いている。
             実行が始まったら消す。もう直せる場面ではない */}

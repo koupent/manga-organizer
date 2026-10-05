@@ -1,4 +1,10 @@
-import { BookMarked, Check, ChevronDown, Loader2 } from "lucide-react";
+import {
+  BookMarked,
+  Check,
+  ChevronDown,
+  Loader2,
+  TriangleAlert,
+} from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AuthorSource, Candidate } from "../../hooks/useAuthorLookup";
 import { nameHint } from "../../lib/organize-text";
@@ -19,6 +25,9 @@ type SeriesInfoSectionProps = {
   keptLeafCount: number;
   /** そのうち自分の名前を持たない本の数 */
   namelessCount: number;
+  /** 作品名・著者が要るのに空か。空のままでは整理を始められない（#175） */
+  titleMissing: boolean;
+  authorMissing: boolean;
   onChangeTitle: (next: string) => void;
   onTypeAuthor: (next: string) => void;
   onChooseAuthor: (next: string) => void;
@@ -43,6 +52,8 @@ export function SeriesInfoSection({
   sourceCount,
   keptLeafCount,
   namelessCount,
+  titleMissing,
+  authorMissing,
   onChangeTitle,
   onTypeAuthor,
   onChooseAuthor,
@@ -127,9 +138,14 @@ export function SeriesInfoSection({
       </div>
 
       <label className="flex flex-col gap-1">
-        <span className="text-[11.5px] font-medium text-ink-muted">作品名</span>
+        <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink-muted">
+          作品名
+          {titleMissing ? <MissingMark /> : null}
+        </span>
         <Input
           value={title}
+          aria-invalid={titleMissing || undefined}
+          className={cn(titleMissing && "border-warn")}
           list="known-titles"
           placeholder="作品名を入れると著者を探します"
           data-testid="organize-title"
@@ -141,6 +157,7 @@ export function SeriesInfoSection({
         <label className="flex flex-col gap-1">
           <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink-muted">
             著者
+            {authorMissing && !searching ? <MissingMark /> : null}
             {searching ? (
               <span
                 className="flex items-center gap-1 text-ink-faint"
@@ -160,8 +177,10 @@ export function SeriesInfoSection({
             placeholder="著者"
             data-testid="organize-author"
             data-source={authorSource}
+            aria-invalid={authorMissing || undefined}
             className={cn(
               authorSource === "library" && "text-brand",
+              authorMissing && "border-warn",
               candidates.length > 0 && "pr-20",
             )}
             onKeyDown={handleKey}
@@ -234,5 +253,21 @@ export function SeriesInfoSection({
         ) : null}
       </div>
     </section>
+  );
+}
+
+/**
+ * 空のままでは整理を始められない欄に添える印（#175）。押せない理由は
+ * 主操作の横にも出るが、そこだけだと解析が終わっていないのと見分けにくい
+ */
+function MissingMark() {
+  return (
+    <span
+      className="flex items-center gap-1 text-warn"
+      data-testid="organize-missing"
+    >
+      <TriangleAlert className="size-3" />
+      入れてください
+    </span>
   );
 }

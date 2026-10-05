@@ -406,7 +406,7 @@ export function App() {
           />
           {health === "ok" ? "接続済み" : "未接続"}
         </span>
-        <SettingsDialog onUpdateFound={setUpdate} />
+        <SettingsDialog />
       </header>
 
       {/* 中央寄せの上限を置かない。広い窓では左右に余白が積み上がるだけで、
