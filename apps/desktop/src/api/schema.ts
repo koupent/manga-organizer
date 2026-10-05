@@ -622,6 +622,11 @@ export interface components {
       author?: string | null;
       /** @description 巻数の訂正。省くと自動判定のまま。包みの有無が「訂正したかどうか」で、中の number が「何巻か」 */
       volume?: components["schemas"]["VolumeOverride"] | null;
+      /**
+       * Suffix
+       * @description 名前に足す番号（_1 なら 1）。同じ巻を複数作るとき、画面が選んだ順に決める。省くと、出力先で空いている名前を前から使う
+       */
+      suffix?: number | null;
     };
     /**
      * BrowseEntry

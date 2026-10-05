@@ -106,6 +106,14 @@ class BookRef(BaseModel):
             "包みの有無が「訂正したかどうか」で、中の number が「何巻か」"
         ),
     )
+    suffix: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "名前に足す番号（_1 なら 1）。同じ巻を複数作るとき、画面が選んだ順に"
+            "決める。省くと、出力先で空いている名前を前から使う"
+        ),
+    )
 
     def own_series(self) -> SeriesName | None:
         """この本自身の名前。持っていなければ ``None``"""
@@ -232,6 +240,8 @@ class _Wanted:
     # すると、巻数を外す依頼が自動判定の番号へ静かに戻る。既定値は付けない。
     # 訂正が 1 つも無い形（``_NO_CORRECTIONS``）を組み立て側に必ず書かせる
     volumes: Mapping[str, int | None]
+    # 位置（``entry``） -> 名前に足す番号（#166）。番号の無い本は載せない
+    suffixes: Mapping[str, int]
 
 
 def wanted_books(books: list[BookRef] | None) -> dict[Hashable, _Wanted] | None:
@@ -251,6 +261,7 @@ def wanted_books(books: list[BookRef] | None) -> dict[Hashable, _Wanted] | None:
     entries: dict[Hashable, set[str]] = {}
     series: dict[Hashable, SeriesName] = {}
     volumes: dict[Hashable, dict[str, int | None]] = {}
+    suffixes: dict[Hashable, dict[str, int]] = {}
     for book in books:
         key = source_key(book.source)
         entries.setdefault(key, set()).add(book.entry)
@@ -261,11 +272,14 @@ def wanted_books(books: list[BookRef] | None) -> dict[Hashable, _Wanted] | None:
             # 同じ本に違う巻数が 2 つ載った依頼は ``OrganizeRequest`` が既に
             # 断っている。ここへ来る重複は同じ値なので、上書きしても変わらない
             volumes.setdefault(key, {})[book.entry] = book.volume.number
+        if book.suffix is not None:
+            suffixes.setdefault(key, {})[book.entry] = book.suffix
     return {
         key: _Wanted(
             entries=frozenset(found),
             series=series.get(key),
             volumes=MappingProxyType(volumes.get(key, {})),
+            suffixes=MappingProxyType(suffixes.get(key, {})),
         )
         for key, found in entries.items()
     }
@@ -351,7 +365,12 @@ def organize_work(
             plan = _archive_plan(archive, wanted, report)
             refused.extend(_announce(plan.refused, report))
             for result in organizer.process_single_archive(
-                archive, plan.skip, series, plan.volumes, made_in(archive, plan)
+                archive,
+                plan.skip,
+                series,
+                plan.volumes,
+                made_in(archive, plan),
+                suffixes=plan.suffixes,
             ):
                 if result.success and result.output_path:
                     produced.append(str(result.output_path))
@@ -448,9 +467,14 @@ class _ArchivePlan:
     # 展開した位置 → 目次での位置（画面の行が持つ ``entry``）。出来た本が一覧の
     # どの行かを画面へ返すのに使う（#160）。目次を読めなければ空
     entries: Mapping[str, str]
+    # 展開した位置 → 名前に足す番号（#166）。番号の無い本は載せない
+    suffixes: Mapping[str, int]
 
 
-_NOTHING_PLANNED = _ArchivePlan(frozenset(), _NO_CORRECTIONS, (), MappingProxyType({}))
+_NO_SUFFIXES: Mapping[str, int] = MappingProxyType({})
+_NOTHING_PLANNED = _ArchivePlan(
+    frozenset(), _NO_CORRECTIONS, (), MappingProxyType({}), _NO_SUFFIXES
+)
 
 
 def _planned_books(archive: Path, wanted: dict[Hashable, _Wanted] | None) -> int:
@@ -498,6 +522,7 @@ def _archive_plan(
     found = wanted.get(source_key(archive))
     chosen = found.entries if found is not None else frozenset()
     corrections = found.volumes if found is not None else _NO_CORRECTIONS
+    numbers = found.suffixes if found is not None else _NO_SUFFIXES
 
     if archive.is_dir():
         # 裸の画像フォルダは ``locate_books`` を通らない（``_reader_for`` が
@@ -516,6 +541,7 @@ def _archive_plan(
             whole,
             _missing_refusals(archive, corrections, {""}),
             MappingProxyType({"": ""}),
+            MappingProxyType({"": numbers[""]}) if "" in numbers else _NO_SUFFIXES,
         )
 
     try:
@@ -537,6 +563,7 @@ def _archive_plan(
             _NO_CORRECTIONS,
             tuple(_unreadable_refusal(archive, entry) for entry in sorted(corrections)),
             MappingProxyType({}),
+            _NO_SUFFIXES,
         )
 
     skip: set[str] = set()
@@ -567,6 +594,13 @@ def _archive_plan(
         tuple(refused),
         MappingProxyType(
             {location.extracted_path: location.entry for location in located}
+        ),
+        MappingProxyType(
+            {
+                location.extracted_path: numbers[location.entry]
+                for location in located
+                if location.entry in chosen and location.entry in numbers
+            }
         ),
     )
 

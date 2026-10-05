@@ -441,11 +441,106 @@ export function effectiveOff(
   rows: PlanRow[],
   decisions: Decisions,
 ): ReadonlySet<string> {
-  const off = new Set<string>();
+  const { passed } = duplicatePicks(rows, decisions);
+  const off = new Set<string>(passed);
   for (const row of rows) {
     if (isLeaf(row) && !isOn(row, decisions)) off.add(row.id);
   }
   return off;
+}
+
+/**
+ * 同じ巻の本の組（#166）。整理済みの本、巻数の読めない本、巻数を直した本は
+ * 入れない。
+ *
+ * 整理済みの本は既定で外れていて（``defaultsOn``）、巻数の読めない本どうしは
+ * 同じ巻かどうかが分からない。巻数を直した本は、直した本人が作るつもりで
+ * いる。黙って外さず、重なれば「巻数が重なる」で知らせる。読み違えで同じ巻に
+ * 入っていた本も、正しい巻に直せば組を抜けて入る。
+ *
+ * 組は巻数だけで作る。整理済みでない本は、どれも左の列の作品名と著者で
+ * 名付けられるので、巻数が同じなら名前も同じになる。
+ */
+function volumeGroups(rows: PlanRow[]): PlanRow[][] {
+  const groups = new Map<number, PlanRow[]>();
+  for (const row of rows) {
+    if (row.kind !== "book" || row.organized || row.volume === null) continue;
+    if (row.volume !== row.autoVolume) continue;
+    groups.set(row.volume, [...(groups.get(row.volume) ?? []), row]);
+  }
+  return [...groups.values()].filter((members) => members.length > 1);
+}
+
+/** 利用者が、その行にも、それを含む入れ物にも触っていないか */
+function undecided(row: PlanRow, decisions: Decisions): boolean {
+  return (
+    !decisions.has(row.id) &&
+    row.ancestors.every((ancestor) => !decisions.has(ancestor))
+  );
+}
+
+/**
+ * 同じ巻の本のうち、既定で入れる 1 冊と、既定で外す残り（#166）。
+ *
+ * 同じ巻が大量に出たとき、要らない方を 1 つずつ外すのは手間が大きい。既定で
+ * 1 冊だけを選んでおき、利用者は残したい本を足すか、選ばれた本を外して別の本に
+ * 替えるだけで済むようにする。
+ *
+ * - 選ぶのは、利用者がまだ触っていない本のうち、ファイルの一番大きい本。大きい
+ *   方が画質の良い傾向にある。大きさの分からない本は後回し、同じなら一覧の上の方
+ * - 組の中に利用者が入れた本があれば、既定では選ばない。入れた本が残る
+ * - 利用者が外した本は選ばない。選ばれた本を外すと、次に大きい本が選ばれる。
+ *   全部外せば、その巻は 1 冊も作らない
+ */
+function duplicatePicks(
+  rows: PlanRow[],
+  decisions: Decisions,
+): { picked: ReadonlySet<string>; passed: ReadonlySet<string> } {
+  const picked = new Set<string>();
+  const passed = new Set<string>();
+  for (const members of volumeGroups(rows)) {
+    const open = members.filter((row) => undecided(row, decisions));
+    const chosen = members.some(
+      (row) => !undecided(row, decisions) && isOn(row, decisions),
+    );
+    const best = chosen
+      ? undefined
+      : open.reduce<PlanRow | undefined>(
+          (top, row) =>
+            top === undefined || (row.size ?? -1) > (top.size ?? -1)
+              ? row
+              : top,
+          undefined,
+        );
+    for (const row of open) {
+      if (row === best) picked.add(row.id);
+      else passed.add(row.id);
+    }
+  }
+  return { picked, passed };
+}
+
+/**
+ * 同じ巻の本に触る前に、いま既定で選ばれている 1 冊を「入れた」と覚える（#166）。
+ *
+ * 覚えないと、利用者が別の本を入れた途端に組に「入れた本」ができ、既定の 1 冊が
+ * 外れる。1 冊足したつもりが入れ替えになる。外すときに覚えても同じ結果になる
+ * （外した本はその場で外したと上書きされ、残りは既定のまま選び直される）ので、
+ * 入れるときだけ呼べばよい。
+ */
+export function keepPicked(
+  rows: PlanRow[],
+  decisions: Decisions,
+  leaves: string[],
+): Decisions {
+  const { picked } = duplicatePicks(rows, decisions);
+  const touched = new Set(leaves);
+  const next = new Map(decisions);
+  for (const members of volumeGroups(rows)) {
+    if (!members.some((row) => touched.has(row.id))) continue;
+    for (const row of members) if (picked.has(row.id)) next.set(row.id, true);
+  }
+  return next;
 }
 
 /**
@@ -503,7 +598,12 @@ export function toggleLeaves(
   keep: boolean,
 ): Decisions {
   const next = new Map(decisions);
-  for (const leaf of leaves) next.set(leaf, keep);
+  for (const leaf of leaves) {
+    // 入れた順を台帳の並びで覚える。同じ巻を複数残したときの _1 の付け方に
+    // 使う（#166）。既に入っている行は並びを動かさない
+    if (keep && next.get(leaf) !== true) next.delete(leaf);
+    next.set(leaf, keep);
+  }
   return next;
 }
 
@@ -632,12 +732,14 @@ export function selectedBooks(
   rows: PlanRow[],
   off: ReadonlySet<string>,
   volumes: ReadonlyMap<string, number | null> = new Map(),
+  names: ReadonlyMap<string, string> = new Map(),
 ): {
   source: string;
   entry: string;
   title: string | null;
   author: string | null;
   volume?: { number: number | null };
+  suffix?: number;
 }[] {
   return keptLeafRows(rows, off).map((row) => {
     if (row.kind !== "book")
@@ -648,8 +750,14 @@ export function selectedBooks(
       title: carriesOwnName(row) ? row.title : null,
       author: carriesOwnName(row) ? row.author : null,
     };
-    if (row.organized || !volumes.has(row.id)) return book;
-    return { ...book, volume: { number: volumes.get(row.id) ?? null } };
+    // 整理済みの本は自分の名前のまま置き直すので、番号も訂正も載せない
+    if (row.organized) return book;
+    // 一覧に予告した _1 などの番号（#166）。載せないと、サイドカーは処理した順に
+    // 番号を付け、選んだ順とも一覧の予告とも違う名前になる
+    const suffix = nameSuffix(names.get(row.id));
+    const named = suffix === null ? book : { ...book, suffix };
+    if (!volumes.has(row.id)) return named;
+    return { ...named, volume: { number: volumes.get(row.id) ?? null } };
   });
 }
 
@@ -677,8 +785,10 @@ export function formatVolumeName(
 /**
  * 一覧に出す名前を、行の鍵ごとに決める。
  *
- * 同じ名前がぶつかったら ``_1`` から番号を足す。実処理も投入の順に名前を
- * 決めるので、並び順のまま前から埋めれば同じ付き方になる。
+ * 同じ名前がぶつかったら ``_1`` から番号を足す。足す順は**選んだ順**（#166）。
+ * 既定で入っている本（同じ巻なら既定で選ばれた 1 冊）が先で、利用者が入れた
+ * 本はその後に入れた順で続く。残したのが 1 冊なら番号は付かない。番号は
+ * 整理の依頼に載せ（``selectedBooks``）、サイドカーもその名前で書き出す。
  *
  * 自分の名前を持つ本（整理済み）は、その名前で組み立てる（#73 段階 4a）。
  * 左の列の対で組み直すと、一覧には「作り直したら別人名義になる」という嘘の
@@ -695,24 +805,40 @@ export function outputNames(
   author: string,
   title: string,
   off: ReadonlySet<string> = new Set(),
+  decisions: Decisions = new Map(),
 ): Map<string, string> {
+  // 利用者が入れた本は、台帳に入れた順の位置で並べる。既定で入っている本は先頭
+  const order = new Map(
+    [...decisions.keys()].map((key, index) => [key, index]),
+  );
+  const rank = (row: PlanRow) =>
+    decisions.get(row.id) === true ? (order.get(row.id) ?? -1) : -1;
+  const books = rows.filter((row) => row.kind === "book");
+  const kept = books
+    .filter((row) => !off.has(row.id))
+    .sort((a, b) => rank(a) - rank(b));
   const taken = new Set<string>();
   const names = new Map<string, string>();
-  for (const row of rows) {
-    if (row.kind !== "book") continue;
+  for (const row of kept) {
     const base = baseNameOf(row, author, title);
     let name = `${base}.zip`;
-    if (off.has(row.id)) {
-      names.set(row.id, name);
-      continue;
-    }
     for (let counter = 1; taken.has(name); counter += 1) {
       name = `${base}_${counter}.zip`;
     }
     taken.add(name);
     names.set(row.id, name);
   }
+  for (const row of books) {
+    if (!names.has(row.id))
+      names.set(row.id, `${baseNameOf(row, author, title)}.zip`);
+  }
   return names;
+}
+
+/** 名前に足した ``_1`` などの番号。無ければ null（名前は ``formatVolumeName`` の形） */
+function nameSuffix(name: string | undefined): number | null {
+  const found = name?.match(/_(\d+)\.zip$/);
+  return found ? Number(found[1]) : null;
 }
 
 /**
