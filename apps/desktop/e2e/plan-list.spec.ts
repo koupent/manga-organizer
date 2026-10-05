@@ -808,4 +808,120 @@ test.describe("解析した本の一覧", () => {
     await compoundBook.hover();
     await expect(compoundBook.getByTestId("plan-trash")).toHaveCount(0);
   });
+
+  test("同じ巻は既定で大きい 1 冊だけを選び、外せば次、足せば両方を選んだ順の名前で作る（#166）", async ({
+    page,
+  }) => {
+    // Arrange - 1 巻が 2 つ。大きいのは z_01（後に処理される方）
+    const name = "重複選択";
+    const folder = join(sidecar.workDir, name);
+    mkdirSync(folder, { recursive: true });
+    const pages = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        name: `${String(index + 1).padStart(3, "0")}.jpg`,
+        color: "#336699",
+      }));
+    writeArchive(sidecar.workDir, join(name, "a_01.zip"), pages(1));
+    writeArchive(sidecar.workDir, join(name, "z_01.zip"), pages(6));
+    writeArchive(sidecar.workDir, join(name, "m_02.zip"), pages(1));
+    const output = join(sidecar.workDir, "out-重複選択");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    const title = "重複選択の作品";
+    await fillMangaInfo(page, title);
+    await addFolder(page, name);
+    await waitForBooks(page, 3);
+    const row = (source: string) =>
+      page.locator(
+        `[data-testid="plan-row"][data-kind="book"][data-source$="/${source}"]`,
+      );
+
+    // Assert - 1 巻は大きい z_01 だけが入り、番号なしの名前になる。2 巻は入る
+    await expect(checkOf(row("z_01.zip"))).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(checkOf(row("a_01.zip"))).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await expect(checkOf(row("m_02.zip"))).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(row("z_01.zip")).toHaveAttribute(
+      "data-output-name",
+      volumeName(title, 1),
+    );
+    await expect(page.getByTestId("organize-status")).toContainText(
+      "2 冊を作ります",
+    );
+
+    // Act / Assert - 選ばれた z_01 を外すと、a_01 が代わりに選ばれる
+    await checkOf(row("z_01.zip")).click();
+    await expect(checkOf(row("z_01.zip"))).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await expect(checkOf(row("a_01.zip"))).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    // Act / Assert - a_01 も外せば、1 巻は 1 冊も作らない
+    await checkOf(row("a_01.zip")).click();
+    await expect(checkOf(row("a_01.zip"))).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await expect(checkOf(row("z_01.zip"))).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+
+    // Act - z_01、a_01 の順に入れ直す
+    await checkOf(row("z_01.zip")).click();
+    await checkOf(row("a_01.zip")).click();
+
+    // Assert - 足した a_01 で z_01 が外れず、両方残る。番号は選んだ順で、
+    // 先に選んだ z_01 が番号なし、後から足した a_01 が _1
+    await expect(checkOf(row("z_01.zip"))).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(checkOf(row("a_01.zip"))).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(row("z_01.zip")).toHaveAttribute(
+      "data-output-name",
+      volumeName(title, 1),
+    );
+    await expect(row("a_01.zip")).toHaveAttribute(
+      "data-output-name",
+      volumeName(title, 1).replace(".zip", "_1.zip"),
+    );
+
+    // Act - 整理する
+    await page.getByTestId("confirm").click();
+    await expect(page.getByTestId("organize-status")).toContainText(
+      "整理しました",
+      { timeout: 30_000 },
+    );
+
+    // Assert - 出来たファイルの名前も予告どおり。処理した順（a_01 が先）で
+    // 番号を付けると、ここが逆になる
+    await expect(row("z_01.zip")).toHaveAttribute(
+      "data-made",
+      join(output, `[${AUTHOR}] ${title}`, volumeName(title, 1)),
+    );
+    await expect(row("a_01.zip")).toHaveAttribute(
+      "data-made",
+      join(
+        output,
+        `[${AUTHOR}] ${title}`,
+        volumeName(title, 1).replace(".zip", "_1.zip"),
+      ),
+    );
+  });
 });

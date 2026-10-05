@@ -1095,11 +1095,12 @@ test.describe("整理済みの本の見せ方", () => {
     await waitForBooks(page, BOOK_COUNT + 1);
 
     // Assert - 左の列は「残した本のうち、自分の名前を持たないもの」に使われる。
-    // 整理済みのぶんを数に入れる実装はここで落ちる
+    // 整理済みのぶんを数に入れる実装はここで落ちる。先に入れた未整理_09 と
+    // 蔵書の raw_09 は同じ 9 巻なので、既定ではどちらか 1 冊だけが残る（#166）
     await expect(
       page.getByTestId("organize-name-hint"),
       "左の列が何冊に使われるのかが読めない",
-    ).toHaveText(`整理済みでない ${DEFAULT_KEPT + 1} 冊の名前に使います`);
+    ).toHaveText(`整理済みでない ${DEFAULT_KEPT} 冊の名前に使います`);
   });
 
   test("作る本が全部整理済みなら、作品情報は今は使わないと出る", async ({

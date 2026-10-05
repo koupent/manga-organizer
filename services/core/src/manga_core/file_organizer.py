@@ -25,6 +25,9 @@ OUTPUT_SUFFIX = ".zip"
 # おくのは、既定値の辞書を呼び出し側が取り違えて書き換えると、1 回の実行の
 # 訂正が次の実行へ漏れるため
 NO_VOLUME_OVERRIDES: Mapping[str, int | None] = MappingProxyType({})
+# 位置 -> 名前に足す番号（#166）。同じ巻を複数残したときに、画面が選んだ順に
+# 決めた ``_1`` などを書き出す名前へ写す。番号を決めない本は載せない
+NO_SUFFIXES: Mapping[str, int] = MappingProxyType({})
 
 # フォルダを丸ごと 1 冊として扱うときの鍵。展開ルートからの相対パスが ``.``
 # になる場合と同じ扱いで、``_location_key`` が返す値と 1 バイトも違わない
@@ -115,11 +118,13 @@ class FileOrganizer:
         volume: int | None,
         series: SeriesName,
         sole: bool,
+        suffix: int | None = None,
     ) -> ProcessResult | None:
         """1 巻ぶんを書き出す。行き先が元のアーカイブ自身で、作り直す必要も
         無ければ ``None`` を返す。
 
         ``sole`` は、元のアーカイブから出る本がこの 1 冊だけかどうか。
+        ``suffix`` は名前に足す番号（#166）。無ければ番号なしの名前から試す。
         """
         # Generate output filename
         output_name = series.volume_name(volume)
@@ -141,10 +146,20 @@ class FileOrganizer:
             # 残り続ける（#127）。同じ場所で作り直す
             return self._rebuild_in_place(image_dir, archive_path, volume)
 
-        # Get unique output path in the manga subdirectory
-        output_path = self.volume_detector.get_unique_filename(
-            manga_dir, output_name, OUTPUT_SUFFIX
-        )
+        # 同じ巻を複数残したときは、画面が選んだ順に決めた番号で書き出す（#166）。
+        # 処理した順に番号を付けると、一覧の予告とも選んだ順とも違う名前になる。
+        # 出力先に同じ名前が既に在るときは、その番号から上へ空きを探す。番号なしの
+        # 名前へは戻らない。そこは番号なしで選ばれた本の名前で、まだ書き出して
+        # いないだけかもしれない
+        if suffix:
+            number = suffix
+            while (manga_dir / f"{output_name}_{number}{OUTPUT_SUFFIX}").exists():
+                number += 1
+            output_path = manga_dir / f"{output_name}_{number}{OUTPUT_SUFFIX}"
+        else:
+            output_path = self.volume_detector.get_unique_filename(
+                manga_dir, output_name, OUTPUT_SUFFIX
+            )
 
         # Create new archive for this volume
         error = self._build_volume_archive(image_dir, output_path, volume)
@@ -356,6 +371,7 @@ class FileOrganizer:
         # 呼び出しを足す人が訂正を落としたことに誰も気づけない。
         # 公開側（``process_single_archive``）の既定値は残してある
         volumes: Mapping[str, int | None],
+        suffix: int | None,
     ) -> list[ProcessResult]:
         """裸の画像フォルダを 1 冊として整える。
 
@@ -379,7 +395,7 @@ class FileOrganizer:
                 volumes,
             )
             result = self._process_volume(
-                image_dir, image_dir, manga_dir, volume, series, sole=True
+                image_dir, image_dir, manga_dir, volume, series, True, suffix
             )
             # 書き出す先は ZIP なので、フォルダ自身と同じになることはない
             return [result] if result is not None else []
@@ -401,6 +417,7 @@ class FileOrganizer:
         series: SeriesName | None = None,
         volumes: Mapping[str, int | None] = NO_VOLUME_OVERRIDES,
         on_book: BookDone | None = None,
+        suffixes: Mapping[str, int] = NO_SUFFIXES,
     ) -> list[ProcessResult]:
         """Process a single archive file.
 
@@ -418,6 +435,9 @@ class FileOrganizer:
 
         ``on_book`` は 1 冊を書き終えるたびに呼ぶ（#160）。アーカイブ全体が
         済むのを待たずに、出来た本を知らせるため。
+
+        ``suffixes`` は「位置 -> 名前に足す番号」（#166）。鍵は ``volumes`` と同じ。
+        省くと今までどおり、出力先で空いている名前を前から使う。
         """
         series = series or SeriesName(self.author, self.title)
 
@@ -425,7 +445,9 @@ class FileOrganizer:
         # フォルダは丸ごと 1 冊なので、外すかどうかは呼び出し側が決めている。
         # 巻数の訂正はそうはいかないので、あちらの経路にも渡す
         if archive_path.is_dir():
-            results = self._process_image_directory(archive_path, series, volumes)
+            results = self._process_image_directory(
+                archive_path, series, volumes, suffixes.get(IMAGE_DIRECTORY_KEY)
+            )
             if on_book is not None:
                 for result in results:
                     on_book(result, IMAGE_DIRECTORY_KEY)
@@ -492,6 +514,7 @@ class FileOrganizer:
                     # 残りの本ごと元が消える。自分自身の上で作り直すのは
                     # 1 冊だけのときに限る
                     sole=len(image_dirs) == 1,
+                    suffix=suffixes.get(self._location_key(image_dir) or ""),
                 )
                 if result is None:
                     # 行き先が元のアーカイブ自身で、作り直すまでもない。外した本と

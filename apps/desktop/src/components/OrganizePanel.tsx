@@ -30,6 +30,7 @@ import {
   effectiveOff,
   keptBooks,
   keptIssueCounts,
+  keepPicked,
   keptLeafRows,
   namelessKeptRows,
   needsSeriesName,
@@ -458,8 +459,8 @@ export function OrganizePanel({
   // 読む所すべてで同じものを使う
   const off = useMemo(() => effectiveOff(rows, decisions), [rows, decisions]);
   const names = useMemo(
-    () => outputNames(rows, author, title, off),
-    [rows, author, title, off],
+    () => outputNames(rows, author, title, off, decisions),
+    [rows, author, title, off, decisions],
   );
   // 整理して出来た本の行 → 出来た本（#160）
   const made = useMemo(
@@ -595,10 +596,20 @@ export function OrganizePanel({
     author,
   ]);
 
-  /** チェックを付け外しする。親を触ったら下の葉をまとめて動かす */
+  /**
+   * チェックを付け外しする。親を触ったら下の葉をまとめて動かす。
+   *
+   * 入れるときは、同じ巻で既定で選ばれている本も入れたと覚えてから入れる
+   * （#166）。覚えないと、1 冊足したつもりが入れ替えになる
+   */
   const toggleRows = (targets: PlanRow[], keep: boolean) => {
+    const leaves = targets.flatMap(toggleTargets);
     setDecisions((current) =>
-      toggleLeaves(current, targets.flatMap(toggleTargets), keep),
+      toggleLeaves(
+        keep ? keepPicked(rows, current, leaves) : current,
+        leaves,
+        keep,
+      ),
     );
   };
 
@@ -755,7 +766,7 @@ export function OrganizePanel({
         keep_originals: keepOriginals,
         // 一覧で残した本だけを作る。空の配列は「1 冊も作らない」であって
         // 「指定なし」ではないので、省かずに必ず載せる
-        books: selectedBooks(rows, off, volumes),
+        books: selectedBooks(rows, off, volumes, names),
       });
       jobId.current = accepted.id;
 

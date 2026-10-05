@@ -693,5 +693,79 @@ class TrashFileTest(PlanApiTestBase):
         self.assertIn("使用中です", response.json()["detail"])
 
 
+class SuffixInSelectionOrderTest(PlanApiTestBase):
+    """同じ巻を複数作るとき、画面が選んだ順に決めた番号で書き出す（#166）。
+
+    処理した順（元の名前の順）に番号を付けると、一覧の予告とも、利用者が
+    選んだ順とも違う名前になる。
+    """
+
+    def prepare(self) -> tuple[Path, list[dict]]:
+        """同じ 1 巻が 2 つ。元の名前の順では a が先に処理される"""
+        folder = self.work_dir / "番号"
+        self.write_archive(folder / "a_01.zip")
+        self.write_archive(folder / "b_01.zip", ("001.jpg", "002.jpg"))
+        books = self.analyzed_books([folder])
+        self.assertEqual(2, len(books), books)
+        return folder, books
+
+    def request(self, books: list[dict], suffixes: dict[str, int]) -> list[dict]:
+        """元の名前 -> 番号 の対で、本ごとに番号を載せる"""
+        chosen = []
+        for book in books:
+            ref = {"source": book["source"], "entry": book["entry"]}
+            number = suffixes.get(Path(book["source"]).name)
+            if number is not None:
+                ref["suffix"] = number
+            chosen.append(ref)
+        return chosen
+
+    def test_writes_the_numbers_the_screen_chose(self):
+        # Arrange - 後に処理される b を先に選び（番号なし）、a を足した（_1）
+        folder, books = self.prepare()
+        output = self.work_dir / "out-番号"
+
+        # Act
+        job = self.organize([folder], output, self.request(books, {"a_01.zip": 1}))
+
+        # Assert - a は _1、b は番号なし。処理した順なら逆になる
+        made = {Path(path).name: path for path in job["result"]["produced"]}
+        self.assertEqual(
+            sorted(
+                [f"[{AUTHOR}] {TITLE} 第001巻.zip", f"[{AUTHOR}] {TITLE} 第001巻_1.zip"]
+            ),
+            sorted(made),
+        )
+        sources = {
+            Path(book["source"]).name: Path(book["path"]).name
+            for book in job["result"]["finished"]
+        }
+        self.assertEqual(f"[{AUTHOR}] {TITLE} 第001巻_1.zip", sources["a_01.zip"])
+        self.assertEqual(f"[{AUTHOR}] {TITLE} 第001巻.zip", sources["b_01.zip"])
+
+    def test_moves_to_a_free_name_when_the_chosen_one_is_taken(self):
+        # Arrange - 出力先に、選んだ名前（_1）が既に在る
+        folder, books = self.prepare()
+        output = self.work_dir / "out-番号の空き"
+        series = output / f"[{AUTHOR}] {TITLE}"
+        series.mkdir(parents=True)
+        (series / f"[{AUTHOR}] {TITLE} 第001巻_1.zip").write_bytes(b"old")
+
+        # Act
+        job = self.organize([folder], output, self.request(books, {"a_01.zip": 1}))
+
+        # Assert - 在るファイルは上書きしない。a は選んだ番号から上の空き（_2）へずれ、
+        # 番号なしの名前は、番号なしで選ばれた b に残る
+        self.assertEqual(
+            b"old", (series / f"[{AUTHOR}] {TITLE} 第001巻_1.zip").read_bytes()
+        )
+        sources = {
+            Path(book["source"]).name: Path(book["path"]).name
+            for book in job["result"]["finished"]
+        }
+        self.assertEqual(f"[{AUTHOR}] {TITLE} 第001巻.zip", sources["b_01.zip"])
+        self.assertEqual(f"[{AUTHOR}] {TITLE} 第001巻_2.zip", sources["a_01.zip"])
+
+
 if __name__ == "__main__":
     unittest.main()
