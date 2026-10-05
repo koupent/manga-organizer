@@ -28,6 +28,7 @@ import {
   collidingBooks,
   droppedBookCount,
   effectiveOff,
+  isInside,
   keptBooks,
   keptIssueCounts,
   keepPicked,
@@ -37,13 +38,16 @@ import {
   organizedSkippedCount,
   oneEachState,
   outputNames,
+  renumbering,
   reuseRows,
   sameVolumeCounts,
   selectedBooks,
   setOneEach,
   toggleLeaves,
   toggleTargets,
+  withOutputBooks,
   type Decisions,
+  type OutputBook,
   type PlanRow,
   VOLUME_DUPLICATE,
 } from "../lib/plan";
@@ -190,6 +194,15 @@ export function OrganizePanel({
   const [finished, setFinished] = useState<FinishedBook[]>([]);
   // 今回の整理を始める前に出来ていた本。今回の分はこの後ろへ足す
   const earlierFinished = useRef<FinishedBook[]>([]);
+
+  // 出力先の作品フォルダに既にある本（#178）。先着として番号を持っているので、
+  // 一覧に出し、今回の本の番号はその空きから振る。整理やごみ箱で出力先が
+  // 変わったら、合図を進めて読み直す
+  const [outputBooks, setOutputBooks] = useState<OutputBook[]>([]);
+  const [outputRound, setOutputRound] = useState(0);
+  // ごみ箱へ移して番号を付け替えている最中か。この間に届いた読み直しの答えは
+  // 当てない。付け替える前の答えに、付け替えた名前を重ねて当てることになる
+  const changingOutput = useRef(false);
 
   // ごみ箱へ移そうとしている本のファイル。確かめる窓が開いている間だけ在る（#164）
   const [trashing, setTrashing] = useState<TrashTarget | null>(null);
@@ -444,6 +457,31 @@ export function OrganizePanel({
     };
   }, [active]);
 
+  // 出力先にある本を読み直す（#178）。作品名と著者は打つたびに変わるので、
+  // 打ち終わるのを少し待ってから聞きに行く
+  useEffect(() => {
+    if (!outputDirectory.trim() || !title.trim() || !author.trim()) {
+      setOutputBooks([]);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      client
+        .outputBooks(outputDirectory, title, author)
+        .then((found) => {
+          if (alive && !changingOutput.current) setOutputBooks(found);
+        })
+        // 出力先を選び直す前などは断られる。一覧に出ないだけで、整理はできる
+        .catch(() => {
+          if (alive) setOutputBooks([]);
+        });
+    }, 300);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [client, outputDirectory, title, author, outputRound]);
+
   // 解析の間だけ時計を進める
   useEffect(() => {
     if (!analysis.running) return;
@@ -467,10 +505,43 @@ export function OrganizePanel({
     previousRows.current = next;
     return next;
   }, [sources, analysis.containers, analysis.books, analysis.unreadable]);
+  // 一覧に出す、出力先に既にある本（#178）。この画面で作った本は作った行の
+  // 側で、投入したものの中にある本は投入の側の行で出ているので、二重に出さない。
+  // 何も投入していない間は出さない（一覧そのものが空の案内になっている）
+  const shownOutput = useMemo(() => {
+    if (sources.length === 0) return [];
+    const made = new Set(finished.map((book) => book.path));
+    return outputBooks.filter(
+      (book) =>
+        !made.has(book.path) &&
+        !sources.some(
+          (source) => source === book.path || isInside(source, book.path),
+        ),
+    );
+  }, [outputBooks, finished, sources]);
+  // 出来ている本。この画面で作った本と、出力先に既にある本（#178）
+  const doneBooks = useMemo<FinishedBook[]>(
+    () => [
+      ...finished,
+      ...shownOutput.map((book) => ({
+        source: book.path,
+        entry: "",
+        path: book.path,
+        size: book.size,
+      })),
+    ],
+    [finished, shownOutput],
+  );
   // 直した巻数を当てた行。名前・印・依頼・冊数は全部こちらから作る
   const rows = useMemo(
-    () => applyVolumes(analyzedRows, volumes),
-    [analyzedRows, volumes],
+    () =>
+      withOutputBooks(
+        applyVolumes(analyzedRows, volumes),
+        shownOutput,
+        author,
+        title,
+      ),
+    [analyzedRows, volumes, shownOutput, author, title],
   );
 
   // 近道に出す編集済みの印（#143）。相手は近道を置く本、つまり整理済みの行と
@@ -483,7 +554,7 @@ export function OrganizePanel({
       ...rows
         .filter((row) => row.kind === "book" && row.organized)
         .map((row) => row.source),
-      ...finished.map((book) => book.path),
+      ...doneBooks.map((book) => book.path),
     ]),
   ].join("\n");
   useEffect(() => {
@@ -503,21 +574,30 @@ export function OrganizePanel({
   // いま外れている葉。触った覚えと既定から毎回導き直すので、解析中に外した
   // 入れ物へ後から本が生えても、その本は外れたまま出る。1 度だけ導いて、
   // 読む所すべてで同じものを使う
-  // 整理して出来た本の行 → 出来た本（#160）
+  // 整理して出来た本の行・出力先に既にある本の行 → 出来ている本（#160 #178）
   const made = useMemo(
-    () => new Map(finished.map((book) => [bookId(book), book])),
-    [finished],
+    () => new Map(doneBooks.map((book) => [bookId(book), book])),
+    [doneBooks],
   );
   // 出来た本は、もう処理の対象ではない（#172）。チェックを出さず、外れている
   // 側に入れる。入れたままだと、もう一度押したときに _1 の写しが出来る
   const off = useMemo(() => {
-    const decided = effectiveOff(rows, decisions);
+    const decided = effectiveOff(rows, decisions, made);
     if (made.size === 0) return decided;
     return new Set([...decided, ...made.keys()]);
   }, [rows, decisions, made]);
+  // 出来ている本の名前は先着として埋まっている（#178）
   const names = useMemo(
-    () => outputNames(rows, author, title, off, decisions),
-    [rows, author, title, off, decisions],
+    () =>
+      outputNames(
+        rows,
+        author,
+        title,
+        off,
+        decisions,
+        doneBooks.map((book) => baseName(book.path)),
+      ),
+    [rows, author, title, off, decisions, doneBooks],
   );
   // 同じ巻の本の数（#162）。外した本も数える
   const sameVolume = useMemo(
@@ -526,8 +606,8 @@ export function OrganizePanel({
   );
   // 作る本どうしで名前が重なる本。後ろの本は黙って _1 で出来てしまう
   const collided = useMemo(
-    () => collidingBooks(rows, off, author, title),
-    [rows, off, author, title],
+    () => collidingBooks(rows, off, author, title, made),
+    [rows, off, author, title, made],
   );
   // 直した巻数のうち、実際に作られる本のもの。状態の行で数える
   const correctedCount = rows.filter(
@@ -663,7 +743,7 @@ export function OrganizePanel({
     const leaves = targets.flatMap(toggleTargets);
     setDecisions((current) =>
       toggleLeaves(
-        keep ? keepPicked(rows, current, leaves) : current,
+        keep ? keepPicked(rows, current, leaves, made) : current,
         leaves,
         keep,
       ),
@@ -675,7 +755,7 @@ export function OrganizePanel({
 
   /** 同じ巻を 1 冊ずつに絞る / 全部入れる（#169） */
   const toggleOneEach = (one: boolean) => {
-    setDecisions((current) => setOneEach(rows, current, one));
+    setDecisions((current) => setOneEach(rows, current, one, made));
   };
 
   /**
@@ -776,6 +856,8 @@ export function OrganizePanel({
       if (!stopped()) {
         jobId.current = null;
         setRunning(false);
+        // 出力先に本が増えた。出力先の一覧を読み直す（#178）
+        setOutputRound((round) => round + 1);
       }
     }
   };
@@ -854,18 +936,43 @@ export function OrganizePanel({
   /**
    * 確かめた本のファイルをごみ箱へ移し、一覧から外す（#164）。
    *
-   * 整理して出来たファイルなら、その行は整理する前の姿へ戻る。元の
-   * アーカイブなら、解析の結果から除く。読み直さない。
+   * 整理して出来たファイルなら、その行は整理する前の姿へ戻り、チェックも
+   * 外す（消した本をまた作らない）。元のアーカイブなら、解析の結果から除く。
+   * 読み直さない。
+   *
+   * 出来ている本を消したら、同じ巻の残りの番号を先着順に詰め直す（#178）。
+   * 1 冊に絞れば、残った本は番号なしになる。
    */
   const trash = async (target: TrashTarget) => {
     setTrashing(null);
+    changingOutput.current = true;
+    try {
+      await trashAndRenumber(target);
+    } finally {
+      // 終わってから出力先を読み直す。途中で届いた答えは当てていない
+      changingOutput.current = false;
+      setOutputRound((round) => round + 1);
+    }
+  };
+
+  /** ``trash`` の中身。出力先の読み直しは呼び出し側が終わってから行う */
+  const trashAndRenumber = async (target: TrashTarget) => {
     try {
       await client.trashFile(target.path);
     } catch (error) {
       setStatus(sidecarReason(error));
       return;
     }
+    const madeBook = finished.find((book) => book.path === target.path);
+    if (madeBook) {
+      setDecisions((current) =>
+        toggleLeaves(current, [bookId(madeBook)], false),
+      );
+    }
     setFinished((current) =>
+      current.filter((book) => book.path !== target.path),
+    );
+    setOutputBooks((current) =>
       current.filter((book) => book.path !== target.path),
     );
     setAnalysis((current) => withoutPaths(current, [target.path]));
@@ -873,6 +980,31 @@ export function OrganizePanel({
       onSourcesChange(sources.filter((path) => path !== target.path));
     }
     setStatus(`${baseName(target.path)} をごみ箱へ移しました`);
+    if (!doneBooks.some((book) => book.path === target.path)) return;
+    const renames = renumbering(
+      doneBooks.map((book) => book.path).filter((path) => path !== target.path),
+      target.path,
+    );
+    if (renames.length > 0) {
+      try {
+        await client.renameFiles(renames);
+        const moved = new Map(
+          renames.map((rename) => [rename.source, rename.target]),
+        );
+        // 読み直しを待たずに新しい名前で出す
+        const rename = <T extends { path: string }>(book: T): T => {
+          const next = moved.get(book.path);
+          return next ? { ...book, path: next } : book;
+        };
+        setFinished((current) => current.map(rename));
+        setOutputBooks((current) => current.map(rename));
+        setStatus(
+          `${baseName(target.path)} をごみ箱へ移し、同じ巻の残りの番号を詰め直しました`,
+        );
+      } catch (error) {
+        setStatus(sidecarReason(error));
+      }
+    }
   };
 
   /**
@@ -1061,7 +1193,7 @@ export function OrganizePanel({
               !status && !analysis.running && (titleMissing || authorMissing)
             }
             onToggleAll={toggleAll}
-            oneEach={oneEachState(rows, off)}
+            oneEach={oneEachState(rows, off, made)}
             onToggleOneEach={toggleOneEach}
             onRun={run}
             onCancel={cancel}

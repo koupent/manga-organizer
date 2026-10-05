@@ -1281,6 +1281,112 @@
         }
       }
     },
+    "/api/output/books": {
+      "post": {
+        "summary": "Output Books",
+        "description": "出力先に既にある、同じ作品の本を並べる（#178）。\n\n整理の一覧がこれを先着として数え、これから作る本の番号を予告する。\n出力先の中身を見ないで予告すると、実際には上書きを避けて別の番号で\n出来上がり、予告と食い違う。",
+        "operationId": "output_books_api_output_books_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutputBooksRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutputBooksView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/rename": {
+      "post": {
+        "summary": "Rename",
+        "description": "同じ巻の本の番号を詰め直すため、名前をまとめて付け替える（#178）。\n\n触れるのは、ごみ箱と同じく読んでよい場所か、この起動で選んだ出力先の\n中の ZIP だけ。付け替えは同じフォルダの中に限り、付け替えないファイルを\n上書きすることはない。",
+        "operationId": "rename_api_files_rename_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenamedView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/organize": {
       "post": {
         "summary": "Submit Organize",
@@ -2136,6 +2242,84 @@
         "title": "OriginalView",
         "description": "いま見ている 1 枚の、加工前の姿。\n\nZIP 内のどのエントリに入っているかは返さない。返すと、書き換えられた\nmanifest を使って画面からアーカイブ内の任意のエントリを読ませる道ができる。\n画面が要るのは「どれだけ広い絵が残っているか」と「前回どこを選んだか」だけ。"
       },
+      "OutputBookView": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "本のファイルの絶対パス"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume",
+            "description": "巻数。Unknown の本は null"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size",
+            "description": "ファイルの大きさ（バイト）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "volume",
+          "size"
+        ],
+        "title": "OutputBookView",
+        "description": "出力先にある、整理の規則どおりの名前の本 1 冊"
+      },
+      "OutputBooksRequest": {
+        "properties": {
+          "output_directory": {
+            "type": "string",
+            "title": "Output Directory",
+            "description": "出力先の絶対パス"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "作品名"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author",
+            "description": "著者名"
+          }
+        },
+        "type": "object",
+        "required": [
+          "output_directory",
+          "title",
+          "author"
+        ],
+        "title": "OutputBooksRequest",
+        "description": "出力先に既にある本を尋ねる（#178）"
+      },
+      "OutputBooksView": {
+        "properties": {
+          "books": {
+            "items": {
+              "$ref": "#/components/schemas/OutputBookView"
+            },
+            "type": "array",
+            "title": "Books"
+          }
+        },
+        "type": "object",
+        "required": [
+          "books"
+        ],
+        "title": "OutputBooksView",
+        "description": "出力先の作品フォルダにある本。名前の順"
+      },
       "OutputRootRequest": {
         "properties": {
           "directory": {
@@ -2219,6 +2403,61 @@
         ],
         "title": "PageView",
         "description": "ページ 1 枚の情報"
+      },
+      "RenameItem": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "今の絶対パス"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target",
+            "description": "付け替え先の絶対パス。同じフォルダの中に限る"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target"
+        ],
+        "title": "RenameItem",
+        "description": "ファイル 1 つの付け替え"
+      },
+      "RenameRequest": {
+        "properties": {
+          "renames": {
+            "items": {
+              "$ref": "#/components/schemas/RenameItem"
+            },
+            "type": "array",
+            "title": "Renames"
+          }
+        },
+        "type": "object",
+        "required": [
+          "renames"
+        ],
+        "title": "RenameRequest",
+        "description": "まとめて行う名前の付け替え（#178）"
+      },
+      "RenamedView": {
+        "properties": {
+          "renames": {
+            "items": {
+              "$ref": "#/components/schemas/RenameItem"
+            },
+            "type": "array",
+            "title": "Renames"
+          }
+        },
+        "type": "object",
+        "required": [
+          "renames"
+        ],
+        "title": "RenamedView",
+        "description": "付け替えたファイル"
       },
       "ReorderRequest": {
         "properties": {

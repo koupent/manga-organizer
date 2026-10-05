@@ -31,6 +31,14 @@ type OutputRoot =
   paths["/api/output-roots"]["post"]["responses"][200]["content"]["application/json"];
 type Trashed =
   paths["/api/files/trash"]["post"]["responses"][200]["content"]["application/json"];
+type OutputBooks =
+  paths["/api/output/books"]["post"]["responses"][200]["content"]["application/json"];
+/** 出力先に既にある、整理の規則どおりの名前の本 1 冊（#178） */
+export type OutputBook = OutputBooks["books"][number];
+type Renamed =
+  paths["/api/files/rename"]["post"]["responses"][200]["content"]["application/json"];
+/** ファイル 1 つの名前の付け替え（#178） */
+export type Rename = Renamed["renames"][number];
 type LibraryEntries =
   paths["/api/library/entries"]["get"]["responses"][200]["content"]["application/json"];
 /** 辞書の 1 件。作品名と著者の対 */
@@ -244,6 +252,25 @@ export class SidecarClient {
   /** ファイルをごみ箱へ移す（#164）。消す前の確認は呼び出す側が済ませる */
   trashFile(path: string): Promise<Trashed> {
     return this.post<Trashed>("/api/files/trash", { path });
+  }
+
+  /** 出力先の作品フォルダに既にある本（#178）。番号を先着として数えるのに使う */
+  async outputBooks(
+    outputDirectory: string,
+    title: string,
+    author: string,
+  ): Promise<OutputBook[]> {
+    const found = await this.post<OutputBooks>("/api/output/books", {
+      output_directory: outputDirectory,
+      title,
+      author,
+    });
+    return found.books;
+  }
+
+  /** 同じフォルダの中で名前をまとめて付け替える（#178）。番号の詰め直しに使う */
+  renameFiles(renames: Rename[]): Promise<Renamed> {
+    return this.post<Renamed>("/api/files/rename", { renames });
   }
 
   /**

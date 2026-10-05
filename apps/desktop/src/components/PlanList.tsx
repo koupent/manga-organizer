@@ -51,6 +51,12 @@ export function issueLabel(issue: string): string {
 }
 
 /** 整理済みの印の説明。何をもって整理済みなのかを行に乗せると出す */
+/**
+ * 同じ巻が重なって ``_1`` などの番号が付いた名前（#178）。整理が作る名前
+ * （``… 第003巻_1.zip`` / ``… Unknown_1.zip``）だけを見る
+ */
+const NUMBERED = /(?:巻|Unknown)_\d+\.zip$/;
+
 const ORGANIZED_TIP =
   "整理済み: 名前・ページ・置き場所が、この道具が作る形と一致しています";
 
@@ -369,6 +375,7 @@ const PlanListRow = memo(function PlanListRow({
       data-organized={String(row.organized)}
       data-organized-reason={row.organizedReason}
       data-made={madePath}
+      data-existing={row.existing || undefined}
       // 印を出さない理由でも、行に乗せれば何が違うのかを読める。
       // 整理済みの行には説明を付けない（印そのものが説明を持っている）
       title={finished ? undefined : reasonTip(row) || undefined}
@@ -413,11 +420,14 @@ const PlanListRow = memo(function PlanListRow({
               dim,
             )}
             style={{ width: ORIGIN_WIDTH_PX - (row.level - 1) * INDENT_PX }}
-            title={[basename(row.source), row.entry]
-              .filter(Boolean)
-              .join(" / ")}
+            title={
+              row.existing
+                ? undefined
+                : [basename(row.source), row.entry].filter(Boolean).join(" / ")
+            }
           >
-            <Origin row={row} corrected={corrected} />
+            {/* 出力先に既にある本は、元の名前を持たない（#178） */}
+            {row.existing ? null : <Origin row={row} corrected={corrected} />}
           </span>
           <ArrowRight
             data-testid="volume-arrow"
@@ -473,6 +483,8 @@ const PlanListRow = memo(function PlanListRow({
         <RowStatus
           row={row}
           finished={finished}
+          // 番号の付いた名前で出来ている本は、同じ巻の重複（#178）
+          numbered={madePath !== undefined && NUMBERED.test(name)}
           sameVolume={sameVolume}
           collided={collided}
           dim={dim}
@@ -528,6 +540,7 @@ const PlanListRow = memo(function PlanListRow({
 function RowStatus({
   row,
   finished,
+  numbered,
   sameVolume,
   collided,
   dim,
@@ -535,10 +548,31 @@ function RowStatus({
   row: PlanRow;
   /** 整理済みか。整理して出来た本も含む（#160） */
   finished: boolean;
+  /** 出来ている本が ``_1`` などの番号付きの名前か（#178） */
+  numbered: boolean;
   sameVolume?: number;
   collided: boolean;
   dim?: string;
 }) {
+  if (numbered) {
+    const text =
+      (sameVolume
+        ? `同じ巻の本が ${sameVolume} 冊あります。番号の付いた本は重複です`
+        : "番号の付いた名前です") +
+      "。残す本を決めたら、要らない本をごみ箱へ移してください。残りの番号は詰め直します";
+    return (
+      <span
+        data-testid="plan-row-warning"
+        data-duplicate
+        role="img"
+        aria-label={text}
+        title={text}
+        className="flex cursor-help items-center text-warn"
+      >
+        <TriangleAlert className="size-3.5" />
+      </span>
+    );
+  }
   if (finished)
     return (
       <Badge tone="ok" data-testid="plan-row-state" title={ORGANIZED_TIP}>
@@ -583,7 +617,7 @@ function rowWarnings(
     lines.push(
       `同じ巻の本が ${sameVolume} 冊あります` +
         (collided
-          ? "。チェックの入った本どうしで名前が重なるので、後から選んだ本に _1 などを付けます"
+          ? "。名前が重なるので、後から作る本に _1 などの番号を付けます"
           : ""),
     );
   else if (collided) lines.push(issueLabel(VOLUME_DUPLICATE));

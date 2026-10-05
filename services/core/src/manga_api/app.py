@@ -74,6 +74,7 @@ from manga_core.original_store import (
     read_original,
     recorded_edits,
 )
+from manga_core.output_books import list_output_books, rename_files
 from manga_core.page_reorder import PageReorderError
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,47 @@ class TrashedView(BaseModel):
     """ごみ箱へ移したファイル"""
 
     path: str = Field(description="ごみ箱へ移したファイル（辿り直した絶対パス）")
+
+
+class OutputBooksRequest(BaseModel):
+    """出力先に既にある本を尋ねる（#178）"""
+
+    output_directory: str = Field(description="出力先の絶対パス")
+    title: str = Field(description="作品名")
+    author: str = Field(description="著者名")
+
+
+class OutputBookView(BaseModel):
+    """出力先にある、整理の規則どおりの名前の本 1 冊"""
+
+    path: str = Field(description="本のファイルの絶対パス")
+    volume: int | None = Field(description="巻数。Unknown の本は null")
+    size: int = Field(description="ファイルの大きさ（バイト）")
+
+
+class OutputBooksView(BaseModel):
+    """出力先の作品フォルダにある本。名前の順"""
+
+    books: list[OutputBookView]
+
+
+class RenameItem(BaseModel):
+    """ファイル 1 つの付け替え"""
+
+    source: str = Field(description="今の絶対パス")
+    target: str = Field(description="付け替え先の絶対パス。同じフォルダの中に限る")
+
+
+class RenameRequest(BaseModel):
+    """まとめて行う名前の付け替え（#178）"""
+
+    renames: list[RenameItem]
+
+
+class RenamedView(BaseModel):
+    """付け替えたファイル"""
+
+    renames: list[RenameItem]
 
 
 class BrowseEntry(BaseModel):
@@ -862,6 +904,62 @@ def create_app(
                 detail=f"ごみ箱へ移せませんでした: {error}",
             ) from error
         return TrashedView(path=str(path))
+
+    @app.post("/api/output/books", dependencies=guarded, response_model=OutputBooksView)
+    def output_books(request: OutputBooksRequest) -> OutputBooksView:
+        """出力先に既にある、同じ作品の本を並べる（#178）。
+
+        整理の一覧がこれを先着として数え、これから作る本の番号を予告する。
+        出力先の中身を見ないで予告すると、実際には上書きを避けて別の番号で
+        出来上がり、予告と食い違う。
+        """
+        directory = resolve_output_directory(request.output_directory)
+        return OutputBooksView(
+            books=[
+                OutputBookView(path=str(book.path), volume=book.volume, size=book.size)
+                for book in list_output_books(directory, request.author, request.title)
+            ]
+        )
+
+    @app.post("/api/files/rename", dependencies=guarded, response_model=RenamedView)
+    def rename(request: RenameRequest) -> RenamedView:
+        """同じ巻の本の番号を詰め直すため、名前をまとめて付け替える（#178）。
+
+        触れるのは、ごみ箱と同じく読んでよい場所か、この起動で選んだ出力先の
+        中の ZIP だけ。付け替えは同じフォルダの中に限り、付け替えないファイルを
+        上書きすることはない。
+        """
+        renames: list[tuple[Path, Path]] = []
+        for item in request.renames:
+            source = Path(item.source).resolve()
+            target = Path(item.target).resolve()
+            for path in (source, target):
+                if not (
+                    path_guard.within_allowed(path)
+                    or app.state.chosen_output_roots.allows(path)
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="対象外のディレクトリです",
+                    )
+            renames.append((source, target))
+        try:
+            rename_files(renames)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+            ) from error
+        except OSError as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"名前を付け替えられませんでした: {error}",
+            ) from error
+        return RenamedView(
+            renames=[
+                RenameItem(source=str(source), target=str(target))
+                for source, target in renames
+            ]
+        )
 
     @app.post(
         "/api/jobs/organize",
