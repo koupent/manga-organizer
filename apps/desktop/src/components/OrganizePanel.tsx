@@ -200,6 +200,9 @@ export function OrganizePanel({
   // 変わったら、合図を進めて読み直す
   const [outputBooks, setOutputBooks] = useState<OutputBook[]>([]);
   const [outputRound, setOutputRound] = useState(0);
+  // ごみ箱へ移して番号を付け替えている最中か。この間に届いた読み直しの答えは
+  // 当てない。付け替える前の答えに、付け替えた名前を重ねて当てることになる
+  const changingOutput = useRef(false);
 
   // ごみ箱へ移そうとしている本のファイル。確かめる窓が開いている間だけ在る（#164）
   const [trashing, setTrashing] = useState<TrashTarget | null>(null);
@@ -466,7 +469,7 @@ export function OrganizePanel({
       client
         .outputBooks(outputDirectory, title, author)
         .then((found) => {
-          if (alive) setOutputBooks(found);
+          if (alive && !changingOutput.current) setOutputBooks(found);
         })
         // 出力先を選び直す前などは断られる。一覧に出ないだけで、整理はできる
         .catch(() => {
@@ -942,6 +945,18 @@ export function OrganizePanel({
    */
   const trash = async (target: TrashTarget) => {
     setTrashing(null);
+    changingOutput.current = true;
+    try {
+      await trashAndRenumber(target);
+    } finally {
+      // 終わってから出力先を読み直す。途中で届いた答えは当てていない
+      changingOutput.current = false;
+      setOutputRound((round) => round + 1);
+    }
+  };
+
+  /** ``trash`` の中身。出力先の読み直しは呼び出し側が終わってから行う */
+  const trashAndRenumber = async (target: TrashTarget) => {
     try {
       await client.trashFile(target.path);
     } catch (error) {
@@ -990,7 +1005,6 @@ export function OrganizePanel({
         setStatus(sidecarReason(error));
       }
     }
-    setOutputRound((round) => round + 1);
   };
 
   /**

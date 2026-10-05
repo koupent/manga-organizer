@@ -79,6 +79,17 @@ test("出力先にある同じ巻を先着として一覧に出し、次の番�
       body: JSON.stringify({ author: null, candidates: [] }),
     }),
   );
+  // 出力先の読み直しと付け替えを遅らせ、読み直しの答えが付け替えの最中に
+  // 届く順にする。届いた答えに付け替えを重ねて当てると、行が二重に出る
+  await page.route("**/api/output/books*", async (route) => {
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.fulfill({ response });
+  });
+  await page.route("**/api/files/rename*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue();
+  });
   await page.goto(
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=organize&output=${encodeURIComponent(output)}`,
