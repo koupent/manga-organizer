@@ -469,9 +469,30 @@ test.describe("整理画面", () => {
     );
     expect(producedFiles(output)).toEqual([]);
 
+    // Assert - 理由は警告として見せ、空の欄そのものにも印を付ける（#175）。
+    // 灰色の文字だけだと、解析を待っているだけだと取り違える
+    await expect(page.getByTestId("organize-status")).toHaveAttribute(
+      "data-warning",
+      "true",
+    );
+    const title = page.getByTestId("organize-title");
+    const author = page.getByTestId("organize-author");
+    const series = page.getByTestId("series-info");
+    await expect(title).toHaveAttribute("aria-invalid", "true");
+    await expect(author).toHaveAttribute("aria-invalid", "true");
+    await expect(series.getByTestId("organize-missing")).toHaveCount(2);
+
     // Assert - 埋めれば押せるようになる。常に無効な実装で通らないようにする
     await fillMangaInfo(page, "埋めた作品", "埋めた著者");
     await expect(page.getByTestId("confirm")).toBeEnabled();
+
+    // Assert - 埋めた欄からは印が消え、理由も警告ではなくなる
+    await expect(series.getByTestId("organize-missing")).toHaveCount(0);
+    await expect(title).not.toHaveAttribute("aria-invalid");
+    await expect(author).not.toHaveAttribute("aria-invalid");
+    await expect(page.getByTestId("organize-status")).not.toHaveAttribute(
+      "data-warning",
+    );
   });
 
   /*

@@ -4,6 +4,7 @@ import type { Update } from "@tauri-apps/plugin-updater";
 import { isTauri } from "../connection";
 import { Alert } from "./ui/alert";
 import { Button } from "./ui/button";
+import { Progress } from "./ui/progress";
 
 type Phase = "offered" | "downloading" | "installing" | "failed";
 
@@ -21,8 +22,11 @@ export async function findUpdate(): Promise<Update | null> {
 
 type UpdateNoticeProps = {
   update: Update;
-  /** 「あとで」。設定の「更新を確認」から、また出し直せる */
-  onDismiss: () => void;
+  /**
+   * 「あとで」。設定の「更新を確認」から、また出し直せる。設定の中に出す
+   * ときは渡さない（閉じれば済む）
+   */
+  onDismiss?: () => void;
 };
 
 /**
@@ -89,7 +93,12 @@ export function UpdateNotice({ update, onDismiss }: UpdateNoticeProps) {
           </details>
         ) : null}
         {phase === "downloading" ? (
-          <span className="tabular text-[12px]">ダウンロード中 {percent}%</span>
+          <div className="flex flex-col gap-1">
+            <span className="tabular text-[12px]">
+              ダウンロード中 {percent}%
+            </span>
+            <Progress data-testid="update-progress" value={percent} />
+          </div>
         ) : null}
         {phase === "installing" ? (
           <span className="text-[12px]">
@@ -106,9 +115,11 @@ export function UpdateNotice({ update, onDismiss }: UpdateNoticeProps) {
             <RefreshCw />
             更新する
           </Button>
-          <Button variant="ghost" onClick={onDismiss}>
-            あとで
-          </Button>
+          {onDismiss ? (
+            <Button variant="ghost" onClick={onDismiss}>
+              あとで
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </Alert>

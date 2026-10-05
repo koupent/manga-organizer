@@ -912,6 +912,11 @@ export function OrganizePanel({
       ? analysisStatus
       : problems.join(" / ");
   const blocked = blockedBy !== "";
+  // 作品名・著者が要るのに空の欄（#175）。欄そのものに印を付ける。押せない
+  // 理由が主操作の横だけだと、解析が終わっていないのと見分けにくい
+  const nameRequired = keptLeafCount > 0 && needsName && !running;
+  const titleMissing = nameRequired && !title.trim();
+  const authorMissing = nameRequired && !author.trim();
 
   /**
    * 主操作の行に出す 1 行。
@@ -971,6 +976,8 @@ export function OrganizePanel({
           sourceCount={sources.length}
           keptLeafCount={keptLeafCount}
           namelessCount={namelessCount}
+          titleMissing={titleMissing}
+          authorMissing={authorMissing}
           onChangeTitle={changeTitle}
           onTypeAuthor={typeAuthor}
           onChooseAuthor={chooseAuthor}
@@ -1050,6 +1057,9 @@ export function OrganizePanel({
             partial={analysis.running ? analysis.reading : 0}
             running={running}
             blocked={blocked}
+            warning={
+              !status && !analysis.running && (titleMissing || authorMissing)
+            }
             onToggleAll={toggleAll}
             oneEach={oneEachState(rows, off)}
             onToggleOneEach={toggleOneEach}

@@ -2,7 +2,7 @@ import { RefreshCw, Settings, X } from "lucide-react";
 import { useState } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { isTauri } from "../connection";
-import { findUpdate } from "./UpdateNotice";
+import { findUpdate, UpdateNotice } from "./UpdateNotice";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -17,21 +17,17 @@ type Check =
   | { state: "idle" }
   | { state: "checking" }
   | { state: "latest" }
-  | { state: "found"; version: string }
+  | { state: "found"; update: Update }
   | { state: "failed"; reason: string };
-
-type SettingsDialogProps = {
-  /** 新しい版が見つかった。画面上部の案内を出し直す */
-  onUpdateFound: (update: Update) => void;
-};
 
 /**
  * 設定（#136）。普段は見なくてよいものを、作業の画面から外してここに置く。
  *
  * いまは版の確認だけ。起動時の更新の案内を「あとで」で閉じたあとも、
- * アプリを開いたまま確かめ直せるようにする。
+ * アプリを開いたまま確かめ直せるようにする。見つかった版は、設定を閉じずに
+ * その場で入れ替えられる（#176）
  */
-export function SettingsDialog({ onUpdateFound }: SettingsDialogProps) {
+export function SettingsDialog() {
   const [check, setCheck] = useState<Check>({ state: "idle" });
   const desktop = isTauri();
 
@@ -43,8 +39,7 @@ export function SettingsDialog({ onUpdateFound }: SettingsDialogProps) {
         setCheck({ state: "latest" });
         return;
       }
-      setCheck({ state: "found", version: found.version });
-      onUpdateFound(found);
+      setCheck({ state: "found", update: found });
     } catch (reason) {
       setCheck({
         state: "failed",
@@ -125,12 +120,13 @@ export function SettingsDialog({ onUpdateFound }: SettingsDialogProps) {
                 ? "確認しています..."
                 : check.state === "latest"
                   ? "最新の版です"
-                  : check.state === "found"
-                    ? `新しい版 v${check.version} があります。画面上部の案内から更新できます`
-                    : check.state === "failed"
-                      ? `確認できませんでした: ${check.reason}`
-                      : ""}
+                  : check.state === "failed"
+                    ? `確認できませんでした: ${check.reason}`
+                    : ""}
           </p>
+          {check.state === "found" ? (
+            <UpdateNotice update={check.update} />
+          ) : null}
         </section>
       </DialogContent>
     </Dialog>
