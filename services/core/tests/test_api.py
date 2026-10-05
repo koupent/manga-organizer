@@ -37,7 +37,7 @@ def make_page(color: str = "navy") -> bytes:
 # いま公開している /api/ の経路数。経路を app.routes から数え直すテストが
 # 「1 つも見つからないまま合格」する空振りに落ちないための下限。経路を
 # 増やしたらここも上げる
-PUBLISHED_API_ROUTE_COUNT = 23
+PUBLISHED_API_ROUTE_COUNT = 25
 
 # パスらしい引数を名前で見分ける手がかり。名前で拾う以上、これに当たらない
 # 名前を付けられれば見落とすので、拾いすぎる側に倒してある
@@ -365,6 +365,15 @@ class AllowedRootsTest(ApiTestBase):
             ),
             GuardedCase("POST", "/api/edits", "paths", body(), "path_list", 200),
             GuardedCase("POST", "/api/files/trash", "path", body(), "file", 200),
+            # 出力先に既にある本（#178）。整理と同じく、選んだ出力先の中だけ
+            GuardedCase(
+                "POST",
+                "/api/output/books",
+                "output_directory",
+                body(title="作品", author="著者"),
+                "output_directory",
+                200,
+            ),
             GuardedCase(
                 "POST",
                 "/api/jobs/organize",

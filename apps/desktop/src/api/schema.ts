@@ -523,6 +523,54 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/output/books": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Output Books
+     * @description 出力先に既にある、同じ作品の本を並べる（#178）。
+     *
+     *     整理の一覧がこれを先着として数え、これから作る本の番号を予告する。
+     *     出力先の中身を見ないで予告すると、実際には上書きを避けて別の番号で
+     *     出来上がり、予告と食い違う。
+     */
+    post: operations["output_books_api_output_books_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/files/rename": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rename
+     * @description 同じ巻の本の番号を詰め直すため、名前をまとめて付け替える（#178）。
+     *
+     *     触れるのは、ごみ箱と同じく読んでよい場所か、この起動で選んだ出力先の
+     *     中の ZIP だけ。付け替えは同じフォルダの中に限り、付け替えないファイルを
+     *     上書きすることはない。
+     */
+    post: operations["rename_api_files_rename_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/jobs/organize": {
     parameters: {
       query?: never;
@@ -967,6 +1015,56 @@ export interface components {
       operations: components["schemas"]["OperationView"][];
     };
     /**
+     * OutputBookView
+     * @description 出力先にある、整理の規則どおりの名前の本 1 冊
+     */
+    OutputBookView: {
+      /**
+       * Path
+       * @description 本のファイルの絶対パス
+       */
+      path: string;
+      /**
+       * Volume
+       * @description 巻数。Unknown の本は null
+       */
+      volume: number | null;
+      /**
+       * Size
+       * @description ファイルの大きさ（バイト）
+       */
+      size: number;
+    };
+    /**
+     * OutputBooksRequest
+     * @description 出力先に既にある本を尋ねる（#178）
+     */
+    OutputBooksRequest: {
+      /**
+       * Output Directory
+       * @description 出力先の絶対パス
+       */
+      output_directory: string;
+      /**
+       * Title
+       * @description 作品名
+       */
+      title: string;
+      /**
+       * Author
+       * @description 著者名
+       */
+      author: string;
+    };
+    /**
+     * OutputBooksView
+     * @description 出力先の作品フォルダにある本。名前の順
+     */
+    OutputBooksView: {
+      /** Books */
+      books: components["schemas"]["OutputBookView"][];
+    };
+    /**
      * OutputRootRequest
      * @description 出力先として選んだ場所を伝える依頼
      */
@@ -1014,6 +1112,38 @@ export interface components {
       size: number;
       /** Modified */
       modified: string;
+    };
+    /**
+     * RenameItem
+     * @description ファイル 1 つの付け替え
+     */
+    RenameItem: {
+      /**
+       * Source
+       * @description 今の絶対パス
+       */
+      source: string;
+      /**
+       * Target
+       * @description 付け替え先の絶対パス。同じフォルダの中に限る
+       */
+      target: string;
+    };
+    /**
+     * RenameRequest
+     * @description まとめて行う名前の付け替え（#178）
+     */
+    RenameRequest: {
+      /** Renames */
+      renames: components["schemas"]["RenameItem"][];
+    };
+    /**
+     * RenamedView
+     * @description 付け替えたファイル
+     */
+    RenamedView: {
+      /** Renames */
+      renames: components["schemas"]["RenameItem"][];
     };
     /**
      * ReorderRequest
@@ -2033,6 +2163,78 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["TrashedView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  output_books_api_output_books_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OutputBooksRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OutputBooksView"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  rename_api_files_rename_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RenameRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RenamedView"];
         };
       };
       /** @description Validation Error */
