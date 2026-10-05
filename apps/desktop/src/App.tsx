@@ -38,10 +38,12 @@ const FLASH_MS = 600;
 const BATCH_MODES: { id: Mode; label: string }[] = [
   { id: "organize", label: "ファイル整理" },
 ];
+// 使う順に並べる。ページ並べ替えは、読んでいて並びのおかしさに気づいたときに
+// 使うもので、整理した直後にはまず使わない。だから最後（#173）
 const BOOK_MODES: { id: Mode; label: string }[] = [
   { id: "thumbnail", label: "サムネイル作成" },
-  { id: "reorder", label: "ページ並べ替え" },
   { id: "split", label: "ページ分割・結合" },
+  { id: "reorder", label: "ページ並べ替え" },
 ];
 const MODES = [...BATCH_MODES, ...BOOK_MODES];
 

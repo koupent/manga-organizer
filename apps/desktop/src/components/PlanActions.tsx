@@ -9,6 +9,8 @@ import { Progress } from "./ui/progress";
 type PlanActionsProps = {
   rows: PlanRow[];
   excluded: ReadonlySet<string>;
+  /** 整理して出来た本。全体のチェックの三態には数えない（#172） */
+  done: { has(id: string): boolean };
   /** 押したら何が起きるか、あるいは押せない理由 */
   status: string;
   /**
@@ -52,6 +54,7 @@ type PlanActionsProps = {
 export function PlanActions({
   rows,
   excluded,
+  done,
   status,
   statusTitle,
   issues,
@@ -65,7 +68,7 @@ export function PlanActions({
   onRun,
   onCancel,
 }: PlanActionsProps) {
-  const master = masterCheckState(rows, excluded);
+  const master = masterCheckState(rows, excluded, done);
   const percent =
     progress.total > 0
       ? Math.min(100, ((progress.current + partial) / progress.total) * 100)

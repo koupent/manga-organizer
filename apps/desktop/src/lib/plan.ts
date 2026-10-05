@@ -650,20 +650,36 @@ function stateOfLeaves(leaves: string[], off: ReadonlySet<string>): CheckState {
   return "indeterminate";
 }
 
+/**
+ * もう処理の対象ではない葉（整理して出来た本、#172）。三態を数えるときは
+ * 入れない。数えると、出来た本の入った入れ物がずっと「一部」に見える
+ */
+type Done = { has(id: string): boolean };
+
+const NOTHING_DONE: Done = new Set<string>();
+
 /** 行の三態。下の一部だけが残っていれば混在になる */
 export function checkStateOf(
   row: PlanRow,
   off: ReadonlySet<string>,
+  done: Done = NOTHING_DONE,
 ): CheckState {
-  return stateOfLeaves(row.leaves, off);
+  return stateOfLeaves(
+    row.leaves.filter((leaf) => !done.has(leaf)),
+    off,
+  );
 }
 
 /** 一覧全体の三態。主操作の行に置くチェックが読む */
 export function masterCheckState(
   rows: PlanRow[],
   off: ReadonlySet<string>,
+  done: Done = NOTHING_DONE,
 ): CheckState {
-  return stateOfLeaves(allLeaves(rows), off);
+  return stateOfLeaves(
+    allLeaves(rows).filter((leaf) => !done.has(leaf)),
+    off,
+  );
 }
 
 /** 一覧に出ている葉すべて。重複はこの時点で落とす */

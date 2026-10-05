@@ -108,5 +108,5 @@ test("行き先が自分自身の本は、整理するとその場で直り、�
     "true",
     { timeout: 60_000 },
   );
-  await expect(row.getByTestId("plan-row-reason")).toHaveCount(0);
+  await expect(row.getByTestId("plan-row-warning")).toHaveCount(0);
 });

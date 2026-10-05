@@ -14,15 +14,15 @@ export type HandoffMode = "thumbnail" | "reorder" | "split";
 /** 本ごとの編集済みの種類（サイドカーの /api/edits）。鍵は本のパス */
 export type EditMarks = Readonly<Record<string, readonly string[]>>;
 
-/** 近道の並び。1 冊を編集する 3 画面と同じ順にする */
+/** 近道の並び。1 冊を編集する 3 画面のタブと同じ順にする（#173） */
 const SHORTCUTS: readonly {
   mode: HandoffMode;
   icon: LucideIcon;
   action: string;
 }[] = [
   { mode: "thumbnail", icon: ImageIcon, action: "サムネイルを作る" },
-  { mode: "reorder", icon: ListOrdered, action: "ページを並べ替える" },
   { mode: "split", icon: Columns2, action: "ページを分割・結合する" },
+  { mode: "reorder", icon: ListOrdered, action: "ページを並べ替える" },
 ];
 
 /**
