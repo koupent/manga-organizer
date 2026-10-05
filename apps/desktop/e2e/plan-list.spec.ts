@@ -924,4 +924,98 @@ test.describe("解析した本の一覧", () => {
       ),
     );
   });
+
+  test("「同じ巻は 1 冊」で、同じ巻を全部入れる・大きい 1 冊に絞るをまとめて切り替える（#169）", async ({
+    page,
+  }) => {
+    // Arrange - 1 巻が 3 つ（大きいのは b）、2 巻が 2 つ（大きいのは d）
+    const name = "まとめて重複";
+    const folder = join(sidecar.workDir, name);
+    mkdirSync(folder, { recursive: true });
+    const pages = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        name: `${String(index + 1).padStart(3, "0")}.jpg`,
+        color: "#996633",
+      }));
+    writeArchive(sidecar.workDir, join(name, "a_01.zip"), pages(1));
+    writeArchive(sidecar.workDir, join(name, "b_01.zip"), pages(5));
+    writeArchive(sidecar.workDir, join(name, "c_01.zip"), pages(2));
+    writeArchive(sidecar.workDir, join(name, "d_02.zip"), pages(4));
+    writeArchive(sidecar.workDir, join(name, "e_02.zip"), pages(1));
+    const output = join(sidecar.workDir, "out-まとめて重複");
+    mkdirSync(output, { recursive: true });
+    await openOrganize(page, output);
+    await fillMangaInfo(page, "まとめて重複の作品");
+    await addFolder(page, name);
+    await waitForBooks(page, 5);
+    const oneEach = page.getByTestId("plan-one-each");
+    const checked = async () =>
+      (
+        await page
+          .locator('[data-testid="plan-row"][data-kind="book"]')
+          .evaluateAll((nodes) =>
+            nodes
+              .filter(
+                (node) =>
+                  node
+                    .querySelector('[data-testid="plan-check"]')
+                    ?.getAttribute("aria-checked") === "true",
+              )
+              .map((node) =>
+                (node.getAttribute("data-source") ?? "").split("/").pop(),
+              ),
+          )
+      ).sort();
+
+    // Assert - 既定で同じ巻は 1 冊ずつなので、チェックは入っている
+    await expect(oneEach).toHaveAttribute("aria-checked", "true");
+    expect(await checked()).toEqual(["b_01.zip", "d_02.zip"]);
+
+    // Act / Assert - 外すと、同じ巻の本が全部入る
+    await oneEach.click();
+    await expect(oneEach).toHaveAttribute("aria-checked", "false");
+    await expect
+      .poll(checked)
+      .toEqual(["a_01.zip", "b_01.zip", "c_01.zip", "d_02.zip", "e_02.zip"]);
+
+    // Act - 2 巻の大きい方（d）を外してから、入れ直す
+    await checkOf(
+      page.locator(
+        '[data-testid="plan-row"][data-kind="book"][data-source$="/d_02.zip"]',
+      ),
+    ).click();
+    await oneEach.click();
+
+    // Assert - 入っている中で一番大きい 1 冊ずつに絞る。外した d は戻さない
+    await expect(oneEach).toHaveAttribute("aria-checked", "true");
+    await expect.poll(checked).toEqual(["b_01.zip", "e_02.zip"]);
+  });
+
+  test("チェックを外した行は、マウスで押した後も薄いまま残る（#170）", async ({
+    page,
+  }) => {
+    // Arrange
+    const title = "薄めの作品";
+    await preparePlan(page, "薄め", title);
+    const row = bookRow(page, volumeName(title, 3));
+
+    // Act - マウスでチェックを外し、行から離れる
+    await checkOf(row).click();
+    await expect(checkOf(row)).toHaveAttribute("aria-checked", "false");
+    await page.mouse.move(0, 0);
+
+    // Assert - チェックに焦点が残っていても、名前は薄めたまま。焦点で
+    // 100% に戻すと、外したばかりの行が入っている行と同じに見える
+    const name = row.getByTestId("plan-row-name");
+    await expect
+      .poll(() => name.evaluate((node) => getComputedStyle(node).opacity))
+      .toBe("0.45");
+
+    // Act / Assert - キーボードで焦点を移したときは 100% に戻る
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect
+      .poll(() => name.evaluate((node) => getComputedStyle(node).opacity))
+      .toBe("1");
+  });
 });
