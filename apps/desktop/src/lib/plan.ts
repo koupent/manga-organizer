@@ -373,10 +373,47 @@ function sortName(book: PlannedBook): string {
   return book.output_name.replace(/_\d+(?=\.zip$)/, "");
 }
 
+/**
+ * 組み直した行のうち、中身が前と同じ行は前の行をそのまま使う（#168）。
+ *
+ * 解析は入れ物を 1 つ読むごとに行を組み直す。行が毎回新しくなると、一覧は
+ * 中身の変わっていない行まで全部描き直し、数千冊では画面が目に見えて固まる。
+ */
+export function reuseRows(
+  previous: readonly PlanRow[],
+  next: PlanRow[],
+): PlanRow[] {
+  const byId = new Map(previous.map((row) => [row.id, row]));
+  return next.map((row) => {
+    const old = byId.get(row.id);
+    return old !== undefined && sameRow(old, row) ? old : row;
+  });
+}
+
+/** 行の中身が同じか。並びの欄は要素ごとに比べる */
+function sameRow(a: PlanRow, b: PlanRow): boolean {
+  return (Object.keys(b) as (keyof PlanRow)[]).every((key) => {
+    const left = a[key];
+    const right = b[key];
+    if (Array.isArray(left) && Array.isArray(right))
+      return (
+        left.length === right.length &&
+        left.every((item, index) => item === right[index])
+      );
+    return left === right;
+  });
+}
+
 /** 名前の並べ方。数字は桁ではなく値で比べる（第2巻を第10巻より先に） */
 function byName(a: string, b: string): number {
-  return a.localeCompare(b, "ja", { numeric: true });
+  return NAME_ORDER.compare(a, b);
 }
+
+/**
+ * 並べ方の物差し。1 度だけ作って使い回す（#168）。``localeCompare`` に言語を
+ * 渡すと呼ぶたびに作り直すので、数千冊を並べると目に見えて遅い
+ */
+const NAME_ORDER = new Intl.Collator("ja", { numeric: true });
 
 /** 名前で並べる。名前が無いもの（本が無い入れ物）は後ろへ */
 function byKey(a: string | undefined, b: string | undefined): number {
@@ -539,6 +576,58 @@ export function keepPicked(
   for (const members of volumeGroups(rows)) {
     if (!members.some((row) => touched.has(row.id))) continue;
     for (const row of members) if (picked.has(row.id)) next.set(row.id, true);
+  }
+  return next;
+}
+
+/**
+ * 同じ巻の本が、どの巻も 1 冊以下しか入っていないか（#169）。主操作の行の
+ * 「同じ巻は 1 冊」のチェックが読む。同じ巻の本が無ければ null
+ */
+export function oneEachState(
+  rows: PlanRow[],
+  off: ReadonlySet<string>,
+): boolean | null {
+  const groups = volumeGroups(rows);
+  if (groups.length === 0) return null;
+  return groups.every(
+    (members) => members.filter((row) => !off.has(row.id)).length <= 1,
+  );
+}
+
+/**
+ * 同じ巻の本をまとめて切り替える（#169）。
+ *
+ * - ``one`` が true: 2 冊以上入っている巻を、入っている中で一番大きい 1 冊に
+ *   絞る。1 冊も入っていない巻は、利用者が外したものなのでそのまま
+ * - ``one`` が false: 同じ巻の本を全部入れる
+ */
+export function setOneEach(
+  rows: PlanRow[],
+  decisions: Decisions,
+  one: boolean,
+): Decisions {
+  const groups = volumeGroups(rows);
+  if (!one) {
+    const leaves = groups.flat().map((row) => row.id);
+    return toggleLeaves(keepPicked(rows, decisions, leaves), leaves, true);
+  }
+  const off = effectiveOff(rows, decisions);
+  let next = decisions;
+  for (const members of groups) {
+    const kept = members.filter((row) => !off.has(row.id));
+    if (kept.length < 2) continue;
+    const best = kept.reduce((top, row) =>
+      (row.size ?? -1) > (top.size ?? -1) ? row : top,
+    );
+    // 残す 1 冊も入れたと覚える。触っていないままだと、外した本と同じ巻の
+    // 別の本が既定で選び直される
+    next = toggleLeaves(next, [best.id], true);
+    next = toggleLeaves(
+      next,
+      kept.filter((row) => row !== best).map((row) => row.id),
+      false,
+    );
   }
   return next;
 }

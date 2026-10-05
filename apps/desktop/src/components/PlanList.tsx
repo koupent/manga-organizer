@@ -9,7 +9,14 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { useRef, useState, type KeyboardEvent } from "react";
+import {
+  memo,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type { FinishedBook } from "../lib/analysis";
 import {
   checkStateOf,
@@ -112,11 +119,13 @@ const ORIGIN_WIDTH_PX = 260;
  * いるのか」の答えが一番読みにくい所へ置かれてしまう。チェック・整理済みの
  * 印・近道はこの装飾を持たず、いつでも 100% で読める。
  *
- * 行に乗せている間（ホバー・焦点）は全部 100% に戻す。外した行でも、読みたい
- * ときには読めるようにするため。
+ * 行に乗せている間（ホバー・キーボードの焦点）は全部 100% に戻す。外した行でも、
+ * 読みたいときには読めるようにするため。焦点はキーボードで移したとき
+ * （``focus-visible``）だけを見る。マウスでチェックを押すとそこに焦点が残るので、
+ * 外したばかりの行が明るいまま残り、入っている行と見分けられなくなる（#170）。
  */
 const DIMMED =
-  "opacity-45 group-hover:opacity-100 group-focus-within:opacity-100";
+  "opacity-45 group-hover:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100";
 
 type PlanListProps = {
   rows: PlanRow[];
@@ -190,18 +199,51 @@ export function PlanList({
   // 増えるので、位置ではなく鍵で覚える
   const anchor = useRef<string | null>(null);
 
-  /** 押した行を切り替える。Shift なら起点からその行までを同じ状態にそろえる */
-  const toggle = (row: PlanRow, keep: boolean, range: boolean) => {
-    const to = rows.indexOf(row);
-    const from = range
-      ? rows.findIndex((item) => item.id === anchor.current)
-      : -1;
-    anchor.current = row.id;
-    onToggle(
-      from < 0 ? [row] : rows.slice(Math.min(from, to), Math.max(from, to) + 1),
-      keep,
-    );
-  };
+  // 行へ渡す関数は 1 度だけ作り、呼ばれたときに最新の props を見る（#168）。
+  // 描き直しのたびに作り直すと、中身の変わっていない行まで全部描き直すことになり、
+  // 本が数千冊あるとチェック 1 つの切り替えでも目に見えて待たされる
+  const latest = useRef({
+    rows,
+    onToggle,
+    onOpenArchive,
+    onTrash,
+    onCorrect,
+    onFill,
+  });
+  useLayoutEffect(() => {
+    latest.current = {
+      rows,
+      onToggle,
+      onOpenArchive,
+      onTrash,
+      onCorrect,
+      onFill,
+    };
+  });
+  const handlers = useMemo<RowHandlers>(
+    () => ({
+      /** 押した行を切り替える。Shift なら起点からその行までを同じ状態にそろえる */
+      toggle: (row, keep, range) => {
+        const { rows, onToggle } = latest.current;
+        const to = rows.indexOf(row);
+        const from = range
+          ? rows.findIndex((item) => item.id === anchor.current)
+          : -1;
+        anchor.current = row.id;
+        onToggle(
+          from < 0
+            ? [row]
+            : rows.slice(Math.min(from, to), Math.max(from, to) + 1),
+          keep,
+        );
+      },
+      openArchive: (path, mode) => latest.current.onOpenArchive(path, mode),
+      trash: (target) => latest.current.onTrash(target),
+      correct: (row, volume) => latest.current.onCorrect(row, volume),
+      fill: (row, volume) => latest.current.onFill(row, volume),
+    }),
+    [],
+  );
 
   return (
     <ul
@@ -221,14 +263,10 @@ export function PlanList({
             name={names.get(row.id) ?? ""}
             outputDirectory={outputDirectory}
             locked={locked}
-            onToggle={toggle}
-            onOpenArchive={onOpenArchive}
-            onTrash={onTrash}
-            edited={edits[madePath ?? row.source] ?? []}
+            handlers={handlers}
+            edited={edits[madePath ?? row.source] ?? NOT_EDITED}
             corrected={corrected.has(row.id)}
             collided={collided.has(row.id)}
-            onCorrect={onCorrect}
-            onFill={onFill}
           />
         );
       })}
@@ -248,17 +286,29 @@ type PlanListRowProps = {
   name: string;
   outputDirectory: string;
   locked: boolean;
-  onToggle: (row: PlanRow, keep: boolean, range: boolean) => void;
-  onOpenArchive: (path: string, mode: HandoffMode) => void;
-  onTrash: (target: TrashTarget) => void;
+  handlers: RowHandlers;
   edited: readonly string[];
   corrected: boolean;
   collided: boolean;
-  onCorrect: (row: PlanRow, volume: number | null) => void;
-  onFill: (row: PlanRow, volume: number) => void;
 };
 
-function PlanListRow({
+/** 行から呼ぶ操作。一覧が 1 度だけ作って全部の行に渡す（#168） */
+type RowHandlers = {
+  toggle: (row: PlanRow, keep: boolean, range: boolean) => void;
+  openArchive: (path: string, mode: HandoffMode) => void;
+  trash: (target: TrashTarget) => void;
+  correct: (row: PlanRow, volume: number | null) => void;
+  fill: (row: PlanRow, volume: number) => void;
+};
+
+/** 編集済みの印が無い本に渡す空の並び。毎回作ると、行の描き直しを省けない */
+const NOT_EDITED: readonly string[] = [];
+
+/**
+ * 一覧の 1 行。props が変わった行だけを描き直す（#168）。本が数千冊あると、
+ * 全部の行を描き直すたびに画面が目に見えて固まる
+ */
+const PlanListRow = memo(function PlanListRow({
   row,
   madePath,
   madeSize,
@@ -267,14 +317,10 @@ function PlanListRow({
   name,
   outputDirectory,
   locked,
-  onToggle,
-  onOpenArchive,
-  onTrash,
+  handlers,
   edited,
   corrected,
   collided,
-  onCorrect,
-  onFill,
 }: PlanListRowProps) {
   const off = state === false;
   // 整理済みでない本は「元 → 結果」で見せ、巻数をその場で直せる（段階 5）
@@ -337,7 +383,9 @@ function PlanListRow({
           if (event.shiftKey) event.preventDefault();
         }}
         // Shift を読むために onClick で受ける。Space で押しても click が来る
-        onClick={(event) => onToggle(row, state !== true, event.shiftKey)}
+        onClick={(event) =>
+          handlers.toggle(row, state !== true, event.shiftKey)
+        }
       />
       <RowIcon kind={row.kind} dim={dim} />
       {correctable ? (
@@ -370,8 +418,8 @@ function PlanListRow({
               row={row}
               corrected={corrected}
               locked={locked}
-              onCorrect={onCorrect}
-              onFill={onFill}
+              onCorrect={handlers.correct}
+              onFill={handlers.fill}
             />
           </span>
         </>
@@ -420,18 +468,18 @@ function PlanListRow({
           path={madePath ?? row.source}
           edited={edited}
           testIdPrefix="plan"
-          onOpen={onOpenArchive}
+          onOpen={handlers.openArchive}
         />
       ) : null}
       {file && !locked ? (
         <Button
           variant="ghost"
           size="icon"
-          className="text-ink-faint opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-danger"
+          className="text-ink-faint opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 hover:text-danger"
           data-testid="plan-trash"
           title={`${name} のファイルをごみ箱へ移す`}
           aria-label={`${name} のファイルをごみ箱へ移す`}
-          onClick={() => onTrash({ ...file, name })}
+          onClick={() => handlers.trash({ ...file, name })}
         >
           <Trash2 />
         </Button>
@@ -447,7 +495,7 @@ function PlanListRow({
       ) : null}
     </li>
   );
-}
+});
 
 /**
  * 行の右側に出す印。整理済み → 直せば整理済みになる理由 → 警告 の順。

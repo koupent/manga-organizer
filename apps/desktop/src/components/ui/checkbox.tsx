@@ -9,16 +9,19 @@ import { cn } from "../../lib/utils";
  * 一部だけ入っている状態は checked に "indeterminate" を渡す。読み上げには
  * Radix が aria-checked="mixed" を出す。印を横棒にするのは、レ点のままだと
  * 「全部入っている」と見分けが付かないため。
+ *
+ * 印は Radix の Indicator を使わず、ボタンの data-state を見て CSS で出し分ける
+ * （#168）。Indicator は付け外しのたびに getComputedStyle で動きの有無を調べる
+ * ので、数千行の一覧ではチェックの数だけスタイルの再計算が走り、画面が固まる。
  */
 export function Checkbox({
   className,
   ...props
 }: ComponentProps<typeof CheckboxPrimitive.Root>) {
-  const mixed = props.checked === "indeterminate";
   return (
     <CheckboxPrimitive.Root
       className={cn(
-        "size-4 shrink-0 rounded border border-line bg-canvas outline-none transition-colors",
+        "group/check flex size-4 shrink-0 items-center justify-center rounded border border-line bg-canvas outline-none transition-colors",
         "hover:border-line-strong focus-visible:ring-2 focus-visible:ring-brand/40",
         "data-[state=checked]:border-brand data-[state=checked]:bg-brand",
         "data-[state=checked]:text-brand-ink",
@@ -28,13 +31,16 @@ export function Checkbox({
       )}
       {...props}
     >
-      <CheckboxPrimitive.Indicator className="flex items-center justify-center">
-        {mixed ? (
-          <Minus className="size-3" strokeWidth={3} />
-        ) : (
-          <Check className="size-3" strokeWidth={3} />
-        )}
-      </CheckboxPrimitive.Indicator>
+      <Check
+        aria-hidden
+        className="hidden size-3 group-data-[state=checked]/check:block"
+        strokeWidth={3}
+      />
+      <Minus
+        aria-hidden
+        className="hidden size-3 group-data-[state=indeterminate]/check:block"
+        strokeWidth={3}
+      />
     </CheckboxPrimitive.Root>
   );
 }

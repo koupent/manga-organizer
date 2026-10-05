@@ -35,9 +35,12 @@ import {
   namelessKeptRows,
   needsSeriesName,
   organizedSkippedCount,
+  oneEachState,
   outputNames,
+  reuseRows,
   sameVolumeCounts,
   selectedBooks,
+  setOneEach,
   toggleLeaves,
   toggleTargets,
   type Decisions,
@@ -107,6 +110,18 @@ const problemKey = () => `problem-${++problemSeq}`;
 /** 経過時間を「分:秒」で書く */
 function elapsedLabel(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/** 解析の途中経過で、入れ物・本・読めなかったものの数が前と同じか（#168） */
+function sameAnalysis(
+  current: Analysis,
+  found: Omit<Analysis, "running" | "settled">,
+): boolean {
+  return (
+    current.containers.length === found.containers.length &&
+    current.books.length === found.books.length &&
+    current.unreadable.length === found.unreadable.length
+  );
 }
 
 function baseName(path: string): string {
@@ -300,22 +315,44 @@ export function OrganizePanel({
             seen = snapshotMark(snapshot);
             // 経過（log）はここで読まない。整理の実行に取っておく。
             // 解析の行を混ぜると、整理で何が起きたのかがその中に埋もれる
-            setAnalysis({
+            const found = analysisResult(snapshot.result);
+            setAnalysis((current) => ({
               running:
                 snapshot.state === "queued" || snapshot.state === "running",
               settled: snapshot.state === "succeeded",
-              ...analysisResult(snapshot.result),
-            });
+              // RAR の中の進み（reading）だけが動いた応答では、入れ物と本の並びを
+              // 前のまま使う（#168）。並びを新しくすると一覧を組み直して全部の行を
+              // 描き直すことになり、大きな RAR を読む間ずっと画面が重くなる。
+              // 1 回の解析の中では入れ物も本も増えるだけなので、数で見分けられる
+              ...(sameAnalysis(current, found)
+                ? {
+                    containers: current.containers,
+                    books: current.books,
+                    unreadable: current.unreadable,
+                  }
+                : found),
+              reading: found.reading,
+            }));
             setProgress({ current: snapshot.current, total: snapshot.total });
           },
           { signal: controller.signal },
         );
         if (!controller.signal.aborted) {
-          setAnalysis({
+          const found = analysisResult(job.result);
+          // 最後の途中経過で本が出そろっていれば、並びを前のまま使う（#168）。
+          // 終わった瞬間に全部の行を描き直さず、主操作がすぐ押せるようにする
+          setAnalysis((current) => ({
             running: false,
             settled: job.state === "succeeded",
-            ...analysisResult(job.result),
-          });
+            ...(sameAnalysis(current, found)
+              ? {
+                  containers: current.containers,
+                  books: current.books,
+                  unreadable: current.unreadable,
+                }
+              : found),
+            reading: found.reading,
+          }));
         }
       })
       .catch((error) => {
@@ -411,16 +448,22 @@ export function OrganizePanel({
     return () => window.clearInterval(timer);
   }, [analysis.running]);
 
-  const analyzedRows = useMemo(
-    () =>
+  // 中身の変わっていない行は前の行をそのまま使い、一覧が描き直さずに済む
+  // ようにする（#168）
+  const previousRows = useRef<PlanRow[]>([]);
+  const analyzedRows = useMemo(() => {
+    const next = reuseRows(
+      previousRows.current,
       buildPlanRows(
         sources,
         analysis.containers,
         analysis.books,
         analysis.unreadable,
       ),
-    [sources, analysis],
-  );
+    );
+    previousRows.current = next;
+    return next;
+  }, [sources, analysis.containers, analysis.books, analysis.unreadable]);
   // 直した巻数を当てた行。名前・印・依頼・冊数は全部こちらから作る
   const rows = useMemo(
     () => applyVolumes(analyzedRows, volumes),
@@ -615,6 +658,11 @@ export function OrganizePanel({
 
   /** 一覧ごとまとめて付け外しする。主操作の行の全体チェックが使う */
   const toggleAll = (keep: boolean) => toggleRows(rows, keep);
+
+  /** 同じ巻を 1 冊ずつに絞る / 全部入れる（#169） */
+  const toggleOneEach = (one: boolean) => {
+    setDecisions((current) => setOneEach(rows, current, one));
+  };
 
   /**
    * 巻数を直す。自動で読んだ値と同じにしたら、直していないことに戻す。
@@ -986,6 +1034,8 @@ export function OrganizePanel({
             running={running}
             blocked={blocked}
             onToggleAll={toggleAll}
+            oneEach={oneEachState(rows, off)}
+            onToggleOneEach={toggleOneEach}
             onRun={run}
             onCancel={cancel}
           />

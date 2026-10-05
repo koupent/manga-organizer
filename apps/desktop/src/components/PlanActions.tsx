@@ -31,6 +31,13 @@ type PlanActionsProps = {
   /** 主操作を押せないか。理由は status に出す */
   blocked: boolean;
   onToggleAll: (keep: boolean) => void;
+  /**
+   * 同じ巻の本が、どの巻も 1 冊以下しか入っていないか（#169）。同じ巻の本が
+   * 無ければ null
+   */
+  oneEach: boolean | null;
+  /** 同じ巻を 1 冊ずつに絞る（true）/ 全部入れる（false） */
+  onToggleOneEach: (one: boolean) => void;
   onRun: () => void;
   onCancel: () => void;
 };
@@ -53,6 +60,8 @@ export function PlanActions({
   running,
   blocked,
   onToggleAll,
+  oneEach,
+  onToggleOneEach,
   onRun,
   onCancel,
 }: PlanActionsProps) {
@@ -79,6 +88,20 @@ export function PlanActions({
             onCheckedChange={() => onToggleAll(master !== true)}
           />
           すべて
+        </label>
+        {/* 同じ巻を 1 冊だけ残す既定（#166）を、まとめて掛け直す・外す（#169） */}
+        <label
+          className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted"
+          title="入れると、同じ巻の本を 1 冊（入っている中で一番大きい本）だけ残します。外すと、同じ巻の本を全部入れます"
+        >
+          <Checkbox
+            data-testid="plan-one-each"
+            checked={oneEach === true}
+            disabled={running || oneEach === null}
+            aria-label="同じ巻は 1 冊だけ残す"
+            onCheckedChange={() => onToggleOneEach(oneEach !== true)}
+          />
+          同じ巻は 1 冊
         </label>
         <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
         <span
