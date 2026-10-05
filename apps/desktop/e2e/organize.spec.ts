@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -971,6 +971,28 @@ test.describe("整理後の受け渡し", () => {
         await expect(shortcut).toHaveAttribute("data-edited", "false");
       }
     }
+
+    // Assert - 出来た本はもう処理の対象ではないので、チェックが無い（#172）
+    await expect(madeRows(page).getByTestId("plan-check")).toHaveCount(0);
+
+    // Assert - 右側は 状態 → 大きさ → ごみ箱 → 近道（サムネイル作成 →
+    // ページ分割・結合 → ページ並べ替え）の順に並ぶ（#172 #173）。
+    // ごみ箱は、行に指を載せなくても見えている
+    const row = madeRow(page, expected[0]);
+    await page.mouse.move(0, 0);
+    await expect(row.getByTestId("plan-trash")).toHaveCSS("opacity", "1");
+    const lefts: number[] = [];
+    for (const id of [
+      "plan-row-state",
+      "plan-row-size",
+      "plan-trash",
+      "plan-to-thumbnail",
+      "plan-to-split",
+      "plan-to-reorder",
+    ]) {
+      lefts.push((await row.getByTestId(id).boundingBox())!.x);
+    }
+    expect(lefts).toEqual([...lefts].sort((a, b) => a - b));
   });
 
   test("整理の途中でも、出来た本の行から編集へ移れ、進捗は冊数で進む（#159 #160）", async ({
@@ -988,7 +1010,6 @@ test.describe("整理後の受け渡し", () => {
     await expect(books).toHaveCount(2);
     const source = (await books.nth(0).getAttribute("data-source"))!;
     const entry = (await books.nth(0).getAttribute("data-entry")) ?? "";
-    const name = (await books.nth(0).getAttribute("data-output-name"))!;
     await page.route("**/api/jobs/**", (route) => {
       const request = route.request();
       const path = new URL(request.url()).pathname;
@@ -1021,7 +1042,10 @@ test.describe("整理後の受け渡し", () => {
 
     // Assert - 出来た 1 冊の行にだけ、整理済みの印と近道が出る
     await expect(madeRows(page)).toHaveCount(1);
-    const row = madeRow(page, name);
+    // 出来た本の行は、出来たファイルの名前を見せる。ここでは元のアーカイブを
+    // 指させているので、名前ではなく元の場所で引く
+    const row = madeRows(page);
+    await expect(row).toHaveAttribute("data-source", source);
     await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
     await expect(books.nth(1).getByTestId("plan-to-thumbnail")).toHaveCount(0);
 
@@ -1242,28 +1266,59 @@ test.describe("整理後の受け渡し", () => {
     expect(producedFiles(output)).toEqual([]);
   });
 
-  test("整理が失敗したときは、前回出来た本の印も残らない", async ({ page }) => {
-    // Arrange - 一度は成功させる。成功時の一覧が失敗後も居座らないことまで
-    // 見たいので、何も出来ていない状態から失敗させるのでは足りない
-    const paths = writeVolumes("受け渡し失敗");
-    const output = join(sidecar.workDir, "out-handoff-failure");
+  test("出来た本は次の整理の対象から外れ、作り直されない（#172）", async ({
+    page,
+  }) => {
+    // Arrange - 2 冊を整理しておく。後から足す 3 冊目もここで作る。
+    // ファイルブラウザの一覧は画面を開いたときのものなので、後から作った
+    // ファイルは選べない
+    const paths = writeVolumes("積み増し");
+    const third = writeArchive(sidecar.workDir, "積み増し_03.zip", [
+      { name: "p1.jpg", color: "#0000ff" },
+    ]);
+    const output = join(sidecar.workDir, "out-accumulate");
     mkdirSync(output, { recursive: true });
     await openOrganize(page, output);
-    await organizeAll(page, "失敗する作品", "失敗する著者", paths);
+    await organizeAll(page, "積み増す作品", "積み増す著者", paths);
+
+    // Assert - 出来た本の行にはチェックが無く、ほかに作るものが無いので押せない
     await expect(madeRows(page)).toHaveCount(2);
+    await expect(madeRows(page).getByTestId("plan-check")).toHaveCount(0);
+    await expect(page.getByTestId("confirm")).toBeDisabled();
 
-    // Act - 処理対象を選んだ後に元ファイルが消えた状況を作り、もう一度実行する
-    for (const path of paths) rmSync(path);
+    // Act - 3 冊目を足して、もう一度整理する
+    await page.getByTestId("open-browser").click();
+    await page
+      .locator(
+        '[data-testid="browse-entry"][data-name="積み増し_03.zip"] .browser-name',
+      )
+      .click();
+    await expect(page.getByTestId("selected-count")).toHaveText("3 件");
+    await page.getByTestId("open-browser").click();
+    await expect(
+      page.locator('[data-testid="plan-row"][data-kind="book"]'),
+    ).toHaveCount(3);
+    const submitted = page.waitForRequest(
+      (request) =>
+        request.url().includes("/api/jobs/organize") &&
+        request.method() === "POST",
+    );
     await page.getByTestId("confirm").click();
-
-    // Assert - 失敗として伝わる
     await expect(page.getByTestId("organize-status")).toContainText(
-      "ファイルが見つかりません",
+      "整理しました",
       { timeout: 30_000 },
     );
 
-    // Assert - 出来ていないものの一覧は出ない。前回ぶんも残らない
-    await expect(madeRows(page)).toHaveCount(0);
+    // Assert - 頼んだのは足した 1 冊だけで、先に出来た 2 冊は作り直していない。
+    // 作り直す実装は、出力先に _1 付きの複製が増えてここで落ちる
+    const { books } = (await submitted).postDataJSON() as {
+      books: { source: string }[];
+    };
+    expect(books.map((book) => book.source)).toEqual([third]);
+    expect(producedFiles(output)).toHaveLength(3);
+
+    // Assert - 先に出来た本の印は残り、足した本にも付く
+    await expect(madeRows(page)).toHaveCount(3);
   });
 
   test("サムネイル作成とページ並べ替えは、直接開いても単独で使える", async ({

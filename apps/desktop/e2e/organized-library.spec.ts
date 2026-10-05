@@ -28,8 +28,9 @@ import { startSidecar, type Sidecar } from "./sidecar";
  * - `data-organized`        … `"true"` / `"false"`。判定そのもの
  * - `data-organized-reason` … 整理済みでない理由 1 つ。整理済みなら空文字
  * - `plan-row-state`        … 整理済みの行に出す `Badge tone="ok"` + `CircleCheck`
- * - `plan-row-reason`       … 名前は合っているのに落ちた 3 つだけに出す
- *                             `Badge tone="neutral"` + `Info`（`data-reason` 付き）
+ * - `plan-row-warning`      … 行に 1 つだけ出す警告のアイコン（#172）。名前は
+ *                             合っているのに落ちた 3 つでは `data-reason` が付き、
+ *                             乗せると何を直せば整理済みになるのかが読める
  * - 行の `title`            … 整理済みでない本すべてに、理由を言葉で
  *
  * 段階 4b で足すのは次の 4 つ。
@@ -90,19 +91,6 @@ const NAME_MISMATCH = "name-mismatch";
 const PAGES_MISMATCH = "pages-mismatch";
 const EXTRA_ENTRIES = "extra-entries";
 const FOLDER_MISMATCH = "folder-mismatch";
-
-/**
- * 印を出す 3 つと、その文言。
- *
- * 名前は既に往復しているのに、置き場所・ページの並び・同梱物のどれかで
- * 落ちたもの。利用者から見ると「整っているのにまた作り直される」ので、
- * 何を直せば整理済みになるのかを言葉で出す。
- */
-const REASON_BADGE: Record<string, string> = {
-  [FOLDER_MISMATCH]: "フォルダ名が違います",
-  [PAGES_MISMATCH]: "ページの連番が違います",
-  [EXTRA_ENTRIES]: "余計なファイルがあります",
-};
 
 /** 蔵書に入っている整理済みの本の数。2 作 × 2 巻 */
 const ORGANIZED_COUNT = 4;
@@ -634,27 +622,25 @@ test.describe("整理済みの本の見せ方", () => {
         reason,
       );
 
+      // 警告は行に 1 つのアイコンだけ出し、中身は乗せると読める（#172）
       const badge = row.locator(
-        `[data-testid="plan-row-reason"][data-reason="${reason}"]`,
+        `[data-testid="plan-row-warning"][data-reason="${reason}"]`,
       );
-      await expect(badge, `${reason} の印が無い`).toHaveText(
-        REASON_BADGE[reason],
-      );
-      // 警告（warn + TriangleAlert）ではない。直さなくても壊れてはいない
+      await expect(badge, `${reason} の警告が無い`).toHaveCount(1);
       await expect(
         badge,
-        `${reason} の印が neutral の色になっていない`,
-      ).toHaveClass(/\btext-ink-muted\b/);
+        `${reason} の中身が乗せたときの説明に出ていない`,
+      ).toHaveAttribute("title", /整理済みではありません: /);
       await expect(
-        badge.locator("svg.lucide-info"),
-        `${reason} の印の絵が Info でない`,
+        badge.locator("svg.lucide-triangle-alert"),
+        `${reason} の警告の絵が TriangleAlert でない`,
       ).toHaveCount(1);
     }
 
     // Assert - 種類だけでなく、どのページが何と違うのかまで読める（#126）。
     // 「連番が違います」とだけ言われても、利用者には違いを見つけようがない
     await expect(
-      bookRow(page, library.pagesMismatch).getByTestId("plan-row-reason"),
+      bookRow(page, library.pagesMismatch).getByTestId("plan-row-warning"),
       "連番の違いの中身が説明に出ていない",
     ).toHaveAttribute("title", /3 枚目が 004\.jpg（連番なら 003\.jpg）/);
 
@@ -664,7 +650,7 @@ test.describe("整理済みの本の見せ方", () => {
     const messy = bookRow(page, library.nameMismatch);
     await expect(messy).toHaveAttribute("data-organized-reason", NAME_MISMATCH);
     await expect(
-      messy.getByTestId("plan-row-reason"),
+      messy.locator('[data-testid="plan-row-warning"][data-reason]'),
       "名前が違うだけの本にまで理由の印が出ている",
     ).toHaveCount(0);
 
@@ -678,7 +664,7 @@ test.describe("整理済みの本の見せ方", () => {
         MULTIPLE_BOOKS,
       );
       await expect(
-        inside.getByTestId("plan-row-reason"),
+        inside.locator('[data-testid="plan-row-warning"][data-reason]'),
         `合本の ${entry} にまで理由の印が出ている`,
       ).toHaveCount(0);
     }
@@ -686,7 +672,7 @@ test.describe("整理済みの本の見せ方", () => {
     // Assert - 印が出た行はちょうど 3 つ
     await expect(
       page.locator(
-        '[data-testid="plan-row"][data-kind="book"] [data-testid="plan-row-reason"]',
+        '[data-testid="plan-row"][data-kind="book"] [data-testid="plan-row-warning"][data-reason]',
       ),
       "理由の印が 3 冊より多くの行に出ている",
     ).toHaveCount(3);
@@ -1320,7 +1306,7 @@ test.describe("整理済みの行の仕上げ", () => {
     // Assert - 理由の印は薄める側。整理済みの印と違い、これは「まだ直せる」
     // という手掛かりで、外した行では急ぎの用ではない
     expect(
-      await opacityOf(dropped.getByTestId("plan-row-reason")),
+      await opacityOf(dropped.getByTestId("plan-row-warning")),
       "外した行の理由の印が薄まっていない",
     ).toBe(DIMMED);
     expect(

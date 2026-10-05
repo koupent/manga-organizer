@@ -253,14 +253,15 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     // Act - 開く
     await openSplit(page, archive, 5);
 
-    // Assert - タブは末尾に足す。使う順に並べているので、割るのは最後
+    // Assert - タブは使う順に並ぶ。ページ並べ替えは読んでから気づいて使う
+    // ものなので最後（#173）
     expect(
       await page.locator('[data-testid^="mode-"]').allTextContents(),
     ).toEqual([
       "ファイル整理",
       "サムネイル作成",
-      "ページ並べ替え",
       "ページ分割・結合",
+      "ページ並べ替え",
     ]);
 
     // Assert - まだ分けていない横長があるので①「単ページにする」から開く

@@ -2,9 +2,7 @@ import {
   ArrowRight,
   BookMarked,
   CircleCheck,
-  Copy,
   Folder,
-  Info,
   Package,
   Trash2,
   TriangleAlert,
@@ -259,8 +257,14 @@ export function PlanList({
             madePath={madePath}
             madeSize={made.get(row.id)?.size}
             sameVolume={sameVolume.get(row.id)}
-            state={checkStateOf(row, excluded)}
-            name={names.get(row.id) ?? ""}
+            checkable={row.leaves.some((leaf) => !made.has(leaf))}
+            state={checkStateOf(row, excluded, made)}
+            // 出来た本は、実際に出来たファイルの名前を出す（#172）
+            name={
+              madePath !== undefined
+                ? basename(madePath)
+                : (names.get(row.id) ?? "")
+            }
             outputDirectory={outputDirectory}
             locked={locked}
             handlers={handlers}
@@ -282,6 +286,8 @@ type PlanListRowProps = {
   madeSize?: number | null;
   /** 同じ巻の本の冊数。1 冊だけなら無い */
   sameVolume?: number;
+  /** チェックを出すか。下の本が全部出来た入れ物では出さない（#172） */
+  checkable: boolean;
   state: CheckState;
   name: string;
   outputDirectory: string;
@@ -313,6 +319,7 @@ const PlanListRow = memo(function PlanListRow({
   madePath,
   madeSize,
   sameVolume,
+  checkable,
   state,
   name,
   outputDirectory,
@@ -322,7 +329,10 @@ const PlanListRow = memo(function PlanListRow({
   corrected,
   collided,
 }: PlanListRowProps) {
-  const off = state === false;
+  // 整理して出来た本（#172）。もう処理の対象ではないのでチェックを出さず、
+  // 薄めもしない。入れ物は、下の本が全部出来ていれば同じ扱い
+  const done = row.kind === "book" ? madePath !== undefined : !checkable;
+  const off = state === false && !done;
   // 整理済みでない本は「元 → 結果」で見せ、巻数をその場で直せる（段階 5）
   const correctable = row.kind === "book" && !row.organized;
   const dim = off ? DIMMED : undefined;
@@ -372,21 +382,26 @@ const PlanListRow = memo(function PlanListRow({
         "focus-visible:ring-brand/40",
       )}
     >
-      <Checkbox
-        data-testid="plan-check"
-        checked={state}
-        disabled={locked}
-        aria-label={row.kind === "book" ? name : row.path}
-        title="Shift を押しながら押すと、前に押した行からここまでをまとめて切り替えます"
-        // Shift で押すと、文字の選択が前に押した所まで伸びてしまう。押し下げで止める
-        onMouseDown={(event) => {
-          if (event.shiftKey) event.preventDefault();
-        }}
-        // Shift を読むために onClick で受ける。Space で押しても click が来る
-        onClick={(event) =>
-          handlers.toggle(row, state !== true, event.shiftKey)
-        }
-      />
+      {done ? (
+        // チェックの幅だけ空けて、名前の位置をほかの行とそろえる
+        <span aria-hidden className="size-4 shrink-0" />
+      ) : (
+        <Checkbox
+          data-testid="plan-check"
+          checked={state}
+          disabled={locked}
+          aria-label={row.kind === "book" ? name : row.path}
+          title="Shift を押しながら押すと、前に押した行からここまでをまとめて切り替えます"
+          // Shift で押すと、文字の選択が前に押した所まで伸びてしまう。押し下げで止める
+          onMouseDown={(event) => {
+            if (event.shiftKey) event.preventDefault();
+          }}
+          // Shift を読むために onClick で受ける。Space で押しても click が来る
+          onClick={(event) =>
+            handlers.toggle(row, state !== true, event.shiftKey)
+          }
+        />
+      )}
       <RowIcon kind={row.kind} dim={dim} />
       {correctable ? (
         <>
@@ -417,7 +432,8 @@ const PlanListRow = memo(function PlanListRow({
               name={name}
               row={row}
               corrected={corrected}
-              locked={locked}
+              // 出来た本は処理の対象ではないので、巻数も直させない
+              locked={locked || done}
               onCorrect={handlers.correct}
               onFill={handlers.fill}
             />
@@ -449,62 +465,67 @@ const PlanListRow = memo(function PlanListRow({
           </span>
         </>
       )}
-      <RowBadges
-        row={row}
-        finished={finished}
-        sameVolume={sameVolume}
-        collided={collided}
-        dim={dim}
-      />
       {/*
-        近道は印の右に置く。左へ割り込ませると整理済みの印が行の中ほどまで
-        押し戻され、その行にすることが無いと一目で読めなくなる。
+        右側は列の幅をそろえる（#172）。状態 → 大きさ → ごみ箱 → 近道。無い
+        項目も幅だけ空けておき、行ごとに位置がずれないようにする
       */}
-      {finished ? (
-        <EditShortcuts
-          name={name}
-          // 渡すのは今ディスク上に在るファイル。これから作られる行き先では
-          // まだ開けない。整理して出来た本なら、出来たファイル
-          path={madePath ?? row.source}
-          edited={edited}
-          testIdPrefix="plan"
-          onOpen={handlers.openArchive}
+      <span className="flex w-[4.75rem] shrink-0 items-center">
+        <RowStatus
+          row={row}
+          finished={finished}
+          sameVolume={sameVolume}
+          collided={collided}
+          dim={dim}
         />
-      ) : null}
-      {file && !locked ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-ink-faint opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 hover:text-danger"
-          data-testid="plan-trash"
-          title={`${name} のファイルをごみ箱へ移す`}
-          aria-label={`${name} のファイルをごみ箱へ移す`}
-          onClick={() => handlers.trash({ ...file, name })}
-        >
-          <Trash2 />
-        </Button>
-      ) : null}
-      {row.kind === "book" ? (
-        // 桁をそろえて右端に置く。同じ巻の本どうしで見比べるため
-        <span
-          data-testid="plan-row-size"
-          className="tabular w-14 shrink-0 text-right text-[11px] text-ink-faint"
-        >
-          {file?.size != null ? sizeLabel(file.size) : ""}
-        </span>
-      ) : null}
+      </span>
+      <span
+        data-testid="plan-row-size"
+        className="tabular w-14 shrink-0 text-right text-[11px] text-ink-faint"
+      >
+        {file?.size != null ? sizeLabel(file.size) : ""}
+      </span>
+      <span className="flex w-6 shrink-0 justify-center">
+        {file && !locked ? (
+          // 常に出す。乗せないと出ないと、消せることに気づけない（#172）
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-ink-faint hover:text-danger"
+            data-testid="plan-trash"
+            title={`${name} のファイルをごみ箱へ移す`}
+            aria-label={`${name} のファイルをごみ箱へ移す`}
+            onClick={() => handlers.trash({ ...file, name })}
+          >
+            <Trash2 />
+          </Button>
+        ) : null}
+      </span>
+      <span className="flex w-[4.5rem] shrink-0">
+        {finished ? (
+          <EditShortcuts
+            name={name}
+            // 渡すのは今ディスク上に在るファイル。これから作られる行き先では
+            // まだ開けない。整理して出来た本なら、出来たファイル
+            path={madePath ?? row.source}
+            edited={edited}
+            testIdPrefix="plan"
+            onOpen={handlers.openArchive}
+          />
+        ) : null}
+      </span>
     </li>
   );
 });
 
 /**
- * 行の右側に出す印。整理済み → 直せば整理済みになる理由 → 警告 の順。
+ * 行の状態の欄（#172）。整理済みなら「整理済み」の印、整理済みでない本に警告が
+ * あれば警告のアイコンを 1 つだけ出す。
  *
- * 状態（整理済み）を先に置くのは、その行にすることが無いと分かればそれ以上
- * 読まなくて済むため。今までこの席は警告だけの席で「何かが壊れている」を
- * 意味していたので、緑と CircleCheck で「終わっている」と読み分けさせる。
+ * 警告を 1 つずつ印にして横に並べると、肝心の巻数と名前が埋もれる。中身は
+ * アイコンに乗せると出す。整理済みの印は薄めない。その行のチェックが外れて
+ * いる理由そのものなので、一緒に薄めると答えが一番読みにくい所に置かれる。
  */
-function RowBadges({
+function RowStatus({
   row,
   finished,
   sameVolume,
@@ -518,60 +539,56 @@ function RowBadges({
   collided: boolean;
   dim?: string;
 }) {
-  const reasonBadge = REASON_BADGES[row.organizedReason];
+  if (finished)
+    return (
+      <Badge tone="ok" data-testid="plan-row-state" title={ORGANIZED_TIP}>
+        <CircleCheck className="size-3" />
+        整理済み
+      </Badge>
+    );
+  const warnings = rowWarnings(row, sameVolume, collided);
+  if (warnings.length === 0) return null;
+  const text = warnings.join("\n");
   return (
-    <>
-      {/*
-        整理済みの印だけは薄めない。この印はその行のチェックが外れている理由
-        そのもので、一緒に薄めると「なぜ作られないのか」の答えが一番読みにくい
-        所に置かれることになる。
-      */}
-      {finished ? (
-        <Badge tone="ok" data-testid="plan-row-state" title={ORGANIZED_TIP}>
-          <CircleCheck className="size-3" />
-          整理済み
-        </Badge>
-      ) : null}
-      {/* 同じ巻が他にもあることは、外した行でも読めるよう薄めない。
-          どれを残すか見比べるための印なので */}
-      {sameVolume ? (
-        <Badge
-          tone="neutral"
-          data-testid="plan-row-same"
-          title={`同じ巻の本が ${sameVolume} 冊あります`}
-        >
-          <Copy className="size-3" />
-          同じ巻 {sameVolume}
-        </Badge>
-      ) : null}
-      {reasonBadge && !finished ? (
-        <Badge
-          tone="neutral"
-          data-testid="plan-row-reason"
-          data-reason={row.organizedReason}
-          data-detail={row.organizedDetail}
-          data-dim
-          className={dim}
-          title={reasonTip(row)}
-        >
-          <Info className="size-3" />
-          {reasonBadge}
-        </Badge>
-      ) : null}
-      {[...row.issues, ...(collided ? [VOLUME_DUPLICATE] : [])].map((issue) => (
-        <Badge
-          key={issue}
-          tone="warn"
-          data-testid="plan-row-issue"
-          data-dim
-          className={dim}
-        >
-          <TriangleAlert className="size-3" />
-          {issueLabel(issue)}
-        </Badge>
-      ))}
-    </>
+    <span
+      data-testid="plan-row-warning"
+      data-reason={
+        REASON_BADGES[row.organizedReason] ? row.organizedReason : undefined
+      }
+      data-detail={row.organizedDetail || undefined}
+      data-dim
+      role="img"
+      aria-label={text}
+      title={text}
+      className={cn("flex cursor-help items-center text-warn", dim)}
+    >
+      <TriangleAlert className="size-3.5" />
+    </span>
   );
+}
+
+/**
+ * 警告のアイコンに乗せると出す中身（#172）。1 行に 1 つ。
+ *
+ * 同じ巻の本の数と、名前が重なることは 1 つにまとめる。どちらも「同じ巻が
+ * 複数ある」ことの言い換えで、別々に並べると同じことを 2 回言う。
+ */
+function rowWarnings(
+  row: PlanRow,
+  sameVolume: number | undefined,
+  collided: boolean,
+): string[] {
+  const lines = row.issues.map(issueLabel);
+  if (sameVolume)
+    lines.push(
+      `同じ巻の本が ${sameVolume} 冊あります` +
+        (collided
+          ? "。チェックの入った本どうしで名前が重なるので、後から選んだ本に _1 などを付けます"
+          : ""),
+    );
+  else if (collided) lines.push(issueLabel(VOLUME_DUPLICATE));
+  if (REASON_BADGES[row.organizedReason]) lines.push(reasonTip(row));
+  return lines;
 }
 
 /** ごみ箱へ移す本のファイル。確かめる窓に名前と大きさを出す */

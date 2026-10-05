@@ -171,8 +171,9 @@ test.describe("元 → 結果 と巻数の訂正", () => {
     await waitForBooks(page, 4);
     const raw = book(page, "raw_07_fix3.zip");
     await expect(raw).toHaveAttribute("data-output-name", name("第003巻"));
-    await expect(raw.getByTestId("plan-row-issue")).toContainText(
-      "巻数が怪しい",
+    await expect(raw.getByTestId("plan-row-warning")).toHaveAttribute(
+      "title",
+      /巻数が怪しい/,
     );
 
     // Act
@@ -181,7 +182,9 @@ test.describe("元 → 結果 と巻数の訂正", () => {
 
     // Assert - 名前が変わり、「怪しい」の印は消え、直したことが状態の行に出る
     await expect(raw).toHaveAttribute("data-output-name", name("第007巻"));
-    await expect(raw.getByTestId("plan-row-issue")).toHaveCount(0);
+    await expect(
+      raw.locator('[data-testid="plan-row-warning"][title*="巻数が怪しい"]'),
+    ).toHaveCount(0);
     await expect(raw.getByTestId("volume-chip")).toHaveAttribute(
       "data-corrected",
       "true",
@@ -304,8 +307,9 @@ test.describe("元 → 結果 と巻数の訂正", () => {
       book(page, "合本.zip", "下"),
       book(page, "第05巻.zip"),
     ]) {
-      await expect(row.getByTestId("plan-row-issue")).toContainText(
-        "巻数が重なる",
+      await expect(row.getByTestId("plan-row-warning")).toHaveAttribute(
+        "title",
+        /名前が重なる/,
       );
     }
     const names = [
@@ -319,7 +323,9 @@ test.describe("元 → 結果 と巻数の訂正", () => {
 
     // Assert
     await expect(
-      book(page, "合本.zip", "下").getByTestId("plan-row-issue"),
+      book(page, "合本.zip", "下").locator(
+        '[data-testid="plan-row-warning"][title*="名前が重なる"]',
+      ),
     ).toHaveCount(0);
     await expect(book(page, "合本.zip", "下")).toHaveAttribute(
       "data-output-name",

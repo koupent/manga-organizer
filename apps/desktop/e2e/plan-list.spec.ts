@@ -681,8 +681,10 @@ test.describe("解析した本の一覧", () => {
       broken,
       "目次を読めなかったのに、行に印が付いていない",
     ).toHaveAttribute("data-issues", /toc-unreadable/, { timeout: 30_000 });
-    await expect(broken.getByTestId("plan-row-issue")).toHaveText(
-      "目次を読めません",
+    // 警告は行に 1 つのアイコンにまとめ、中身は乗せると読める（#172）
+    await expect(broken.getByTestId("plan-row-warning")).toHaveAttribute(
+      "title",
+      /目次を読めません/,
     );
 
     // Assert - 対照。読めたアーカイブには付けない。全部に付ける実装では
@@ -724,26 +726,32 @@ test.describe("解析した本の一覧", () => {
     );
     expect(sources).toEqual(["dup_01.zip", "m_01.zip", "a_02.zip", "z_03.zip"]);
 
-    // Assert - 同じ巻の 2 冊にだけ「同じ巻 2」が出る
-    for (const [index, count] of [
-      [0, "同じ巻 2"],
-      [1, "同じ巻 2"],
-    ] as const) {
-      await expect(books.nth(index).getByTestId("plan-row-same")).toHaveText(
-        count,
-      );
-    }
-    await expect(books.nth(2).getByTestId("plan-row-same")).toHaveCount(0);
-    await expect(books.nth(3).getByTestId("plan-row-same")).toHaveCount(0);
+    // Assert - 同じ巻の 2 冊にだけ、警告に「同じ巻の本が 2 冊」が出る（#172）
+    const sameWarning = (index: number) =>
+      books
+        .nth(index)
+        .locator('[data-testid="plan-row-warning"][title*="同じ巻の本が"]');
+    for (const index of [0, 1])
+      await expect(
+        books.nth(index).getByTestId("plan-row-warning"),
+      ).toHaveAttribute("title", /同じ巻の本が 2 冊あります/);
+    await expect(sameWarning(2)).toHaveCount(0);
+    await expect(sameWarning(3)).toHaveCount(0);
 
     // Act - 要らない方を外す
     await checkOf(books.nth(0)).click();
 
-    // Assert - 外しても、同じ巻が他にもあることは見えたまま。重なりの警告は消える
-    await expect(books.nth(0).getByTestId("plan-row-same")).toHaveText(
-      "同じ巻 2",
+    // Assert - 外しても、同じ巻が他にもあることは見えたまま。名前が重なる
+    // ことは、もう言わない
+    await expect(books.nth(0).getByTestId("plan-row-warning")).toHaveAttribute(
+      "title",
+      /同じ巻の本が 2 冊あります/,
     );
-    await expect(books.nth(1).getByTestId("plan-row-issue")).toHaveCount(0);
+    await expect(
+      books
+        .nth(1)
+        .locator('[data-testid="plan-row-warning"][title*="名前が重なる"]'),
+    ).toHaveCount(0);
   });
 
   test("アーカイブ全体が 1 冊の本には、ファイルの大きさが出る（#163）", async ({

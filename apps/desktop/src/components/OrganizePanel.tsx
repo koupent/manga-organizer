@@ -185,8 +185,11 @@ export function OrganizePanel({
   const [decisions, setDecisions] = useState<Decisions>(new Map());
 
   // 整理して出来た本。実際に出来たものだけを持ち、整理の途中から 1 冊ずつ
-  // 増える（#160）。その本の行に整理済みの印と編集への近道を出す
+  // 増える（#160）。その本の行に整理済みの印と編集への近道を出す。
+  // 出来た本はもう処理の対象ではないので、次に整理しても捨てずに積み増す（#172）
   const [finished, setFinished] = useState<FinishedBook[]>([]);
+  // 今回の整理を始める前に出来ていた本。今回の分はこの後ろへ足す
+  const earlierFinished = useRef<FinishedBook[]>([]);
 
   // ごみ箱へ移そうとしている本のファイル。確かめる窓が開いている間だけ在る（#164）
   const [trashing, setTrashing] = useState<TrashTarget | null>(null);
@@ -500,15 +503,21 @@ export function OrganizePanel({
   // いま外れている葉。触った覚えと既定から毎回導き直すので、解析中に外した
   // 入れ物へ後から本が生えても、その本は外れたまま出る。1 度だけ導いて、
   // 読む所すべてで同じものを使う
-  const off = useMemo(() => effectiveOff(rows, decisions), [rows, decisions]);
-  const names = useMemo(
-    () => outputNames(rows, author, title, off, decisions),
-    [rows, author, title, off, decisions],
-  );
   // 整理して出来た本の行 → 出来た本（#160）
   const made = useMemo(
     () => new Map(finished.map((book) => [bookId(book), book])),
     [finished],
+  );
+  // 出来た本は、もう処理の対象ではない（#172）。チェックを出さず、外れている
+  // 側に入れる。入れたままだと、もう一度押したときに _1 の写しが出来る
+  const off = useMemo(() => {
+    const decided = effectiveOff(rows, decisions);
+    if (made.size === 0) return decided;
+    return new Set([...decided, ...made.keys()]);
+  }, [rows, decisions, made]);
+  const names = useMemo(
+    () => outputNames(rows, author, title, off, decisions),
+    [rows, author, title, off, decisions],
   );
   // 同じ巻の本の数（#162）。外した本も数える
   const sameVolume = useMemo(
@@ -529,8 +538,13 @@ export function OrganizePanel({
       !off.has(row.id),
   ).length;
   const keptCount = keptBooks(rows, off).length;
-  const droppedCount = droppedBookCount(rows, off);
-  const organizedCount = organizedSkippedCount(rows, off);
+  // 出来た本は「外した」ではなく「整理済み」に数える（#172）。入れ直した
+  // 整理済みの本は、もともと整理済みの側に数えている
+  const madeCount = rows.filter(
+    (row) => made.has(row.id) && !row.organized,
+  ).length;
+  const droppedCount = droppedBookCount(rows, off) - madeCount;
+  const organizedCount = organizedSkippedCount(rows, off) + madeCount;
   const issues = [
     ...keptIssueCounts(rows, off),
     ...(collided.size > 0
@@ -721,7 +735,10 @@ export function OrganizePanel({
           setProgress({ current: snapshot.current, total: snapshot.total });
           setLog(snapshot.log ?? []);
           // 出来た本から、その行で編集へ移れるようにする。全部済むのを待たない
-          setFinished(organizeResult(snapshot.result).finished);
+          setFinished([
+            ...earlierFinished.current,
+            ...organizeResult(snapshot.result).finished,
+          ]);
         },
         { signal },
       );
@@ -738,7 +755,7 @@ export function OrganizePanel({
       // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
       // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
       const outcome = organizeResult(job.result);
-      setFinished(outcome.finished);
+      setFinished([...earlierFinished.current, ...outcome.finished]);
       setFailures(outcome.failed);
       // 投入した本そのものが作り直された（行き先が自分自身だった）なら、
       // 一覧はまだ作り直す前の判定を見せている。解析し直して新しい姿にする。
@@ -782,9 +799,8 @@ export function OrganizePanel({
     cancelRequested.current = false;
     jobId.current = null;
     setLog([]);
-    // 前回の結果はここで捨てる。今回が中断・失敗に終わったとき、前回の
-    // 一覧が残っていると「今回出来たもの」に見えてしまう
-    setFinished([]);
+    // 前回出来た本は残す。今回の対象から外れているので、作り直しはしない
+    earlierFinished.current = finished;
     setFailures([]);
     setStatus("整理しています...");
     // 総数はサイドカーが投入時に決める。ここで見込みを入れると、外した本の
@@ -1026,6 +1042,7 @@ export function OrganizePanel({
           <PlanActions
             rows={rows}
             excluded={off}
+            done={made}
             status={statusText}
             statusTitle={hasOrganized ? ORGANIZED_STATUS_TIP : undefined}
             issues={issues}
