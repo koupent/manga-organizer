@@ -307,16 +307,13 @@ test.describe("解析した本の一覧", () => {
     expect(confirm.x + confirm.width).toBeGreaterThan(listBox.x);
     expect(confirm.x).toBeLessThan(listBox.x + listBox.width);
 
-    // Assert - 全体のチェックと状態が、主操作と同じ 1 行に収まる
+    // 選択ルールは主操作の下、一覧の上にまとまる。状態は主操作と同じ行。
     const master = (await page.getByTestId("plan-master-check").boundingBox())!;
     const status = (await page.getByTestId("organize-status").boundingBox())!;
     expect(master.x, "全体のチェックが主操作の左端に無い").toBeLessThan(
       confirm.x,
     );
-    for (const [label, box] of [
-      ["全体のチェック", master],
-      ["状態", status],
-    ] as const) {
+    for (const [label, box] of [["状態", status]] as const) {
       expect(box.y, `${label} が主操作と同じ行にない`).toBeLessThan(
         confirm.y + confirm.height,
       );
@@ -325,6 +322,8 @@ test.describe("解析した本の一覧", () => {
         `${label} が主操作と同じ行にない`,
       ).toBeGreaterThan(confirm.y);
     }
+    expect(master.y).toBeGreaterThanOrEqual(confirm.y + confirm.height);
+    expect(master.y + master.height).toBeLessThanOrEqual(listBox.y);
   });
 
   test("既定では全部にチェックが入っている", async ({ page }) => {
@@ -712,22 +711,17 @@ test.describe("解析した本の一覧", () => {
     ).toHaveCount(0);
   });
 
-  test("アーカイブ全体が 1 冊の本には、ファイルの大きさが出る（#163）", async ({
+  test("アーカイブ全体が 1 冊の本には、容量を表示せず画像枚数を表示する", async ({
     page,
   }) => {
     // Arrange / Act
     const title = "大きさの作品";
     await preparePlan(page, "大きさ", title);
 
-    // Assert - 1 冊の ZIP は大きさが出る。2 冊入りの ZIP から出る本は、
-    // 本ごとの大きさが分からないので空
+    await expect(page.getByTestId("plan-row-size")).toHaveCount(0);
     await expect(
-      bookRow(page, volumeName(title, 3)).getByTestId("plan-row-size"),
-    ).toHaveText(/^\d+(\.\d)? (B|KB)$/);
-    for (const volume of [1, 2])
-      await expect(
-        bookRow(page, volumeName(title, volume)).getByTestId("plan-row-size"),
-      ).toHaveText("");
+      bookRow(page, volumeName(title, 3)).getByTestId("plan-row-image-count"),
+    ).toHaveText("2枚");
   });
 
   test("本のファイルを、確かめてからごみ箱へ移せる（#164）", async ({

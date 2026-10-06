@@ -692,10 +692,10 @@ function undecided(row: PlanRow, decisions: Decisions): boolean {
  * 1 冊だけを選んでおき、利用者は残したい本を足すか、選ばれた本を外して別の本に
  * 替えるだけで済むようにする。
  *
- * - 選ぶのは、利用者がまだ触っていない本のうち、ファイルの一番大きい本。大きい
- *   方が画質の良い傾向にある。大きさの分からない本は後回し、同じなら一覧の上の方
+ * - 選ぶのは、利用者がまだ触っていない本のうち、画像枚数の一番多い本。枚数が同じなら容量、
+ *   それも同じなら一覧の上の方
  * - 組の中に利用者が入れた本があれば、既定では選ばない。入れた本が残る
- * - 利用者が外した本は選ばない。選ばれた本を外すと、次に大きい本が選ばれる。
+ * - 利用者が外した本は選ばない。選ばれた本を外すと、次に画像枚数の多い本が選ばれる。
  *   全部外せば、その巻は 1 冊も作らない
  * - 出来ている本（出力先に既にある本・この画面で作った本）が組にあれば、それを
  *   残す 1 冊と見て、今回の本は選ばない（#178）
@@ -724,7 +724,10 @@ function duplicatePicks(
       ? undefined
       : open.reduce<PlanRow | undefined>(
           (top, row) =>
-            top === undefined || (row.size ?? -1) > (top.size ?? -1)
+            top === undefined ||
+            (row.imageCount ?? -1) > (top.imageCount ?? -1) ||
+            (row.imageCount === top.imageCount &&
+              (row.size ?? -1) > (top.size ?? -1))
               ? row
               : top,
           undefined,
@@ -820,7 +823,10 @@ export function setOneEach(
     }
     if (kept.length < 2) continue;
     const best = kept.reduce((top, row) =>
-      (row.size ?? -1) > (top.size ?? -1) ? row : top,
+      (row.imageCount ?? -1) > (top.imageCount ?? -1) ||
+      (row.imageCount === top.imageCount && (row.size ?? -1) > (top.size ?? -1))
+        ? row
+        : top,
     );
     // 残す 1 冊も入れたと覚える。触っていないままだと、外した本と同じ巻の
     // 別の本が既定で選び直される
@@ -1207,4 +1213,52 @@ export function collidingBooks(
       .flat()
       .filter((id) => !done.has(id)),
   );
+}
+
+/** 同じ巻の候補で画像枚数最多の本だけが選ばれているか。 */
+export function mostImagesState(
+  rows: PlanRow[],
+  off: ReadonlySet<string>,
+  done: Done,
+): boolean | null {
+  const groups = volumeGroups(rows);
+  if (groups.length === 0) return null;
+  return groups.every((members) => {
+    if (members.some((row) => done.has(row.id)))
+      return members.every((row) => off.has(row.id) || done.has(row.id));
+    const selected = members.filter((row) => !off.has(row.id));
+    const maximum = Math.max(...members.map((row) => row.imageCount ?? -1));
+    return selected.length === 1 && (selected[0]!.imageCount ?? -1) === maximum;
+  });
+}
+
+/** 明示的な選択操作。既に出来ている本を保ち、同じ巻の最多を選び直す。 */
+export function selectMostImages(
+  rows: PlanRow[],
+  decisions: Decisions,
+  one: boolean,
+  done: Done,
+  minimum: number,
+): Decisions {
+  const next = new Map(decisions);
+  for (const members of volumeGroups(rows)) {
+    const candidates = members.filter(
+      (row) => !done.has(row.id) && !belowImageMinimum(row, minimum),
+    );
+    const best =
+      one && !members.some((row) => done.has(row.id))
+        ? candidates.reduce<PlanRow | undefined>(
+            (top, row) =>
+              !top || (row.imageCount ?? -1) > (top.imageCount ?? -1)
+                ? row
+                : top,
+            undefined,
+          )
+        : undefined;
+    for (const row of members) {
+      if (!done.has(row.id))
+        next.set(row.id, !one ? candidates.includes(row) : row === best);
+    }
+  }
+  return next;
 }

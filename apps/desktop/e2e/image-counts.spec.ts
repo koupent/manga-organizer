@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
@@ -9,6 +9,7 @@ test.beforeAll(async () => {
   for (const [name, count] of [
     ["第1巻.zip", 2],
     ["第2巻.zip", 3],
+    ["別版_第1巻.zip", 6],
   ] as const) {
     writeArchive(
       sidecar.workDir,
@@ -19,6 +20,7 @@ test.beforeAll(async () => {
       })),
     );
   }
+  appendFileSync(join(sidecar.workDir, "第1巻.zip"), Buffer.alloc(32000, "x"));
   const folder = join(sidecar.workDir, "第3巻");
   mkdirSync(folder);
   writeFileSync(join(folder, "001.jpg"), "fixture");
@@ -113,4 +115,91 @@ test("前の投入をすべて外すと作品名と著者名が消え、同じ�
   await add(page, "第3巻", true);
   await expect(page.getByTestId("organize-title")).toHaveValue("");
   await expect(page.getByTestId("organize-author")).toHaveValue("");
+});
+
+test("見出しと列幅調整、画像枚数最多・下限の選択を全画面で使える", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await open(page);
+  await add(page, "第1巻.zip");
+  await add(page, "別版_第1巻.zip");
+  const small = book(page, "第1巻.zip");
+  const large = book(page, "別版_第1巻.zip");
+  await expect(large.getByTestId("plan-row-image-count")).toHaveText("6枚");
+  await expect(large.getByTestId("plan-check")).toHaveAttribute(
+    "data-state",
+    "checked",
+  );
+  await expect(small.getByTestId("plan-check")).toHaveAttribute(
+    "data-state",
+    "unchecked",
+  );
+  const header = page.getByTestId("plan-table-header");
+  for (const label of [
+    "元のパス",
+    "変換後のファイル名",
+    "画像枚数",
+    "状態",
+    "操作",
+  ])
+    await expect(
+      header.getByRole("columnheader", { name: label, exact: true }),
+    ).toBeVisible();
+  const nameBox = (await large.getByTestId("plan-row-name").boundingBox())!;
+  const countBox = (await large
+    .getByTestId("plan-row-image-count")
+    .boundingBox())!;
+  expect(countBox.x - nameBox.x - nameBox.width).toBeLessThanOrEqual(16);
+  expect(nameBox.width).toBeLessThan(400);
+  const pathBefore = (await large.getByTestId("plan-row-path").boundingBox())!
+    .width;
+  const handle = (await page.getByTestId("resize-source").boundingBox())!;
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handle.x + handle.width / 2 + 80,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.up();
+  expect((await large.getByTestId("plan-row-path").boundingBox())!.width).toBe(
+    pathBefore + 80,
+  );
+  await page.getByTestId("resize-name").focus();
+  await page.keyboard.press("ArrowRight");
+  expect((await large.getByTestId("plan-row-name").boundingBox())!.width).toBe(
+    nameBox.width + 20,
+  );
+  await page.getByTestId("plan-most-images").click();
+  await expect(small.getByTestId("plan-check")).toHaveAttribute(
+    "data-state",
+    "checked",
+  );
+  await page.getByTestId("plan-image-settings").click();
+  await expect(page.getByTestId("settings-dialog")).toBeVisible();
+  await page.getByTestId("minimum-image-count").fill("3");
+  await page.getByRole("button", { name: "設定を閉じる" }).click();
+  await page.getByTestId("plan-minimum-only").click();
+  await expect(small.getByTestId("plan-check")).toHaveAttribute(
+    "data-state",
+    "unchecked",
+  );
+  await expect(large.getByTestId("plan-check")).toHaveAttribute(
+    "data-state",
+    "checked",
+  );
+  await page.getByTestId("plan-minimum-only").click();
+  await expect(small.getByTestId("plan-check")).toHaveAttribute(
+    "data-state",
+    "checked",
+  );
+  await page.getByTestId("plan-most-images").click();
+  await expect(small.getByTestId("plan-check")).toHaveAttribute(
+    "data-state",
+    "unchecked",
+  );
+  await expect(page.getByTestId("plan-row-size")).toHaveCount(0);
 });
