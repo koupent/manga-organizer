@@ -493,6 +493,13 @@ const PlanListRow = memo(function PlanListRow({
           </span>
         </>
       )}
+      <span
+        data-testid="plan-row-image-count"
+        className="tabular w-14 shrink-0 text-right text-[11px] text-ink-muted"
+        title="ZIP化対象の画像枚数"
+      >
+        {row.imageCount !== null ? `${row.imageCount}枚` : ""}
+      </span>
       {/*
         右側は列の幅をそろえる（#172）。状態 → 大きさ → ごみ箱 → 近道。無い
         項目も幅だけ空けておき、行ごとに位置がずれないようにする

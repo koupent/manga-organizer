@@ -88,6 +88,7 @@ type OrganizePanelProps = {
   /** いま見えている画面かどうか。隠れている間はジョブの監視を止める */
   active?: boolean;
   sources: string[];
+  minimumImageCount: number;
   onSourcesChange: (paths: string[]) => void;
   outputDirectory: string;
   onOutputDirectoryChange: (path: string) => void;
@@ -143,6 +144,7 @@ export function OrganizePanel({
   client,
   active = true,
   sources,
+  minimumImageCount,
   onSourcesChange,
   outputDirectory,
   onOutputDirectoryChange,
@@ -278,6 +280,29 @@ export function OrganizePanel({
   useEffect(() => {
     const before = analyzedSources.current;
     analyzedSources.current = sources;
+    const removed = before.filter((path) => !sources.includes(path));
+    if (removed.length > 0) {
+      const remains = (path: string) =>
+        !removed.some((item) => path === item || isInside(item, path));
+      setVolumes(
+        (current) =>
+          new Map(
+            [...current].filter(([id]) => remains(id.split("\u0000")[0]!)),
+          ),
+      );
+      setDecisions(
+        (current) =>
+          new Map(
+            [...current].filter(([id]) => remains(id.split("\u0000")[0]!)),
+          ),
+      );
+      setFinished((current) => current.filter((book) => remains(book.source)));
+    }
+    if (sources !== before) {
+      setStatus("");
+      setLog([]);
+      setFailures([]);
+    }
     if (sources.length === 0) {
       setAnalysis(IDLE_ANALYSIS);
       return;
@@ -290,7 +315,6 @@ export function OrganizePanel({
       sources.length < before.length &&
       sources.every((path) => before.includes(path))
     ) {
-      const removed = before.filter((path) => !sources.includes(path));
       setAnalysis((current) => withoutPaths(current, removed));
       return;
     }
@@ -329,6 +353,7 @@ export function OrganizePanel({
         const job = await client.waitForJob(
           accepted.id,
           (snapshot) => {
+            if (controller.signal.aborted) return;
             if (snapshotMark(snapshot) === seen) return;
             seen = snapshotMark(snapshot);
             // 経過（log）はここで読まない。整理の実行に取っておく。
@@ -584,10 +609,10 @@ export function OrganizePanel({
   // 出来た本は、もう処理の対象ではない（#172）。チェックを出さず、外れている
   // 側に入れる。入れたままだと、もう一度押したときに _1 の写しが出来る
   const off = useMemo(() => {
-    const decided = effectiveOff(rows, decisions, made);
+    const decided = effectiveOff(rows, decisions, made, minimumImageCount);
     if (made.size === 0) return decided;
     return new Set([...decided, ...made.keys()]);
-  }, [rows, decisions, made]);
+  }, [rows, decisions, made, minimumImageCount]);
   // 出来ている本の名前は先着として埋まっている（#178）
   const names = useMemo(
     () =>
@@ -745,7 +770,9 @@ export function OrganizePanel({
     const leaves = targets.flatMap(toggleTargets);
     setDecisions((current) =>
       toggleLeaves(
-        keep ? keepPicked(rows, current, leaves, made) : current,
+        keep
+          ? keepPicked(rows, current, leaves, made, minimumImageCount)
+          : current,
         leaves,
         keep,
       ),

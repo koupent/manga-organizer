@@ -46,7 +46,7 @@ import logging
 import zipfile
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 
@@ -147,6 +147,7 @@ class PlannedBook:
     organized_reason: str | None = None
     # 理由の中身を利用者が読める 1 文で（#126）。``OrganizedVerdict.detail``
     organized_detail: str | None = None
+    image_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -319,6 +320,7 @@ class BookLocation:
     extracted_path: str
     extracted_name: str
     toc_names: tuple[str, ...] = ()
+    image_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -369,6 +371,7 @@ class _Planner:
                 judge_organized(
                     archive_path, candidate.entry, total, candidate.toc_names
                 ),
+                candidate.image_count,
             )
             for position, candidate in enumerate(candidates, 1)
         ]
@@ -386,11 +389,18 @@ class _Planner:
         画像フォルダばかりの投入で打ち切りの効き方が変わる。
         """
         checkpoint()
+        image_count = 0
+        for index, path in enumerate(folder.rglob("*")):
+            if index % 1000 == 0:
+                checkpoint()
+            if path.is_file() and is_page_source(path.relative_to(folder).as_posix()):
+                image_count += 1
         return self._plan(
             folder,
             "",
             self.detector.decide_volume(folder),
             judge_organized(folder, "", 1, ()),
+            image_count,
         )
 
     def _plan(
@@ -399,6 +409,7 @@ class _Planner:
         entry: str,
         decision: VolumeDecision,
         verdict: OrganizedVerdict,
+        image_count: int,
     ) -> PlannedBook:
         # 整理済みの本の出来上がりは自分自身。依頼の著者・作品名で名前を作り直すと、
         # 画面には「作り直したら別人名義になる」という嘘の予告が並ぶ。帳簿へ入れる
@@ -428,6 +439,7 @@ class _Planner:
             title=verdict.title,
             organized_reason=verdict.reason,
             organized_detail=verdict.detail,
+            image_count=image_count,
         )
 
 
@@ -651,12 +663,12 @@ def locate_books(
             _Place("", "", archive_path.stem),
             depth=0,
             checkpoint=_NestedReadCheckpoint(checkpoint),
-        )
+        )[0]
 
 
 def _scan(
     toc: _Toc, place: _Place, depth: int, checkpoint: _NestedReadCheckpoint
-) -> list[BookLocation]:
+) -> tuple[list[BookLocation], int]:
     """1 つのアーカイブの目次を、展開後のフォルダ構成として読む"""
     return _scan_directory(toc, _build_tree(toc.names), "", place, depth, checkpoint)
 
@@ -668,7 +680,7 @@ def _scan_directory(
     place: _Place,
     depth: int,
     checkpoint: _NestedReadCheckpoint,
-) -> list[BookLocation]:
+) -> tuple[list[BookLocation], int]:
     """フォルダ 1 つ分を、実処理と同じ順序でたどる。
 
     実処理（``ArchiveHandler._process_directory_for_images``）は os.walk の
@@ -680,7 +692,11 @@ def _scan_directory(
     found: list[BookLocation] = []
     names = tree.files[directory]
 
-    if any(is_page_source(_join(place.extracted_path, name)) for name in names):
+    image_count = sum(
+        is_page_source(_join(place.extracted_path, name)) for name in names
+    )
+    has_book = image_count > 0
+    if has_book:
         found.append(
             BookLocation(
                 place.entry, place.extracted_path, place.extracted_name, toc.names
@@ -689,28 +705,26 @@ def _scan_directory(
 
     for name in sorted(names, key=natural_sort_key):
         if is_archive_name(name):
-            found.extend(
-                _scan_nested(
-                    toc,
-                    tree.stored_names[_join(directory, name)],
-                    place.nested(name),
-                    depth,
-                    checkpoint,
-                )
-            )
-
-    for name in sorted(tree.subdirs[directory], key=natural_sort_key):
-        found.extend(
-            _scan_directory(
+            books, count = _scan_nested(
                 toc,
-                tree,
-                _join(directory, name),
-                place.child(name),
+                tree.stored_names[_join(directory, name)],
+                place.nested(name),
                 depth,
                 checkpoint,
             )
+            found.extend(books)
+            image_count += count
+
+    for name in sorted(tree.subdirs[directory], key=natural_sort_key):
+        books, count = _scan_directory(
+            toc, tree, _join(directory, name), place.child(name), depth, checkpoint
         )
-    return found
+        found.extend(books)
+        image_count += count
+    if has_book:
+        found[0] = replace(found[0], image_count=image_count)
+
+    return found, image_count
 
 
 def _scan_nested(
@@ -719,7 +733,7 @@ def _scan_nested(
     place: _Place,
     depth: int,
     checkpoint: _NestedReadCheckpoint,
-) -> list[BookLocation]:
+) -> tuple[list[BookLocation], int]:
     """入れ子アーカイブの目次を、展開せずに読む。
 
     目次は末尾にあるので、内側のバイト列はメモリへ読み出す必要がある。読むだけで
@@ -734,15 +748,15 @@ def _scan_nested(
     if depth + 1 >= DEFAULT_LIMITS.max_depth:
         # 実処理も同じ深さで打ち切る。ここだけ深く潜ると予告と結果がずれる
         logger.warning("入れ子が深すぎるため解析を打ち切りました: %s", stored_name)
-        return []
+        return [], 0
     if toc.read is None:
         # 外側が RAR。要素を取り出すには外部ツールが要るので、入れ子は諦める。
         # 読みに行くと ``rarfile`` が unrar を起こしにいき、道具の有無で解析の
         # 結果が変わる。外側の目次から出る本のほうを守る
-        return []
+        return [], 0
     opener = _reader_for(stored_name)
     if opener is None:
-        return []
+        return [], 0
 
     try:
         checkpoint.before_read()
@@ -755,7 +769,7 @@ def _scan_nested(
     except _NESTED_READ_ERRORS as error:
         # 壊れている・暗号化されている・未対応の圧縮方式。実行時に失敗として現れる
         logger.warning("入れ子の目次を読めませんでした: %s (%s)", stored_name, error)
-        return []
+        return [], 0
 
 
 def _build_tree(names: Iterable[str]) -> _Tree:
