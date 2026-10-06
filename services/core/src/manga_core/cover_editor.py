@@ -15,13 +15,13 @@ ZIP 内の実画像を差し替える破壊的操作なので、page_reorder と
 import io
 import logging
 import os
-import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageStat
 
+from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.original_store import (
     Operation,
@@ -58,9 +58,6 @@ QUARTER_TURNS = (0, 90, 180, 270)
 # 縁の色を拾う帯の太さ（その辺に直交する寸法に対する割合）。1 本の線だけを
 # 見ると、表紙の縁取りや走査の汚れ 1 本で色が決まってしまう
 EDGE_STRIP_FRACTION = 0.01
-
-TEMP_PREFIX = ".cover-"
-TEMP_SUFFIX = ".tmp"
 
 
 class CoverEditError(RuntimeError):
@@ -338,17 +335,11 @@ def _replace_in_place(
     extras = _plan_original(archive_path, name, original, produced, transform)
 
     times = capture_file_times(archive_path)
-    handle, temp_name = tempfile.mkstemp(
-        dir=archive_path.parent,
-        prefix=archive_path.name + TEMP_PREFIX,
-        suffix=TEMP_SUFFIX,
-    )
-    os.close(handle)
-    temp_path = Path(temp_name)
+    temp_path = create_archive_temp()
     try:
         _write_replacement(archive_path, temp_path, name, new_name, produced, extras)
         _verify(temp_path, new_name, len(produced), extras)
-        os.replace(temp_path, archive_path)
+        replace_archive(temp_path, archive_path)
     finally:
         temp_path.unlink(missing_ok=True)
 
