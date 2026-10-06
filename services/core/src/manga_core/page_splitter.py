@@ -90,6 +90,9 @@ _CHANGE_JOINED = "joined"
 # みなす。その割合が _SEAM_MATCH 以上なら候補にする。候補は示すだけで保留には
 # しないので、取りこぼすより拾いすぎる側へ寄せてある
 _SEAM_POINTS = 64
+# 読み取り時の小さな上下ズレ（高さの約 3%）は、端の比較位置を合わせて拾う。
+# 候補の判定だけに使い、保存する画像の位置は動かさない。
+_SEAM_SHIFT = 2
 _SEAM_TOLERANCE = 32
 _SEAM_MATCH = 0.8
 # 端の点のうちこの割合以上が一色なら、無地の端（余白・塗りつぶし）として
@@ -640,10 +643,17 @@ def _seam_continues(
     left_of_earlier, right_of_later = first[0], second[1]
     if _is_flat(left_of_earlier) or _is_flat(right_of_later):
         return False
-    close = sum(
-        _near(a, b) for a, b in zip(left_of_earlier, right_of_later, strict=True)
-    )
-    return close >= _SEAM_MATCH * _SEAM_POINTS
+    for offset in range(-_SEAM_SHIFT, _SEAM_SHIFT + 1):
+        left = left_of_earlier[
+            max(0, offset) : min(_SEAM_POINTS, _SEAM_POINTS + offset)
+        ]
+        right = right_of_later[
+            max(0, -offset) : min(_SEAM_POINTS, _SEAM_POINTS - offset)
+        ]
+        close = sum(_near(a, b) for a, b in zip(left, right, strict=True))
+        if close >= _SEAM_MATCH * len(left):
+            return True
+    return False
 
 
 def _edge_colours(data: bytes) -> tuple[_Edge, _Edge] | None:

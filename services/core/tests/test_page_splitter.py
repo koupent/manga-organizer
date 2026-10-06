@@ -1269,13 +1269,20 @@ def seam_spread(bands: tuple[int, ...] = SEAM_BANDS) -> Image.Image:
     return Image.merge("RGB", (across, stripes, Image.new("L", (width, height), 128)))
 
 
-def half_bytes(image: Image.Image, side: str, fmt: str = "PNG") -> bytes:
+def half_bytes(
+    image: Image.Image, side: str, fmt: str = "PNG", *, offset: int = 0
+) -> bytes:
     """見開きの右半分（先に読む方）か左半分を、1 ページとして書き出す"""
     middle = image.width // 2
     left, right = (middle, image.width) if side == "right" else (0, middle)
     box = (left, 0, right, image.height)
     buffer = io.BytesIO()
-    image.crop(box).save(buffer, fmt)
+    half = image.crop(box)
+    if offset:
+        shifted = Image.new("RGB", half.size, "white")
+        shifted.paste(half, (0, offset))
+        half = shifted
+    half.save(buffer, fmt)
     return buffer.getvalue()
 
 
@@ -1323,6 +1330,48 @@ class SuggestsMergesTest(SplitFixture):
                 {
                     "001.jpg": half_bytes(spread, "right", "JPEG"),
                     "002.jpg": half_bytes(spread, "left", "JPEG"),
+                }
+            ),
+        )
+
+    def test_small_vertical_offsets_are_suggested(self):
+        spread = seam_spread()
+        for fmt in ("PNG", "JPEG"):
+            for offset in (-28, 28):
+                with self.subTest(fmt=fmt, offset=offset):
+                    self.assertEqual(
+                        [True, False],
+                        self.suggested(
+                            {
+                                "001.png": half_bytes(spread, "right", fmt),
+                                "002.png": half_bytes(
+                                    spread, "left", fmt, offset=offset
+                                ),
+                            }
+                        ),
+                    )
+
+    def test_large_vertical_offsets_are_not_suggested(self):
+        spread = seam_spread()
+        self.assertEqual(
+            [False, False],
+            self.suggested(
+                {
+                    "001.png": half_bytes(spread, "right"),
+                    "002.png": half_bytes(spread, "left", offset=150),
+                }
+            ),
+        )
+
+    def test_shifted_different_pictures_are_not_suggested(self):
+        self.assertEqual(
+            [False, False],
+            self.suggested(
+                {
+                    "001.png": half_bytes(seam_spread(), "right"),
+                    "002.png": half_bytes(
+                        seam_spread(SEAM_BANDS[::-1]), "left", offset=28
+                    ),
                 }
             ),
         )

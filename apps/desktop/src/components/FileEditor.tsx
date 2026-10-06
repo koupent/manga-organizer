@@ -84,9 +84,7 @@ const GRID_GAP = 12;
 const PICTURE_RATIO = 1.5;
 
 /** ステップごとの説明。見出しの下に 1 行で出す */
-type EditorMode = Step | "pages";
-const GUIDES: Record<EditorMode, string> = {
-  pages: "取っ手をドラッグしてページ順を変更できます",
+const GUIDES: Record<Step, string> = {
   split:
     "横長のページを 2 ページに分けます ・ 線を掴むと分ける位置を動かせます ・ 画像をクリックで大きく表示",
   merge:
@@ -97,7 +95,6 @@ type FileEditorProps = {
   client: SidecarClient;
   archive: string;
   active: boolean;
-  startWithSplit?: boolean;
   /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
   onArchiveChanged?: () => void;
 };
@@ -119,7 +116,6 @@ export function FileEditor({
   client,
   archive,
   active,
-  startWithSplit = false,
   onArchiveChanged,
 }: FileEditorProps) {
   const {
@@ -136,9 +132,7 @@ export function FileEditor({
   } = useSplitJob({ client, archive, onArchiveChanged });
 
   // 利用者が選んだステップ。選ぶまでは、開いた本の中身から決める（firstStep）
-  const [chosen, setChosen] = useState<EditorMode | null>(
-    startWithSplit ? null : "pages",
-  );
+  const [chosen, setChosen] = useState<Step | null>(null);
   // 表示方向はページ順を変えず、画面の並びだけに適用する
   const [direction, setDirection] = useStoredString("editor.direction");
   const [adjusting, setAdjusting] = useState<string | null>(null);
@@ -262,8 +256,7 @@ export function FileEditor({
   const mergeTargets = rows
     .map((_, index) => (isMergeTarget(rows, index) ? index : -1))
     .filter((index) => index >= 0);
-  const targets =
-    step === "split" ? splitTargets : step === "merge" ? mergeTargets : [];
+  const targets = step === "split" ? splitTargets : mergeTargets;
   const canSplitAll = splitTargets.some((index) => !rows[index].checked);
   const canMergeAll = mergeTargets.some((index) =>
     isMergeCandidate(rows, index)
@@ -323,7 +316,7 @@ export function FileEditor({
   /**
    * 未保存の変更を残してモードを移る。保存と読み直しの最中は移らない
    */
-  const requestStep = (next: EditorMode) => {
+  const requestStep = (next: Step) => {
     if (busy) return;
     setChosen(next);
     setSelection([]);
@@ -377,43 +370,32 @@ export function FileEditor({
     const from = next.findIndex((row) => row.names.includes(String(active.id)));
     const to = next.findIndex((row) => row.names.includes(String(over.id)));
     if (from < 0 || to < 0) return;
-    if (
-      step === "pages" &&
-      selection.length > 1 &&
-      selection.includes(String(active.id))
-    ) {
-      const movingNames = new Set(selection);
-      // 保留中の結合は 1 枚のカードとして、その相手も一緒に運ぶ。
-      next.forEach((row, index) => {
-        if (row.mergeNext && movingNames.has(row.names[0]))
-          next[index + 1].names.forEach((name) => movingNames.add(name));
-      });
-      if (movingNames.has(String(over.id))) return;
-      const moving = next.filter((row) => movingNames.has(row.names[0]));
-      const remaining = next.filter((row) => !movingNames.has(row.names[0]));
-      const at = remaining.findIndex((row) =>
-        row.names.includes(String(over.id)),
-      );
-      const position = at + (from < to ? (remaining[at].mergeNext ? 2 : 1) : 0);
-      remaining.splice(position, 0, ...moving);
-      edit(remaining.map((row) => ({ ...row, suggested: false })));
-      return;
-    }
-    const count =
-      next[from].mergeNext || (step === "merge" && isMergeCandidate(next, from))
-        ? 2
-        : 1;
-    const targetCount =
-      next[to].mergeNext || (step === "merge" && isMergeCandidate(next, to))
-        ? 2
-        : 1;
-    const moving = next.splice(from, count);
-    next.splice(
-      from < to ? Math.max(0, to - count + targetCount) : to,
-      0,
-      ...moving,
+    const selected = selection.includes(String(active.id))
+      ? selection
+      : [String(active.id)];
+    // 表示中のカードに含まれるページは、候補や分割済みの対も一緒に運ぶ。
+    const movingNames = new Set(
+      pageGroups
+        .filter((names) => names.some((name) => selected.includes(name)))
+        .flat(),
     );
-    edit(next.map((row) => ({ ...row, suggested: false })));
+    if (movingNames.has(String(over.id))) return;
+    const moving = next.filter((row) =>
+      row.names.some((name) => movingNames.has(name)),
+    );
+    const remaining = next.filter(
+      (row) => !row.names.some((name) => movingNames.has(name)),
+    );
+    const at = remaining.findIndex((row) =>
+      row.names.includes(String(over.id)),
+    );
+    const targetNames =
+      pageGroups.find((names) => names.includes(String(over.id))) ?? [];
+    const targetCount = remaining.filter((row) =>
+      row.names.some((name) => targetNames.includes(name)),
+    ).length;
+    remaining.splice(at + (from < to ? targetCount : 0), 0, ...moving);
+    edit(remaining.map((row) => ({ ...row, suggested: false })));
   };
 
   // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ
@@ -422,7 +404,7 @@ export function FileEditor({
     .filter((index) => index >= 0);
 
   /**
-   * from の行から見て、前（-1）・次（+1）にある最初の対象。無ければ undefined。
+   * from の前後の対象。端まで来たら反対の端へ循環する。対象が無ければ undefined。
    *
    * 選ぶのは「from より後ろ／前にある最初の対象」で、対象の並びの中での位置では
    * ない。対象でない行からも拡大表示は開くので、その行が対象の並びに居ないことを
@@ -431,7 +413,7 @@ export function FileEditor({
   const candidateFrom = (list: number[], from: number, delta: number) => {
     const behind = list.filter((index) => index < from);
     const ahead = list.filter((index) => index > from);
-    return delta > 0 ? ahead[0] : behind[behind.length - 1];
+    return delta > 0 ? (ahead[0] ?? list[0]) : (behind.at(-1) ?? list.at(-1));
   };
 
   /** 拡大表示の中で、前後の候補へ移る */
@@ -519,33 +501,25 @@ export function FileEditor({
   });
 
   // ②の並び（#154）。割った対は 2 枚の単ページとして出す
-  const units: MergeUnit[] =
-    step === "merge"
-      ? mergeUnits(rows)
-      : step === "pages"
-        ? rows.flatMap<MergeUnit>((row, index) => {
-            if (isAbsorbed(rows, index)) return [];
-            if (row.names.length === 2 && row.checked)
-              return row.names.map((_, part) => ({
-                key: `${index}:${part}`,
-                kind: "page" as const,
-                row: index,
-                part: part as 0 | 1,
-              }));
-            return [
-              {
-                key: String(index),
-                kind: row.mergeNext
-                  ? ("joined" as const)
-                  : isWide(row)
-                    ? ("spread" as const)
-                    : ("page" as const),
-                row: index,
-                via: row.mergeNext ? ("merge" as const) : undefined,
-              },
-            ];
-          })
-        : [];
+  const units: MergeUnit[] = step === "merge" ? mergeUnits(rows) : [];
+  const pageGroups =
+    step === "split"
+      ? rows.flatMap((row, index) =>
+          isAbsorbed(rows, index)
+            ? []
+            : [
+                row.mergeNext
+                  ? [...row.names, ...rows[index + 1].names]
+                  : row.names,
+              ],
+        )
+      : units.map((unit) => {
+          const row = rows[unit.row];
+          if (unit.part !== undefined) return [row.names[unit.part]];
+          return unit.via === "merge"
+            ? [...row.names, ...rows[unit.row + 1].names]
+            : row.names;
+        });
   const pickedUnit = units.find((unit) => unit.key === picking) ?? null;
   const pickable = pickedUnit ? partnersOf(rows, units, pickedUnit) : [];
   const roleOf = (unit: MergeUnit): PickRole =>
@@ -712,9 +686,8 @@ export function FileEditor({
           <span className="shrink-0 text-[11px] text-ink-faint">
             モード選択
           </span>
-          <Segmented<EditorMode>
+          <Segmented<Step>
             items={[
-              { id: "pages", label: "ページ一覧", testId: "editor-pages" },
               {
                 id: "split",
                 label: (
@@ -771,40 +744,38 @@ export function FileEditor({
               すべて解く
             </Button>
           ) : null}
-          {step !== "pages" ? (
-            <span className="flex shrink-0 items-center gap-1">
-              <Button
-                variant="secondary"
-                size="icon"
-                className="size-7"
-                data-testid="split-previous"
-                title="前の対象を指す"
-                aria-label="前の対象を指す"
-                disabled={previous === undefined}
-                onClick={() => pointAt(previous)}
-              >
-                <ChevronLeft />
-              </Button>
-              <span
-                className="tabular min-w-12 text-center text-[12px] text-ink-muted"
-                data-testid="split-focus-position"
-              >
-                {focusedAt < 0 ? "–" : focusedAt + 1} / {targets.length}
-              </span>
-              <Button
-                variant="secondary"
-                size="icon"
-                className="size-7"
-                data-testid="split-next"
-                title="次の対象を指す"
-                aria-label="次の対象を指す"
-                disabled={following === undefined}
-                onClick={() => pointAt(following)}
-              >
-                <ChevronRight />
-              </Button>
+          <span className="flex shrink-0 items-center gap-1">
+            <Button
+              variant="secondary"
+              size="icon"
+              className="size-7"
+              data-testid="split-previous"
+              title="前の対象を指す"
+              aria-label="前の対象を指す"
+              disabled={previous === undefined}
+              onClick={() => pointAt(previous)}
+            >
+              <ChevronLeft />
+            </Button>
+            <span
+              className="tabular min-w-12 text-center text-[12px] text-ink-muted"
+              data-testid="split-focus-position"
+            >
+              {focusedAt < 0 ? "–" : focusedAt + 1} / {targets.length}
             </span>
-          ) : null}
+            <Button
+              variant="secondary"
+              size="icon"
+              className="size-7"
+              data-testid="split-next"
+              title="次の対象を指す"
+              aria-label="次の対象を指す"
+              disabled={following === undefined}
+              onClick={() => pointAt(following)}
+            >
+              <ChevronRight />
+            </Button>
+          </span>
           <div className="flex-1" />
           <span
             role="status"
@@ -868,8 +839,8 @@ export function FileEditor({
       hint={
         <span className="flex items-center gap-3">
           <span className="min-w-0 flex-1 truncate">
-            {GUIDES[step]} ・ ⋮／右クリックでサムネイル選択 ・
-            Ctrl／Shift＋クリックで複数選択
+            {GUIDES[step]} ・ 取っ手で並べ替え ・ ⋮／右クリックでサムネイル選択
+            ・ Ctrl／Shift＋名前クリックで複数選択
           </span>
           <label className="flex shrink-0 items-center gap-1.5">
             <input
@@ -917,13 +888,7 @@ export function FileEditor({
         onDragEnd={dragEnd}
       >
         <SortableContext
-          items={
-            step === "split"
-              ? rows
-                  .filter((_, index) => !isAbsorbed(rows, index))
-                  .map((row) => row.names[0])
-              : units.map((unit) => rows[unit.row].names[unit.part ?? 0])
-          }
+          items={pageGroups.map((names) => names[0])}
           strategy={rectSortingStrategy}
         >
           <div
