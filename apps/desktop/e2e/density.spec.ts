@@ -22,7 +22,7 @@ const ROW_MAX_HEIGHT = 30;
  * 一覧は 放り込んだもの → 出来上がる本 の階層になったので、アーカイブ 1 件
  * につき「落としたものの行」と「そこから出来る本の行」の 2 行が並ぶ。
  */
-const ROWS_PER_ARCHIVE = 2;
+const ROWS_PER_ARCHIVE = 1;
 
 /** 入力欄と既定のボタン。28px を狙い、端数だけ許す */
 const CONTROL_MIN_HEIGHT = 27;
@@ -168,9 +168,9 @@ async function openOrganizeWithArchives(
   await selectArchives(page, archives);
   // 解析が終わって本の行まで生えるのを待つ。落としたものの行だけを数えて
   // 進むと、行が増える途中の高さを測ってしまう
-  await expect(page.getByTestId("plan-row")).toHaveCount(
-    ARCHIVE_COUNT * ROWS_PER_ARCHIVE,
-  );
+  await expect(
+    page.locator('[data-testid="plan-row"][data-kind="book"]'),
+  ).toHaveCount(ARCHIVE_COUNT * ROWS_PER_ARCHIVE);
 }
 
 /** 要素の高さを測る。見えていない要素は測らせない */

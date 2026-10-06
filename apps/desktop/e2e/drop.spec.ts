@@ -41,7 +41,7 @@ async function dropFiles(page: Page, files: { name: string; size: number }[]) {
  * 深さで絞り込む。
  */
 function droppedRows(page: Page) {
-  return page.locator('[data-testid="plan-row"][data-level="0"]');
+  return page.locator('[data-testid="source-row"]');
 }
 
 async function openOrganize(page: Page) {

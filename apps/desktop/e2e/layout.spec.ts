@@ -114,7 +114,7 @@ async function enterArchiveDirectory(page: Page) {
  * 出来上がる本の行も同じ testid で並ぶので、深さで絞り込む。
  */
 function droppedRows(page: Page) {
-  return page.locator('[data-testid="plan-row"][data-level="0"]');
+  return page.locator('[data-testid="source-row"]');
 }
 
 /** ブラウザを閉じ、一覧が指定の件数になったことまで確かめる */
@@ -279,104 +279,40 @@ async function dashedFrames(page: Page) {
  */
 async function nameAndPathGaps(page: Page, minPathText: number) {
   return page.evaluate((minText) => {
-    const inkOf = (node: Text, start: number, end: number) => {
+    const inkOf = (element: HTMLElement) => {
       const range = document.createRange();
-      range.setStart(node, start);
-      range.setEnd(node, end);
-      const ink = range.getBoundingClientRect();
-      const box = (node.parentElement as HTMLElement).getBoundingClientRect();
-      // はみ出した文字は箱で刈り取られる。見えている範囲だけを測る
-      return {
-        left: Math.max(ink.left, box.left),
-        right: Math.min(ink.right, box.right),
-      };
+      range.selectNodeContents(element);
+      return range.getBoundingClientRect();
     };
-
-    const strip = (text: string) => text.replace(/…|\.\.\./gu, "").trim();
-
     return [
       ...document.querySelectorAll<HTMLElement>(
-        '[data-testid="plan-row"][data-path]:not([data-path=""])',
+        '[data-testid="plan-row"][data-kind="book"]',
       ),
     ].map((row) => {
-      const path = row.dataset.path ?? "";
-      const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-      const name = path.slice(cut + 1);
-      const directory = path.slice(0, cut);
-      const tail = directory.split(/[/\\]/).filter(Boolean).pop() ?? "";
-
-      const texts: Text[] = [];
-      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        if ((node.textContent ?? "").trim()) texts.push(node as Text);
-      }
-
-      const found = (
-        node: Text,
-        start: number,
-        length: number,
-      ): { node: Text; start: number; end: number } => ({
-        node,
-        start,
-        end: start + length,
-      });
-
-      // ファイル名。省略されていても、名前そのものが載っている所を探す
-      let nameHit: { node: Text; start: number; end: number } | null = null;
-      for (const node of texts) {
-        const at = node.data.indexOf(name);
-        if (at >= 0) {
-          nameHit = found(node, at, name.length);
-          break;
-        }
-      }
-
-      // 場所。省略記号を外した中身がディレクトリの一部であれば、それがパス。
-      // 一番長く一致したものを採り、行番号のような短い数字を拾わない
-      let pathHit: { node: Text; start: number; end: number } | null = null;
-      for (const node of texts) {
-        const shown = strip(node.data);
-        if (shown.length < minText || !directory.includes(shown)) continue;
-        const at = node.data.indexOf(shown);
-        if (!pathHit || shown.length > pathHit.end - pathHit.start) {
-          pathHit = found(node, at, shown.length);
-        }
-      }
-      // ファイル名と同じ箱に入っている、あるいは途中が省略されている場合の受け皿
-      if (!pathHit && tail.length >= minText) {
-        for (const node of texts) {
-          const at = node.data.indexOf(tail);
-          if (at >= 0) {
-            pathHit = found(node, at, tail.length);
-            break;
-          }
-        }
-      }
-
-      if (!nameHit || !pathHit) {
-        return { path, nameFound: !!nameHit, pathFound: !!pathHit, gap: null };
-      }
-
-      const nameInk = inkOf(nameHit.node, nameHit.start, nameHit.end);
-      const pathInk = inkOf(pathHit.node, pathHit.start, pathHit.end);
-      // 左右どちらに並んでいても、2 つの文字の間に空いた距離を返す
-      const gap = Math.max(
-        0,
-        Math.max(nameInk.left, pathInk.left) -
-          Math.min(nameInk.right, pathInk.right),
-      );
+      const source = row.querySelector<HTMLElement>(
+        '[data-testid="plan-row-path"]',
+      )!;
+      const name = row.querySelector<HTMLElement>(
+        '[data-testid="plan-row-name"]',
+      )!;
+      const sourceInk = inkOf(source);
+      const nameInk = inkOf(name);
       return {
-        path,
-        nameFound: true,
-        pathFound: true,
-        gap,
-        nameRight: nameInk.right,
-        pathLeft: pathInk.left,
+        path: row.dataset.source ?? "",
+        nameFound: (name.textContent ?? "").trim().length > 0,
+        pathFound:
+          (source.textContent ?? "").trim().length >= minText && !!source.title,
+        gap: Math.max(
+          0,
+          nameInk.left -
+            Math.min(sourceInk.right, source.getBoundingClientRect().right),
+        ),
+        nameRight: nameInk.left,
+        pathLeft: sourceInk.right,
       };
     });
   }, minPathText);
 }
-
 /** サムネイル作成を開く */
 async function openThumbnail(page: Page, archive: string) {
   await page.setViewportSize(VIEWPORT);
@@ -478,8 +414,8 @@ test.describe("ワークベンチ: ファイル整理", () => {
 
     // Assert - 測る対象が見つからないまま通らないようにする
     expect(region, "一覧の領域が見つからない").not.toBeNull();
-    // 落としたもの MANY 件と、そこから出来る本 MANY 冊
-    expect(region!.rows).toBe(MANY * 2);
+    // 投入したものから出来る本 MANY 冊だけが並ぶ。
+    expect(region!.rows).toBe(MANY);
     expect(region!.holdsRows, "測った領域が行を含んでいない").toBe(true);
     expect(region!.holdsPrimary, "画面全体を一覧として測っている").toBe(false);
 
@@ -602,9 +538,7 @@ test.describe("ワークベンチ: ファイル整理", () => {
 
     // Assert - 一覧は退かない。件数ではなくパスで名指しした 1 行を見る
     await expect(
-      page.locator(
-        `[data-testid="plan-row"][data-level="0"][data-path="${first}"]`,
-      ),
+      page.locator(`[data-testid="source-row"][data-path="${first}"]`),
       "ファイルを選ぶ間に、投入した一覧が画面から消えている",
     ).toBeVisible();
 

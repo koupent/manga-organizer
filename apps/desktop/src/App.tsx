@@ -16,6 +16,7 @@ import {
   resolveConnection,
 } from "./connection";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { useStoredString } from "./lib/setting";
 import { findUpdate, UpdateNotice } from "./components/UpdateNotice";
 import { Alert } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
@@ -151,9 +152,28 @@ export function App() {
   // もう一度落とされた投入。増えない代わりに少しのあいだ光らせる
   const [flashing, setFlashing] = useState<ReadonlySet<string>>(new Set());
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [outputDirectory, setOutputDirectory] = useState(
-    () => startupParams().get("output") ?? "",
+  const [defaultOutputDirectory, storeDefaultOutputDirectory] = useStoredString(
+    "default-output-directory",
   );
+  const restoredOutputDirectory = useRef(defaultOutputDirectory);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [outputDirectory, setOutputDirectory] = useState(
+    () => startupParams().get("output") ?? defaultOutputDirectory,
+  );
+
+  const changeDefaultOutputDirectory = (path: string) => {
+    storeDefaultOutputDirectory(path);
+    setOutputDirectory(path);
+  };
+
+  // 起動時に保存済みの出力先を復元する。設定での選び直しは DirectoryPicker が伝える。
+  useEffect(() => {
+    if (client && restoredOutputDirectory.current.trim()) {
+      void client
+        .chooseOutputRoot(restoredOutputDirectory.current)
+        .catch(() => undefined);
+    }
+  }, [client]);
 
   // ドロップの購読は起動時の一度きりなので、最新の状態は ref から読む
   const sourcesRef = useRef<string[]>([]);
@@ -173,7 +193,10 @@ export function App() {
    */
   const changeSources = (paths: string[]) => {
     if (sourcesRef.current.length === 0 && paths.length > 0) {
-      setOutputDirectory((current) => current || parentDirectory(paths[0]));
+      setOutputDirectory(
+        (current) =>
+          current || defaultOutputDirectory || parentDirectory(paths[0]),
+      );
     }
     setSources(paths);
   };
@@ -411,7 +434,13 @@ export function App() {
           />
           {health === "ok" ? "接続済み" : "未接続"}
         </span>
-        <SettingsDialog />
+        <SettingsDialog
+          client={client}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          defaultOutputDirectory={defaultOutputDirectory}
+          onDefaultOutputDirectoryChange={changeDefaultOutputDirectory}
+        />
       </header>
 
       {/* 中央寄せの上限を置かない。広い窓では左右に余白が積み上がるだけで、
@@ -469,6 +498,7 @@ export function App() {
               sources={sources}
               onSourcesChange={changeSources}
               outputDirectory={outputDirectory}
+              onOpenSettings={() => setSettingsOpen(true)}
               onOutputDirectoryChange={setOutputDirectory}
               onOpenProduced={openArchiveIn}
               editsVersion={

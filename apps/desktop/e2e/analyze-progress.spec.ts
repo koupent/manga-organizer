@@ -291,21 +291,14 @@ async function addFolder(page: Page, folderName: string) {
 /** アーカイブの行 */
 function archiveRow(page: Page, path: string): Locator {
   return page.locator(
-    `[data-testid="plan-row"][data-kind="archive"][data-path="${path}"]`,
-  );
-}
-
-/** フォルダの行 */
-function folderRow(page: Page, path: string): Locator {
-  return page.locator(
-    `[data-testid="plan-row"][data-kind="folder"][data-path="${path}"]`,
+    `[data-testid="plan-row"][data-kind="archive"][data-path=${JSON.stringify(path)}]`,
   );
 }
 
 /** ある入れ物から生えた本の行。名前は作品名で変わるので元のパスで指す */
 function bookRowsOf(page: Page, source: string): Locator {
   return page.locator(
-    `[data-testid="plan-row"][data-kind="book"][data-source="${source}"]`,
+    `[data-testid="plan-row"][data-kind="book"][data-source=${JSON.stringify(source)}]`,
   );
 }
 
@@ -404,7 +397,7 @@ test.describe("解析の途中経過", () => {
     ).toHaveCount(2);
     await expect(archiveRow(page, compound)).toBeVisible();
     await expect(archiveRow(page, single)).toBeVisible();
-    await expect(rowsOfKind(page, "folder")).toHaveCount(1);
+    await expect(rowsOfKind(page, "folder")).toHaveCount(0);
 
     // Assert - 本の行はまだ 1 つも無い。ここが 0 でないと「行が先に並ぶ」
     // ことを確かめたことにならない
@@ -498,10 +491,6 @@ test.describe("解析の途中経過", () => {
     for (const row of await bookRowsOf(page, compound).all()) {
       await expect(checkOf(row)).toHaveAttribute("aria-checked", "false");
     }
-    await expect(checkOf(archiveRow(page, compound))).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
     await expect(page.getByTestId("plan-master-check")).toHaveAttribute(
       "aria-checked",
       "mixed",
@@ -516,7 +505,7 @@ test.describe("解析の途中経過", () => {
     const name = "入れ直し";
     const output = join(sidecar.workDir, `out-${name}`);
     mkdirSync(output, { recursive: true });
-    const { folder, compound, single } = makeFolder(name);
+    const { compound, single } = makeFolder(name);
     const compoundBooks = [
       book(title, compound, "第01巻", 1),
       book(title, compound, "第02巻", 2),
@@ -548,8 +537,8 @@ test.describe("解析の途中経過", () => {
     ).toHaveCount(0);
 
     // Act - フォルダごと外す
-    await checkOf(folderRow(page, folder)).click();
-    await expect(checkOf(folderRow(page, folder))).toHaveAttribute(
+    await page.getByTestId("plan-master-check").click();
+    await expect(page.getByTestId("plan-master-check")).toHaveAttribute(
       "aria-checked",
       "false",
     );
@@ -611,7 +600,7 @@ test.describe("解析の途中経過", () => {
     const name = "既定";
     const output = join(sidecar.workDir, `out-${name}`);
     mkdirSync(output, { recursive: true });
-    const { folder, compound, single } = makeFolder(name);
+    const { compound, single } = makeFolder(name);
     const containers = [compound, single];
     const script = await scriptAnalysis(page, [
       { state: "running", scanned: true, containers, books: [] },
@@ -663,17 +652,7 @@ test.describe("解析の途中経過", () => {
       ).toHaveAttribute("aria-checked", "true");
     }
 
-    // Assert - 入れ物の三態は葉から決まる。整理済みの本しか持たない
-    // アーカイブはオフ、両方を含むフォルダは混在
-    await expect(
-      checkOf(archiveRow(page, single)),
-      "整理済みの本しか持たないアーカイブが外れていない",
-    ).toHaveAttribute("aria-checked", "false");
-    await expect(
-      checkOf(archiveRow(page, compound)),
-      "整理済みを 1 冊も持たないアーカイブまで外れている",
-    ).toHaveAttribute("aria-checked", "true");
-    await expect(checkOf(folderRow(page, folder))).toHaveAttribute(
+    await expect(page.getByTestId("plan-master-check")).toHaveAttribute(
       "aria-checked",
       "mixed",
     );
@@ -686,7 +665,7 @@ test.describe("解析の途中経過", () => {
     await expect(
       page.getByTestId("plan-row"),
       "整理済みの行が一覧から消えている",
-    ).toHaveCount(1 + 2 + 3);
+    ).toHaveCount(3);
   });
 
   test("投入を変えると、走っていた解析を番号で名指しして止める", async ({

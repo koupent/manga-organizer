@@ -392,7 +392,7 @@ test.describe("ファイル整理: 投入は左、出来上がりは右", () => 
     await expect(sourceRow(page, gone)).toHaveCount(0);
     await expect(sourceRow(page, kept)).toBeVisible();
     await expect(rootRows(page)).toHaveCount(1);
-    await expect(rootRows(page)).toHaveAttribute("data-path", pathOf(kept));
+    await expect(rootRows(page)).toHaveAttribute("data-source", pathOf(kept));
   });
 
   test("左の行は Delete でも外せる", async ({ page }) => {
@@ -561,7 +561,7 @@ test.describe("ファイル整理: 投入は左、出来上がりは右", () => 
       ),
     );
     expect(left).toHaveLength(3);
-    expect(right.length).toBeGreaterThanOrEqual(6);
+    expect(right).toHaveLength(3);
     for (const height of left) {
       expect(Math.abs(height - SOURCE_ROW_HEIGHT)).toBeLessThanOrEqual(SLACK);
     }

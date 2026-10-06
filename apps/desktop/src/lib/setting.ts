@@ -26,6 +26,21 @@ function writeRaw(key: string, value: string): void {
   }
 }
 
+/** 文字列の設定を、次に開いたときまで覚えておく。 */
+export function useStoredString(
+  key: string,
+): [string, (value: string) => void] {
+  const [value, setValue] = useState(() => readRaw(key) ?? "");
+  const store = useCallback(
+    (next: string) => {
+      setValue(next);
+      writeRaw(key, next);
+    },
+    [key],
+  );
+  return [value, store];
+}
+
 /**
  * 数値の表示設定を、次に開いたときまで覚えておく。
  *

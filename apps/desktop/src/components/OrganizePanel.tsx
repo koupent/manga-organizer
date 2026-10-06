@@ -91,6 +91,7 @@ type OrganizePanelProps = {
   onSourcesChange: (paths: string[]) => void;
   outputDirectory: string;
   onOutputDirectoryChange: (path: string) => void;
+  onOpenSettings: () => void;
   /** 出来たファイルを、指定した画面へ読み込んだ状態で開く */
   onOpenProduced: (path: string, mode: HandoffMode) => void;
   /**
@@ -145,6 +146,7 @@ export function OrganizePanel({
   onSourcesChange,
   outputDirectory,
   onOutputDirectoryChange,
+  onOpenSettings,
   onOpenProduced,
   editsVersion = 0,
   onAddSources,
@@ -1186,6 +1188,7 @@ export function OrganizePanel({
           client={client}
           outputDirectory={outputDirectory}
           onOutputDirectoryChange={onOutputDirectoryChange}
+          onOpenSettings={onOpenSettings}
           keepOriginals={keepOriginals}
           onKeepOriginalsChange={setKeepOriginals}
         />

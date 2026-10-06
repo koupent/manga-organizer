@@ -100,7 +100,7 @@ function producedNames(root: string): string[] {
  * 出来上がる本の行も同じ testid で並ぶので、深さで絞り込む。
  */
 function droppedRows(page: Page) {
-  return page.locator('[data-testid="plan-row"][data-level="0"]');
+  return page.locator('[data-testid="source-row"]');
 }
 
 /**
@@ -215,9 +215,7 @@ async function addArchiveViaBrowser(
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeHidden();
   await expect(
-    page.locator(
-      `[data-testid="plan-row"][data-level="0"][data-path="${archive}"]`,
-    ),
+    page.locator(`[data-testid="source-row"][data-path="${archive}"]`),
   ).toBeVisible();
 }
 
@@ -649,7 +647,9 @@ test.describe("整理画面", () => {
     await fillMangaInfo(page, "実行中の作品", "実行中の著者");
     await selectArchives(page, paths);
 
-    const firstRow = droppedRows(page).first();
+    const firstRow = page
+      .locator('[data-testid="plan-row"][data-kind="book"]')
+      .first();
     const firstCheck = firstRow.getByTestId("plan-check");
     await expect(firstCheck).toHaveAttribute("aria-checked", "true");
 
@@ -1068,7 +1068,11 @@ test.describe("整理後の受け渡し", () => {
     const row = madeRows(page);
     await expect(row).toHaveAttribute("data-source", source);
     await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
-    await expect(books.nth(1).getByTestId("plan-to-thumbnail")).toHaveCount(0);
+    await expect(
+      page
+        .locator('[data-testid="plan-row"][data-kind="book"]:not([data-made])')
+        .getByTestId("plan-to-thumbnail"),
+    ).toHaveCount(0);
 
     // Act - 整理が終わるのを待たずに、出来た本のサムネイル作成へ移る
     await row.getByTestId("plan-to-thumbnail").click();

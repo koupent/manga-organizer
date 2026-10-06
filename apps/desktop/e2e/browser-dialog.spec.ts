@@ -72,14 +72,12 @@ test.afterAll(() => sidecar?.stop());
 
 /** 投入したものが並ぶ、一番外側の行。解析で生える本の行と混ざらないよう深さで絞る */
 function droppedRows(page: Page) {
-  return page.locator('[data-testid="plan-row"][data-level="0"]');
+  return page.locator('[data-testid="source-row"]');
 }
 
 /** 名指しの 1 行。件数は同一性の代わりにならないので、パスで指す */
 function droppedRow(page: Page, path: string) {
-  return page.locator(
-    `[data-testid="plan-row"][data-level="0"][data-path="${path}"]`,
-  );
+  return page.locator(`[data-testid="source-row"][data-path="${path}"]`);
 }
 
 /** ファイル整理を開く。出力先は先に決めておき、未入力の警告を出さない */

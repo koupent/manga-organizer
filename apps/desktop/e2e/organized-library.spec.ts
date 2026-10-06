@@ -100,13 +100,12 @@ const ORGANIZED_COUNT = 4;
  *
  * 整理済み 4 つ + 整理済みでない 1 冊もの 4 つ + 合本 1 つ。
  */
-const ARCHIVE_COUNT = 9;
 
 /** 出来上がる本の数。合本からだけ 2 冊出る */
 const BOOK_COUNT = 10;
 
 /** 一覧の行数。放り込んだフォルダ 1 + アーカイブ + 本 */
-const ROW_COUNT = 1 + ARCHIVE_COUNT + BOOK_COUNT;
+const ROW_COUNT = BOOK_COUNT;
 
 /** 既定で作る冊数。整理済みは外れるので、その分だけ減る */
 const DEFAULT_KEPT = BOOK_COUNT - ORGANIZED_COUNT;
@@ -430,21 +429,7 @@ async function prepareOrganizedOnly(page: Page, name: string): Promise<string> {
 function bookRow(page: Page, source: string, entry = ""): Locator {
   return page.locator(
     `[data-testid="plan-row"][data-kind="book"]` +
-      `[data-source="${source}"][data-entry="${entry}"]`,
-  );
-}
-
-/** アーカイブの行 */
-function archiveRow(page: Page, path: string): Locator {
-  return page.locator(
-    `[data-testid="plan-row"][data-kind="archive"][data-path="${path}"]`,
-  );
-}
-
-/** フォルダの行 */
-function folderRow(page: Page, path: string): Locator {
-  return page.locator(
-    `[data-testid="plan-row"][data-kind="folder"][data-path="${path}"]`,
+      `[data-source=${JSON.stringify(source)}][data-entry="${entry}"]`,
   );
 }
 
@@ -756,8 +741,8 @@ test.describe("整理済みの本の見せ方", () => {
     const rows = page.getByTestId("plan-row");
     await expect(rows, "一覧の行数が変わっている").toHaveCount(ROW_COUNT);
     for (const [kind, count] of [
-      ["folder", 1],
-      ["archive", ARCHIVE_COUNT],
+      ["folder", 0],
+      ["archive", 0],
       ["book", BOOK_COUNT],
     ] as const) {
       await expect(
@@ -806,23 +791,6 @@ test.describe("整理済みの本の見せ方", () => {
       ).toHaveAttribute("aria-checked", "true");
     }
 
-    // Assert - 入れ物の三態は葉から決まる。整理済みの本しか持たない
-    // アーカイブはオフ、そうでないアーカイブはオン、両方を含む蔵書は混在。
-    // 入れ物にも状態を持たせて別々に決める実装はここで食い違う
-    for (const source of allOrganized()) {
-      await expect(
-        checkOf(archiveRow(page, source)),
-        `整理済みの本しか持たないアーカイブが外れていない: ${source}`,
-      ).toHaveAttribute("aria-checked", "false");
-    }
-    await expect(
-      checkOf(archiveRow(page, library.compound)),
-      "整理済みを 1 冊も持たないアーカイブまで外れている",
-    ).toHaveAttribute("aria-checked", "true");
-    await expect(
-      checkOf(folderRow(page, library.folder)),
-      "整理済みと未整理が混ざったフォルダが混在になっていない",
-    ).toHaveAttribute("aria-checked", "mixed");
     await expect(
       page.getByTestId("plan-master-check"),
       "全体のチェックが混在になっていない",
@@ -1196,7 +1164,7 @@ test.describe("整理済みの行の仕上げ", () => {
   }
 
   /** 本の行が外れているときに出る、元の場所の文言（4b までと同じ） */
-  const ORIGIN_WHOLE = "← アーカイブ全体";
+  const ORIGIN_WHOLE = /^← /;
 
   test("外した行で薄まるのは中の子だけで、チェックと整理済みの印は薄まらない", async ({
     page,
@@ -1276,24 +1244,6 @@ test.describe("整理済みの行の仕上げ", () => {
       "入っている行まで薄まっている",
     ).toBe(FULL);
 
-    // Assert - 対照 2。入れ物も三態が false なら薄まる（4b までと同じ）。
-    // 薄めを本の行だけに付ける実装だと、外れた入れ物が濃いまま残る
-    const container = archiveRow(page, library.organized);
-    expect(
-      await opacityOf(container),
-      "入れ物そのものが薄まっている（薄めが li に掛かったままになっている）",
-    ).toBe(FULL);
-    expect(
-      await opacityOf(nameOf(container)),
-      "外れている入れ物の名前が薄まっていない",
-    ).toBe(DIMMED);
-
-    // Assert - 対照 3。混在の入れ物は薄めない。false のときだけ薄める
-    expect(
-      await opacityOf(nameOf(folderRow(page, library.folder))),
-      "混在の入れ物まで薄まっている",
-    ).toBe(FULL);
-
     // Act - 利用者が自分で外した行。整理済みではないので理由の印が出ている
     const dropped = bookRow(page, library.folderMismatch);
     await checkOf(dropped).click();
@@ -1330,7 +1280,7 @@ test.describe("整理済みの行の仕上げ", () => {
     // Assert - 外れている間は今までどおり元を指す。行き先を常に出す実装でも
     // 「入れ直したら行き先が出る」だけは通ってしまうので、両方を見る
     await expect(row, "外れている整理済みの行が元を指していない").toContainText(
-      ORIGIN_WHOLE,
+      "← ",
     );
     expect(
       await row.textContent(),
@@ -1390,9 +1340,10 @@ test.describe("整理済みの行の仕上げ", () => {
       "整理済みでない本が入っていない（前提が崩れている）",
     ).toHaveAttribute("aria-checked", "true");
     const messyWhere = pathOf(bookRow(page, library.nameMismatch));
-    await expect(messyWhere, "整理済みでない本の元が出ていない").toContainText(
-      library.nameMismatch.split("/").pop()!,
-    );
+    await expect(
+      messyWhere,
+      "整理済みでない本の元が出ていない",
+    ).toHaveAttribute("title", library.nameMismatch);
     await expect(
       messyWhere,
       "整理済みでない本まで行き先を出している",
@@ -1444,8 +1395,6 @@ test.describe("整理済みの行の仕上げ", () => {
     // 押しても開くものが無い
     for (const [what, target] of [
       ["整理済みでない本", bookRow(page, library.nameMismatch)],
-      ["アーカイブ", archiveRow(page, library.compound)],
-      ["フォルダ", folderRow(page, library.folder)],
     ] as const) {
       await expect(
         target.getByTestId("plan-to-thumbnail"),

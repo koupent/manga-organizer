@@ -17,6 +17,7 @@ import {
 } from "react";
 import type { FinishedBook } from "../lib/analysis";
 import {
+  byName,
   checkStateOf,
   TOC_UNREADABLE,
   VOLUME_DUPLICATE,
@@ -105,14 +106,7 @@ function reasonTip(row: PlanRow): string {
   return row.organizedDetail ? `${tip}\n${row.organizedDetail}` : tip;
 }
 
-/** 1 段ぶんの字下げ。3 階層でも左端の情報量を潰さない幅 */
-const INDENT_PX = 14;
-
-/**
- * 本の行の「元の名前」の欄の幅（一番浅い本の行で）。深い行ほど字下げの
- * ぶん狭めて、矢印が全部の行で同じ位置に並ぶようにする。番号の柱を縦に
- * 目で走査できるようにするため。
- */
+/** 本の行の元パスの幅。矢印を全部の行で揃える。 */
 const ORIGIN_WIDTH_PX = 260;
 
 /**
@@ -174,7 +168,7 @@ function RowIcon({ kind, dim }: { kind: PlanRow["kind"]; dim?: string }) {
 }
 
 /**
- * 解析した結果を 3 階層で見せる一覧。
+ * 投入元をまたいで、出来上がる名前順に本を並べる一覧。
  *
  * 行は消さない。外したものが消えると、何を外したのかが後から分からなくなる。
  * 薄くして残し、チェックの状態だけで「作る / 作らない」を示す。
@@ -199,6 +193,34 @@ export function PlanList({
   onCorrect,
   onFill,
 }: PlanListProps) {
+  const visibleRows = useMemo(() => {
+    const displayedName = (row: PlanRow) => {
+      const path = made.get(row.id)?.path;
+      return path ? basename(path) : (names.get(row.id) ?? "");
+    };
+    return rows
+      .filter(
+        (row) =>
+          row.kind === "book" ||
+          (row.leaves.length === 1 && row.leaves[0] === row.id),
+      )
+      .sort((a, b) => {
+        const first = displayedName(a);
+        const second = displayedName(b);
+        if (!first || !second)
+          return first ? -1 : second ? 1 : a.id.localeCompare(b.id);
+        // 同じ巻では出力先の先着を先に出し、番号なし → _1 → _2 と並べる。
+        return (
+          byName(
+            first.replace(/(?:_\d+)?\.zip$/i, ""),
+            second.replace(/(?:_\d+)?\.zip$/i, ""),
+          ) ||
+          Number(b.existing) - Number(a.existing) ||
+          byName(first.replace(/\.zip$/i, ""), second.replace(/\.zip$/i, "")) ||
+          a.id.localeCompare(b.id)
+        );
+      });
+  }, [rows, names, made]);
   // Shift で押したときの範囲の起点。最後に押した行（#158）。行は解析の途中で
   // 増えるので、位置ではなく鍵で覚える
   const anchor = useRef<string | null>(null);
@@ -207,7 +229,7 @@ export function PlanList({
   // 描き直しのたびに作り直すと、中身の変わっていない行まで全部描き直すことになり、
   // 本が数千冊あるとチェック 1 つの切り替えでも目に見えて待たされる
   const latest = useRef({
-    rows,
+    rows: visibleRows,
     onToggle,
     onOpenArchive,
     onTrash,
@@ -216,7 +238,7 @@ export function PlanList({
   });
   useLayoutEffect(() => {
     latest.current = {
-      rows,
+      rows: visibleRows,
       onToggle,
       onOpenArchive,
       onTrash,
@@ -254,7 +276,7 @@ export function PlanList({
       className="min-h-0 flex-1 divide-y divide-line/60 overflow-y-auto p-1"
       data-testid="plan-list"
     >
-      {rows.map((row) => {
+      {visibleRows.map((row) => {
         const madePath = made.get(row.id)?.path;
         return (
           <PlanListRow
@@ -363,7 +385,7 @@ const PlanListRow = memo(function PlanListRow({
     <li
       data-testid="plan-row"
       data-kind={row.kind}
-      data-level={row.level}
+      data-level={0}
       data-path={row.path}
       data-source={row.source}
       data-entry={row.entry}
@@ -380,7 +402,7 @@ const PlanListRow = memo(function PlanListRow({
       // 整理済みの行には説明を付けない（印そのものが説明を持っている）
       title={finished ? undefined : reasonTip(row) || undefined}
       tabIndex={0}
-      style={{ paddingLeft: 8 + row.level * INDENT_PX }}
+      style={{ paddingLeft: 8 }}
       className={cn(
         // 1 行 28px。中身の背丈（印・近道）で行ごとに高さが揺れないよう
         // 下限で揃える
@@ -419,12 +441,8 @@ const PlanListRow = memo(function PlanListRow({
               "shrink-0 truncate text-[11.5px] text-ink-muted",
               dim,
             )}
-            style={{ width: ORIGIN_WIDTH_PX - (row.level - 1) * INDENT_PX }}
-            title={
-              row.existing
-                ? undefined
-                : [basename(row.source), row.entry].filter(Boolean).join(" / ")
-            }
+            style={{ width: ORIGIN_WIDTH_PX }}
+            title={row.existing ? undefined : sourcePath(row)}
           >
             {/* 出力先に既にある本は、元の名前を持たない（#178） */}
             {row.existing ? null : <Origin row={row} corrected={corrected} />}
@@ -457,7 +475,7 @@ const PlanListRow = memo(function PlanListRow({
             data-dim
             className={cn("min-w-0 truncate text-[12.5px] font-medium", dim)}
           >
-            {row.kind === "book" ? name : basename(row.path)}
+            {row.kind === "book" ? name : shortPath(row.path)}
           </span>
           <span
             data-testid="plan-row-path"
@@ -469,7 +487,7 @@ const PlanListRow = memo(function PlanListRow({
               showsDestination ? "text-ink-muted" : "text-ink-faint",
               dim,
             )}
-            title={row.kind === "book" ? row.entry : row.path}
+            title={row.kind === "book" ? sourcePath(row) : row.path}
           >
             {where(row, showsDestination, outputDirectory)}
           </span>
@@ -647,9 +665,18 @@ function basename(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
 }
 
+function sourcePath(row: PlanRow): string {
+  return row.entry ? `${row.source} / ${row.entry}` : row.source;
+}
+
+/** 長い元パスは中央を省略し、名前と投入元の両方を残す。 */
+function shortPath(path: string): string {
+  return path.length > 40 ? `${path.slice(0, 10)}…${path.slice(-29)}` : path;
+}
+
 /** 本がどこから出来るか。アーカイブ全体が 1 冊なら位置は無い */
 function origin(row: PlanRow): string {
-  return row.entry ? `← ${row.entry}` : "← アーカイブ全体";
+  return `← ${shortPath(sourcePath(row))}`;
 }
 
 /**
@@ -675,17 +702,11 @@ function where(
 /**
  * 本の行の「元の名前」。巻数を読んだ名前を出し、読んだ数字だけを塗る。
  *
- * 入れ子のアーカイブは外側の名前で巻数を読む。そのときは外側を主に出し、
- * 内側は薄く添える。薄いことで「この名前の数字は使われていない」が分かる。
+ * 元パスとアーカイブ内の位置を合わせ、長ければ中央を省略する。
  * 名前から読めず並び順を当てはめただけなら「並び順 N」と添える。
  */
 function Origin({ row, corrected }: { row: PlanRow; corrected: boolean }) {
-  const archive = basename(row.source);
-  const readOuter =
-    row.entry !== "" &&
-    row.volumeSourceName !== "" &&
-    !row.entry.includes(row.volumeSourceName);
-  const main = row.entry === "" || readOuter ? archive : row.entry;
+  const main = shortPath(sourcePath(row));
   const read =
     row.volumeOrigin === "pattern" || row.volumeOrigin === "last-number"
       ? readDigits(main, row.autoVolume)
@@ -720,7 +741,6 @@ function Origin({ row, corrected }: { row: PlanRow; corrected: boolean }) {
       ) : (
         main
       )}
-      {readOuter ? <span className="text-ink-faint">/{row.entry}</span> : null}
       {row.volumeOrigin === "position" ? (
         <span className="ml-1.5 text-[11px] text-ink-faint">
           並び順 {row.autoVolume}

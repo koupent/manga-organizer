@@ -238,8 +238,8 @@ export class SidecarClient {
    * 出力先として選んだ場所を、サイドカーに覚えさせる。
    *
    * サイドカーは覚えのある場所へしか書き出さない。覚えはサイドカーが動いて
-   * いる間だけで、起動し直したら選び直しになる。呼ぶのは利用者が出力先を
-   * 決めた操作の中だけ（DirectoryPicker）。
+   * いる間だけ。利用者が出力先を決めた操作（DirectoryPicker）と、
+   * 起動時に保存済みのデフォルト出力先を復元するときに呼ぶ。
    */
   chooseOutputRoot(directory: string): Promise<OutputRoot> {
     return this.post<OutputRoot>("/api/output-roots", { directory });
