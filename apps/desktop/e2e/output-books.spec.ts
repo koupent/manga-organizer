@@ -154,11 +154,9 @@ test("出力先にある同じ巻を先着として一覧に出し、次の番�
   );
 
   // Assert - 予告どおりの名前で出来て、重複として警告する
-  expect(filesIn(folder)).toEqual([
-    `${VOLUME_3}.zip`,
-    `${VOLUME_3}_1.zip`,
-    `${VOLUME_3}_2.zip`,
-  ]);
+  await expect
+    .poll(() => filesIn(folder))
+    .toEqual([`${VOLUME_3}.zip`, `${VOLUME_3}_1.zip`, `${VOLUME_3}_2.zip`]);
   const made = row(page, `${VOLUME_3}_2.zip`, false);
   await expect(made).toHaveAttribute(
     "data-made",
@@ -179,7 +177,9 @@ test("出力先にある同じ巻を先着として一覧に出し、次の番�
   await expect(page.getByTestId("organize-status")).toContainText(
     "番号を詰め直しました",
   );
-  expect(filesIn(folder)).toEqual([`${VOLUME_3}.zip`, `${VOLUME_3}_1.zip`]);
+  await expect
+    .poll(() => filesIn(folder))
+    .toEqual([`${VOLUME_3}.zip`, `${VOLUME_3}_1.zip`]);
   expect(sizeOf(`${VOLUME_3}.zip`)).toBe(firstSize);
   expect(sizeOf(`${VOLUME_3}_1.zip`)).toBe(madeSize);
   await expect(
@@ -194,7 +194,7 @@ test("出力先にある同じ巻を先着として一覧に出し、次の番�
 
   // Assert - 残った 1 冊は番号なしで整理済み。消した本はチェックを外した姿へ戻り、
   // 次に整理しても作り直さない
-  expect(filesIn(folder)).toEqual([`${VOLUME_3}.zip`]);
+  await expect.poll(() => filesIn(folder)).toEqual([`${VOLUME_3}.zip`]);
   await expect(
     row(page, `${VOLUME_3}.zip`, true).getByTestId("plan-row-state"),
   ).toHaveText("整理済み");
@@ -295,10 +295,9 @@ test("番号が飛んだまま残った巻は、次に整理したときに番�
   );
 
   // Assert - 残っていた _1 が番号なしになり、整理済みとして出る
-  expect(filesIn(folder)).toEqual([
-    `${SERIES} 第025巻.zip`,
-    `${SERIES} 第026巻.zip`,
-  ]);
+  await expect
+    .poll(() => filesIn(folder))
+    .toEqual([`${SERIES} 第025巻.zip`, `${SERIES} 第026巻.zip`]);
   await expect(
     row(page, `${SERIES} 第025巻.zip`, true).getByTestId("plan-row-state"),
   ).toHaveText("整理済み");
