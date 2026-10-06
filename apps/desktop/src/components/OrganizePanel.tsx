@@ -280,30 +280,8 @@ export function OrganizePanel({
   useEffect(() => {
     const before = analyzedSources.current;
     analyzedSources.current = sources;
-    const removed = before.filter((path) => !sources.includes(path));
-    if (removed.length > 0) {
-      const remains = (path: string) =>
-        !removed.some((item) => path === item || isInside(item, path));
-      setVolumes(
-        (current) =>
-          new Map(
-            [...current].filter(([id]) => remains(id.split("\u0000")[0]!)),
-          ),
-      );
-      setDecisions(
-        (current) =>
-          new Map(
-            [...current].filter(([id]) => remains(id.split("\u0000")[0]!)),
-          ),
-      );
-      setFinished((current) => current.filter((book) => remains(book.source)));
-    }
-    if (sources !== before) {
-      setStatus("");
-      setLog([]);
-      setFailures([]);
-    }
     if (sources.length === 0) {
+      if (before.length > 0) changeTitle("");
       setAnalysis(IDLE_ANALYSIS);
       return;
     }
@@ -315,6 +293,7 @@ export function OrganizePanel({
       sources.length < before.length &&
       sources.every((path) => before.includes(path))
     ) {
+      const removed = before.filter((path) => !sources.includes(path));
       setAnalysis((current) => withoutPaths(current, removed));
       return;
     }
@@ -353,7 +332,6 @@ export function OrganizePanel({
         const job = await client.waitForJob(
           accepted.id,
           (snapshot) => {
-            if (controller.signal.aborted) return;
             if (snapshotMark(snapshot) === seen) return;
             seen = snapshotMark(snapshot);
             // 経過（log）はここで読まない。整理の実行に取っておく。

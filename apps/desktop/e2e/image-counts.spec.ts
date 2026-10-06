@@ -97,25 +97,20 @@ test("画像枚数を表示し、下限未満を自動除外する。手動選�
   ).toHaveAttribute("data-state", "checked");
 });
 
-test("入力を外して再投入したとき、前の巻数訂正とチェックを持ち越さない", async ({
+test("前の投入をすべて外すと作品名と著者名が消え、同じ作品への追加投入では維持する", async ({
   page,
 }) => {
   await open(page);
   await add(page, "第1巻.zip");
-  const first = book(page, "第1巻.zip");
-  await first.getByTestId("volume-chip").click();
-  await first.getByTestId("volume-input").fill("99");
-  await first.getByTestId("volume-input").press("Enter");
-  await first.getByTestId("plan-check").click();
-  await page.getByTestId("source-remove").click();
   await add(page, "第2巻.zip");
-  await add(page, "第1巻.zip");
-  await expect(first.getByTestId("volume-chip")).toHaveText("第001巻");
-  await expect(first.getByTestId("plan-check")).toHaveAttribute(
-    "data-state",
-    "checked",
-  );
-  await expect(book(page, "第2巻.zip").getByTestId("volume-chip")).toHaveText(
-    "第002巻",
-  );
+  await expect(page.getByTestId("organize-title")).toHaveValue("作品");
+  await expect(page.getByTestId("organize-author")).toHaveValue("著者");
+  await page.getByTestId("source-remove").first().click();
+  await expect(page.getByTestId("organize-title")).toHaveValue("作品");
+  await page.getByTestId("source-remove").click();
+  await expect(page.getByTestId("organize-title")).toHaveValue("");
+  await expect(page.getByTestId("organize-author")).toHaveValue("");
+  await add(page, "第3巻", true);
+  await expect(page.getByTestId("organize-title")).toHaveValue("");
+  await expect(page.getByTestId("organize-author")).toHaveValue("");
 });
