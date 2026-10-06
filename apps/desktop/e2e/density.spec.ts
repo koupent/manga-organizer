@@ -168,9 +168,9 @@ async function openOrganizeWithArchives(
   await selectArchives(page, archives);
   // 解析が終わって本の行まで生えるのを待つ。落としたものの行だけを数えて
   // 進むと、行が増える途中の高さを測ってしまう
-  await expect(page.getByTestId("plan-row")).toHaveCount(
-    ARCHIVE_COUNT * ROWS_PER_ARCHIVE,
-  );
+  await expect(
+    page.locator('[data-testid="plan-row"][data-kind="book"]'),
+  ).toHaveCount(ARCHIVE_COUNT * ROWS_PER_ARCHIVE);
 }
 
 /** 要素の高さを測る。見えていない要素は測らせない */
