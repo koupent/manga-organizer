@@ -276,7 +276,9 @@ test.describe("ページ分割: 操作の読み上げ名", () => {
 
     const grid = page.getByTestId("split-grid");
     await expect(grid.getByRole("checkbox")).toHaveCount(5);
-    await expect(grid.getByRole("button")).toHaveCount(5);
+    await expect(
+      grid.getByTestId("split-card").getByRole("button"),
+    ).toHaveCount(5);
 
     // Assert - どの番号についても、その番号を名乗る操作は 1 つだけで、
     // それがそのページのカードの中にある。

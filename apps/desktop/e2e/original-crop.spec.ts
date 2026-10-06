@@ -1,3 +1,4 @@
+import { openCoverTools, saveCoverTools } from "./cover-tools";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import {
   VIEWER_CONTRACT_IMPORT,
@@ -58,6 +59,7 @@ async function openCover(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=thumbnail&archive=${encodeURIComponent(archive)}`,
   );
+  await openCoverTools(page);
   await expect(page.getByTestId("crop-frame")).toBeVisible();
 }
 
@@ -184,8 +186,8 @@ async function growFrameAsFarAsPossible(page: Page) {
 
 /** いまの枠で確定し、書き込みが終わるまで待つ */
 async function confirmThumbnail(page: Page) {
-  await page.getByTestId("apply-thumbnail").click();
-  await expect(page.getByTestId("cover-status")).toContainText("加工しました", {
+  await saveCoverTools(page);
+  await expect(page.getByTestId("split-status")).toContainText("確認済み", {
     timeout: 30_000,
   });
 }

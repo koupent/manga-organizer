@@ -127,7 +127,7 @@ async function openSplit(page: Page, archive: string, cards: number) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=split&archive=${encodeURIComponent(archive)}`,
   );
-  await expect(page.getByTestId("mode-split")).toHaveAttribute(
+  await expect(page.getByTestId("mode-edit")).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -257,12 +257,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     // ものなので最後（#173）
     expect(
       await page.locator('[data-testid^="mode-"]').allTextContents(),
-    ).toEqual([
-      "ファイル整理",
-      "サムネイル作成",
-      "ページ分割・結合",
-      "ページ並べ替え",
-    ]);
+    ).toEqual(["ディレクトリ整理", "ファイル編集"]);
 
     // Assert - まだ分けていない横長があるので①「単ページにする」から開く
     // （#153）。開いた時点では何も選ばない（#142）。黙ってチェックを入れて
@@ -272,7 +267,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
       "true",
     );
     await expect(page.getByTestId("split-step-split")).toHaveText(
-      "① 単ページにする1",
+      "ページを分割1",
     );
     expect(await checkedIndexes(page)).toEqual([]);
     await expect(cardAt(page, 1)).toHaveAttribute("data-target", "true");
@@ -280,7 +275,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     await expect(page.getByTestId("split-status")).toHaveText(
       "変更はありません",
     );
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Assert - 2 列ぶんを占めるのは横長の 1 枚だけ。準見開きは列をまたがない
     expect(await wideIndexes(page)).toEqual([1]);
@@ -399,7 +394,7 @@ test.describe("ページ分割: 開いた直後と確定", () => {
       "変更はありません",
     );
     expect(await checkedIndexes(page)).toEqual([]);
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Act - 見逃された見開きのつもりで、3 枚目に手でチェックを入れる
     await toggle(page, 2);

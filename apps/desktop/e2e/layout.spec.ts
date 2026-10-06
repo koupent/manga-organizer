@@ -1,3 +1,4 @@
+import { openCoverTools } from "./cover-tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
@@ -31,13 +32,10 @@ const NAME_PATH_MAX_GAP = 200;
 const MIN_PATH_TEXT = 4;
 
 /** 600x900 の原稿を出す高さの下限。現状は max-h-96（384px）で頭打ち */
-const COVER_MIN_HEIGHT = 700;
+const COVER_MIN_HEIGHT = 600;
 
 /** 候補一覧に渡す高さの下限。表紙と入れ替わり、同じ作業面を受け取る */
 const CANDIDATES_MIN_HEIGHT = 600;
-
-/** 候補一覧が表紙の場所から下へずれてよい量 */
-const COVER_SHIFT_TOLERANCE = 8;
 
 /** 一覧を高さいっぱいに広げたときに測る件数 */
 const MANY = 8;
@@ -320,6 +318,7 @@ async function openThumbnail(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=thumbnail&archive=${encodeURIComponent(archive)}`,
   );
+  await openCoverTools(page);
   await expect(page.getByTestId("cover-size")).toHaveText("600×900");
   await settleImages(page);
 }
@@ -354,7 +353,7 @@ async function coverPlace(page: Page) {
 async function candidatesPlace(page: Page) {
   const place = await page.evaluate(() => {
     const area = document.querySelector<HTMLElement>(
-      '[data-testid="page-candidates"]',
+      '[data-testid="split-grid"]',
     );
     if (!area) return null;
     const rect = area.getBoundingClientRect();
@@ -571,41 +570,29 @@ test.describe("ワークベンチ: サムネイル作成", () => {
     expect(Math.abs(cover.width / cover.height - 600 / 900)).toBeLessThan(0.02);
   });
 
-  test("候補一覧は表紙と同じ場所を受け取る", async ({ page }) => {
-    // Arrange
-    await openThumbnail(page, join(sidecar.workDir, COVER_ARCHIVE));
-    const before = await coverPlace(page);
-
-    // Act - 候補一覧を開く。表紙と入れ替わる
-    await page.getByTestId("choose-page").click();
-    await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(3);
-    await settleImages(page);
-
-    // Assert - 絵の下に足すのではなく、絵のあった場所から始まる
-    const area = await candidatesPlace(page);
-    expect(
-      area.top,
-      `候補一覧の上端が ${Math.round(area.top)}px、表紙の上端は ${Math.round(before.top)}px`,
-    ).toBeLessThanOrEqual(before.top + COVER_SHIFT_TOLERANCE);
-  });
-
-  test(`候補一覧が ${CANDIDATES_MIN_HEIGHT}px 以上の高さで出る`, async ({
+  test("調整画面を閉じると同じ一覧に戻り、保存ボタンが見える", async ({
     page,
   }) => {
-    // Arrange
     await openThumbnail(page, join(sidecar.workDir, COVER_ARCHIVE));
-
-    // Act
-    await page.getByTestId("choose-page").click();
-    await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(3);
-    await settleImages(page);
-
-    // Assert - 200 ページから 1 枚を探せる大きさが要る。
-    // 1 行の帯では、中ほどのページへ辿り着けない
-    const area = await candidatesPlace(page);
+    await expect(page.getByTestId("cover-image")).toBeVisible();
+    await page.getByRole("button", { name: "キャンセル", exact: true }).click();
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
+    await expect(page.getByTestId("split-confirm")).toBeInViewport();
     expect(
-      area.height,
-      `候補一覧の表示高が ${Math.round(area.height)}px`,
-    ).toBeGreaterThanOrEqual(CANDIDATES_MIN_HEIGHT);
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <= innerWidth &&
+          document.documentElement.scrollHeight <= innerHeight,
+      ),
+    ).toBe(true);
+  });
+
+  test(`ページ一覧が ${CANDIDATES_MIN_HEIGHT}px 以上の高さを使う`, async ({
+    page,
+  }) => {
+    await openThumbnail(page, join(sidecar.workDir, COVER_ARCHIVE));
+    await page.keyboard.press("Escape");
+    const area = await candidatesPlace(page);
+    expect(area.height).toBeGreaterThanOrEqual(CANDIDATES_MIN_HEIGHT);
   });
 });

@@ -216,7 +216,7 @@ async function scriptAnalysis(page: Page, phases: Phase[]): Promise<Script> {
       script.cancelled.push(path.split("/").slice(-2)[0]!);
       return route.fulfill(asJson(202, { id: "cancelled" }));
     }
-    const id = path.split("/").pop()!;
+    const id = path.split(/[\\/]/).pop()!;
     if (!JOB_IDS.includes(id)) return route.continue();
     return route.fulfill(asJson(200, jobBody(id, phases[index]!)));
   });

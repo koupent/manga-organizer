@@ -1,5 +1,9 @@
-import { useEffect, useState } from "react";
-import { sidecarReason, type SidecarClient } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import {
+  sidecarReason,
+  type CoverRequest,
+  type SidecarClient,
+} from "../api/client";
 import { firstImageGeneration } from "./utils";
 import {
   confirmResultOf,
@@ -53,7 +57,8 @@ export type SplitJob = {
   /** 保留を全部捨て、開いたときの姿へ戻す */
   restore: () => void;
   /** 保留を書き込む。書き込めたかを返す（①から②へ進むかを決める） */
-  confirm: () => Promise<boolean>;
+  confirm: (cover?: CoverRequest) => Promise<boolean>;
+  reordered: boolean;
 };
 
 export function useSplitJob({
@@ -62,6 +67,7 @@ export function useSplitJob({
   onArchiveChanged,
 }: SplitJobOptions): SplitJob {
   const [rows, setRows] = useState<SplitRow[] | null>(null);
+  const originalRows = useRef<SplitRow[]>([]);
   // 走査が返した印とページ数。確定はこの印を添えて投げる
   const [scan, setScan] = useState({ token: "", pageCount: 0 });
   const [progress, setProgress] = useState({ current: 0, total: 0 });
@@ -109,7 +115,8 @@ export function useSplitJob({
         }
         const result = scanResultOf(job.result);
         setScan({ token: result.token, pageCount: result.page_count });
-        setRows(rowsFrom(result));
+        originalRows.current = rowsFrom(result);
+        setRows(originalRows.current);
         // 新しい行が並んで初めて、書き込みは本当に終わり
         setBusy(false);
       })
@@ -159,11 +166,11 @@ export function useSplitJob({
 
   const restore = () => {
     if (!rows) return;
-    setRows(restoredRows(rows));
+    setRows(restoredRows(originalRows.current));
     setReport(NOTHING);
   };
 
-  const confirm = async () => {
+  const confirm = async (cover?: CoverRequest) => {
     if (!rows || busy) return false;
     // 押した瞬間から立てる。書き込みが終わって新しい行が並ぶまで降ろさない
     setBusy(true);
@@ -175,14 +182,26 @@ export function useSplitJob({
         // 行は差分ではなくページ順に全部を送る。サイドカーが
         // 「名前を並べたもの＝いまのページ順」を照合できる
         rows: intentRows(rows),
+        allow_reorder: true,
+        reviewed: true,
+        cover: cover ?? null,
       });
       const job = await client.waitForJob(accepted.id);
       if (job.state !== "succeeded") {
         throw new Error(job.error ?? "保存に失敗しました");
       }
+      const result = confirmResultOf(job.result);
+      const transformed =
+        result.split_count +
+        result.restored_count +
+        result.adjusted_count +
+        result.joined_count +
+        result.merged_count;
       setReport({
         state: "done",
-        message: doneMessage(confirmResultOf(job.result)),
+        message: transformed
+          ? doneMessage(result)
+          : "確認済みとして保存しました · " + doneMessage(result),
       });
       onArchiveChanged?.();
       // 割った対はまた 1 行に畳まれて戻ってくる。読み直して、確定した直後と
@@ -208,5 +227,8 @@ export function useSplitJob({
     editRows,
     restore,
     confirm,
+    reordered:
+      JSON.stringify(rows?.flatMap((row) => row.names)) !==
+      JSON.stringify(originalRows.current.flatMap((row) => row.names)),
   };
 }

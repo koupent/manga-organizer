@@ -38,7 +38,11 @@ def render() -> bytes:
     # 見るだけの操作で手元の履歴を壊さないよう、空の場所を渡す。
     # スキーマは経路の定義だけで決まるので、どこを渡しても中身は変わらない
     with tempfile.TemporaryDirectory() as throwaway:
-        schema = create_app(state_dir=Path(throwaway)).openapi()
+        app = create_app(state_dir=Path(throwaway))
+        try:
+            schema = app.openapi()
+        finally:
+            app.state.jobs.close()
     return (json.dumps(schema, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 

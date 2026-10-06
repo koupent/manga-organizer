@@ -167,7 +167,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await expect(card(page, 1).getByTestId("merge-spread")).toHaveText(
       "見開き",
     );
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Assert - 保存した見開きは ✂ で解ける（#154）。やめれば元のまま
     await card(page, 1).getByTestId("merge-undo").click();
@@ -178,12 +178,12 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
       "1 枚を 2 ページに分けます → 全 4 ページ",
     );
     await card(page, 1).getByTestId("merge-undo").click();
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Assert - 結合した見開きは①の対象にしない（#151 #153）。対象にすると、
     // ①の「すべて分割」が②で結合したものを壊す。分けたければ手で選べる
     await expect(page.getByTestId("split-step-split")).toHaveText(
-      "① 単ページにする",
+      "ページを分割",
     );
     await page.getByTestId("split-step-split").click();
     const spread = page.locator('[data-testid="split-card"][data-index="1"]');
@@ -258,14 +258,14 @@ test.describe("ページ分割・結合: 結合の候補（#149 #153）", () => 
 
     // Assert - 候補は結合した後の姿（1 枚の見開き）で、まだ 2 ページのまま
     await expect(page.getByTestId("split-step-merge")).toHaveText(
-      "② 見開きにする1",
+      "ページを結合1",
     );
     await expect(card(page, 0)).toHaveAttribute("data-kind", "candidate");
     await expect(card(page, 0).getByTestId("merge-badge")).toHaveText(
       "結合候補",
     );
     await expect(card(page, 0).getByTestId("merge-number")).toHaveText("1–2");
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Act - 結合する
     await card(page, 0).getByTestId("merge-accept").click();
@@ -316,68 +316,33 @@ test.describe("ページ分割・結合: 結合の候補（#149 #153）", () => 
   });
 });
 
-test.describe("ページ分割・結合: ステップの切り替え（#153）", () => {
-  test("保存していない変更があるまま切り替えると、確かめてから移る", async ({
+test.describe("ページ分割・結合: 共通一覧のモード切り替え", () => {
+  test("切り替えても変更を残し、戻すかまとめて保存するかを選べる", async ({
     page,
   }) => {
-    // Arrange - 横長の 1 枚があるので①から開く
     const archive = writeSeamBook("切り替え.zip", true);
-    await page.setViewportSize({ width: 1280, height: 860 });
     await page.goto(
-      `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
-        `&mode=split&archive=${encodeURIComponent(archive)}`,
-    );
-    await expect(page.getByTestId("split-step-split")).toHaveAttribute(
-      "aria-pressed",
-      "true",
-      { timeout: 30_000 },
+      `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "split", archive })}`,
     );
     await page.getByTestId("split-all").click();
-    const dialog = page.getByTestId("step-switch-dialog");
-
-    // Act - ②へ移ろうとして、やめる
     await page.getByTestId("split-step-merge").click();
-    await expect(dialog).toBeVisible();
-    await page.getByTestId("step-switch-cancel").click();
-
-    // Assert - ①のまま、変更も残る
-    await expect(dialog).toBeHidden();
-    await expect(page.getByTestId("split-step-split")).toHaveAttribute(
+    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     await expect(page.getByTestId("split-status")).toHaveText(
       "1 枚を 2 ページに分けます → 全 5 ページ",
     );
-
-    // Act - 保存せずに切り替える
-    await page.getByTestId("split-step-merge").click();
-    await page.getByTestId("step-switch-discard").click();
-
-    // Assert - ②へ移り、変更は消える。本はそのまま
-    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(Object.keys(pageSizesOf(archive))).toHaveLength(4);
+    await page.getByTestId("split-reset").click();
     await expect(page.getByTestId("split-status")).toHaveText(
       "変更はありません",
     );
-    expect(Object.keys(pageSizesOf(archive))).toHaveLength(4);
-
-    // Act - ①へ戻って分け、今度は保存して切り替える
     await page.getByTestId("split-step-split").click();
     await page.getByTestId("split-all").click();
     await page.getByTestId("split-step-merge").click();
-    await page.getByTestId("step-switch-save").click();
-
-    // Assert - 書き込んでから②へ移る
-    await expect(page.getByTestId("split-page-count")).toHaveText("5 ページ", {
-      timeout: 30_000,
-    });
-    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-page-count")).toHaveText("5 ページ");
     expect(Object.keys(pageSizesOf(archive))).toHaveLength(5);
   });
 });

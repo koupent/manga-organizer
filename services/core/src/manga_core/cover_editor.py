@@ -253,6 +253,7 @@ def _plan_original(
     original: bytes,
     produced: bytes,
     transform: CoverTransform,
+    planned: dict[str, bytes] | None = None,
 ) -> dict[str, bytes]:
     """加工前の画像と紐づけの記録を、書き足すエントリとして組み立てる。
 
@@ -264,8 +265,39 @@ def _plan_original(
         source_name=name,
         produced=produced,
         operations=_transform_operations(transform),
+        planned=planned,
     )
     return plan_edit(archive_path, "thumbnail", planned=planned)
+
+
+def prepare_cover(
+    path: Path,
+    name: str,
+    stored: bytes,
+    transform: CoverTransform,
+    from_original: bool,
+    planned: dict[str, bytes] | None = None,
+) -> tuple[bytes, dict[str, bytes]]:
+    """表紙の加工と元画像の記録を、同じ ZIP 保存に載せる。"""
+    original = _source_pixels(path, stored, from_original)
+    produced = transform_image(original, transform, name)
+    return produced, _plan_original(path, name, original, produced, transform, planned)
+
+
+def record_review(path: Path) -> None:
+    """画像やページ名を変えず、確認済みの記録だけを保存する。"""
+    extras = plan_edit(path, "review")
+    if not extras:
+        return
+    times = capture_file_times(path)
+    temp = create_archive_temp()
+    try:
+        _write_replacement(path, temp, "", "", b"", extras)
+        _verify(temp, "", 0, extras)
+        replace_archive(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+    restore_file_times(path, times)
 
 
 def _source_pixels(archive_path: Path, stored: bytes, from_original: bool) -> bytes:
@@ -327,12 +359,11 @@ def _replace_in_place(
             raise CoverEditError(f"アーカイブに存在しません: {name}") from error
         stored = source.read(info)
 
-    original = _source_pixels(archive_path, stored, from_original)
-    # 加工に失敗したらここで止まる。元のアーカイブには触れていない
-    produced = transform_image(original, transform, name)
+    produced, extras = prepare_cover(
+        archive_path, name, stored, transform, from_original
+    )
     _, suffix = _output_format(name)
     new_name = str(Path(name).with_suffix(suffix))
-    extras = _plan_original(archive_path, name, original, produced, transform)
 
     times = capture_file_times(archive_path)
     temp_path = create_archive_temp()
@@ -382,10 +413,9 @@ def _move_to_front(
 
     try:
         stored = editor.read_entry(name)
-        original = _source_pixels(archive_path, stored, from_original)
-        # 加工に失敗したらここで止まる。元のアーカイブには触れていない
-        produced = transform_image(original, transform, name)
-        extras = _plan_original(archive_path, name, original, produced, transform)
+        produced, extras = prepare_cover(
+            archive_path, name, stored, transform, from_original
+        )
         ordered = _front_first_order(name, editor.pages)
         editor.apply_order(ordered, replacements={name: produced}, extra_entries=extras)
     except PageReorderError as error:
@@ -421,7 +451,7 @@ def _write_replacement(
     ):
         destination.comment = source.comment
         for info in source.infolist():
-            if info.is_dir():
+            if info.is_dir() and old_name:
                 continue
             if info.filename in added:
                 # 書き足す側で同じ名前を作る。両方入れると同名エントリになる
@@ -463,9 +493,9 @@ def _verify(
     """置き換える前に、書き上げた ZIP を読み直して確かめる"""
     try:
         with zipfile.ZipFile(temp_path, "r") as written:
-            if new_name not in written.namelist():
+            if new_name and new_name not in written.namelist():
                 raise CoverEditError(f"書き出した ZIP に {new_name} がありません")
-            if written.getinfo(new_name).file_size != expected_size:
+            if new_name and written.getinfo(new_name).file_size != expected_size:
                 raise CoverEditError("書き出した表紙のサイズが一致しません")
             _verify_extras(written, extras or {})
             damaged = written.testzip()

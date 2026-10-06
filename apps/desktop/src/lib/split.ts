@@ -620,6 +620,9 @@ export function doneMessage(result: SplitConfirmResult): string {
   if (result.merged_count > 0) {
     parts.push(`${result.merged_count} 組を 1 ページに結合しました`);
   }
-  if (parts.length === 0) return "変更はありませんでした";
+  if (parts.length === 0)
+    return result.changed
+      ? "変更を反映しました"
+      : "画像とページ順は変更していません";
   return `${parts.join(" · ")}（全 ${result.page_count} ページ）`;
 }

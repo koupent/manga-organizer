@@ -31,7 +31,7 @@ test.describe("ページ並べ替え", () => {
     );
 
     // Assert - サムネイルが実際に描画される
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
     await expect(cards).toHaveCount(3);
     await expect(cards.first()).toHaveAttribute("data-name", "001.jpg");
     const firstThumb = cards.first().locator("img");
@@ -42,7 +42,7 @@ test.describe("ページ並べ替え", () => {
     // Act - 1 枚目を 3 枚目の位置へドラッグする
     const source = cards.nth(0);
     const target = cards.nth(2);
-    await source.hover();
+    await source.getByTestId("page-drag-handle").hover();
     await page.mouse.down();
     const box = await target.boundingBox();
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2, {
@@ -51,9 +51,7 @@ test.describe("ページ並べ替え", () => {
     await page.mouse.up();
 
     // Assert - 画面上の順序が変わり、未保存として示される
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
     await expect(cards.nth(2)).toHaveAttribute("data-name", "001.jpg");
 
     // Act - 保存する。
@@ -61,9 +59,9 @@ test.describe("ページ並べ替え", () => {
     // 人はその間に押せないので、実際の操作と同じだけ間を空けてから押す
     await page.mouse.move(5, 5);
     await page.waitForTimeout(100);
-    await page.getByTestId("save").click();
-    await expect(page.getByTestId("status")).toContainText(
-      "3 ページを並び替えました",
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toContainText(
+      "変更を反映しました",
     );
 
     // Assert - ZIP が実際に書き換わっている
@@ -86,7 +84,9 @@ test.describe("ページ並べ替え", () => {
       `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
         `&archive=${encodeURIComponent(sidecar.workDir + "/missing.zip")}`,
     );
-    await expect(page.getByTestId("error")).toBeVisible();
+    await expect(page.getByTestId("split-loading")).toContainText(
+      "見つかりません",
+    );
   });
 
   test("表示サイズを変えるとサムネイルの解像度が上がる", async ({ page }) => {
@@ -97,11 +97,11 @@ test.describe("ページ並べ替え", () => {
       `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
         `&archive=${encodeURIComponent(archive)}`,
     );
-    const thumb = page.getByTestId("page-card").first().locator("img");
+    const thumb = page.getByTestId("editable-page").first().locator("img");
     // 既定の表示サイズ 160px は、サイドカーの段 (160, 240, 360, 520) の最初に載る
     await expect(thumb).toHaveJSProperty("naturalWidth", 160);
 
-    await page.getByTestId("card-width").fill("520");
+    await page.getByTestId("split-card-width").fill("520");
     await expect(thumb).toHaveJSProperty("naturalWidth", 520);
   });
 });
@@ -121,13 +121,13 @@ test.describe("複数選択・Undo・原寸表示", () => {
       `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
         `&archive=${encodeURIComponent(archive)}`,
     );
-    await expect(page.getByTestId("page-card")).toHaveCount(4);
+    await expect(page.getByTestId("editable-page")).toHaveCount(4);
     return archive;
   }
 
   test("Ctrl クリックで複数選択し、まとめて移動できる", async ({ page }) => {
     await openArchive(page, "multi.zip");
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
 
     // Act - 1 枚目と 2 枚目を選ぶ
     await cards.nth(0).click();
@@ -135,7 +135,7 @@ test.describe("複数選択・Undo・原寸表示", () => {
     await expect(page.getByTestId("selection-count")).toHaveText("2 件選択");
 
     // Act - 選択したまま 4 枚目の位置へドラッグする
-    await cards.nth(0).hover();
+    await cards.nth(0).getByTestId("page-drag-handle").hover();
     await page.mouse.down();
     const box = (await cards.nth(3).boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
@@ -152,7 +152,7 @@ test.describe("複数選択・Undo・原寸表示", () => {
 
   test("Shift クリックで範囲選択できる", async ({ page }) => {
     await openArchive(page, "range.zip");
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
 
     await cards.nth(0).click();
     await cards.nth(2).click({ modifiers: ["Shift"] });
@@ -164,26 +164,24 @@ test.describe("複数選択・Undo・原寸表示", () => {
 
   test("Ctrl+Z で並べ替えを元に戻せる", async ({ page }) => {
     await openArchive(page, "undo.zip");
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
 
     // Act - 並べ替える
-    await cards.nth(0).hover();
+    await cards.nth(0).getByTestId("page-drag-handle").hover();
     await page.mouse.down();
     const box = (await cards.nth(2).boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
       steps: 12,
     });
     await page.mouse.up();
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
 
     // Act - 元に戻す
     await page.keyboard.press("Control+z");
 
     // Assert
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "変更はありません",
+    await expect(page.getByTestId("split-confirm")).toHaveText(
+      "確認済みにする",
     );
     await expect(cards.nth(0)).toHaveAttribute("data-name", "001.jpg");
   });
@@ -192,7 +190,7 @@ test.describe("複数選択・Undo・原寸表示", () => {
     await openArchive(page, "zoom.zip");
 
     // Act
-    await page.getByTestId("page-card").first().getByTestId("zoom").click();
+    await page.getByTestId("editable-page").first().getByTestId("zoom").click();
 
     // Assert - サムネイル(240px)ではなく原寸(600px)が表示される
     const image = page.getByTestId("lightbox-image");
@@ -235,7 +233,7 @@ test.describe("ページ並べ替えの対象選択", () => {
   /** 作った ZIP を、ドロップに渡す名前とサイズの組にする */
   function dropEntry(archive: string) {
     return {
-      name: archive.split("/").pop()!,
+      name: archive.split(/[\\/]/).pop()!,
       size: readFileSync(archive).length,
     };
   }
@@ -246,7 +244,7 @@ test.describe("ページ並べ替えの対象選択", () => {
       `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
         `&mode=reorder`,
     );
-    await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -258,7 +256,7 @@ test.describe("ページ並べ替えの対象選択", () => {
    * organize.spec.ts の selectArchives() と同じ要領で、実パスはサーバー側が返す。
    */
   async function chooseArchiveViaBrowser(page: Page, archive: string) {
-    const name = archive.split("/").pop()!;
+    const name = archive.split(/[\\/]/).pop()!;
     await page.getByTestId("open-browser").click();
     await expect(page.getByTestId("file-browser")).toBeVisible();
     await page
@@ -270,8 +268,8 @@ test.describe("ページ並べ替えの対象選択", () => {
 
   /** カードを掴んで別のカードの位置まで運ぶ */
   async function dragCard(page: Page, from: number, to: number) {
-    const cards = page.getByTestId("page-card");
-    await cards.nth(from).hover();
+    const cards = page.getByTestId("editable-page");
+    await cards.nth(from).getByTestId("page-drag-handle").hover();
     await page.mouse.down();
     const box = (await cards.nth(to).boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
@@ -307,7 +305,7 @@ test.describe("ページ並べ替えの対象選択", () => {
     await expect(page.getByTestId("archive-name")).toHaveText(
       "投入ドロップ.zip",
     );
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
     await expect(cards).toHaveCount(3);
     await expect(cards.first()).toHaveAttribute("data-name", "001.jpg");
   });
@@ -327,7 +325,7 @@ test.describe("ページ並べ替えの対象選択", () => {
     await expect(page.getByTestId("archive-name")).toHaveText(
       "投入ブラウザ.zip",
     );
-    await expect(page.getByTestId("page-card")).toHaveCount(2);
+    await expect(page.getByTestId("editable-page")).toHaveCount(2);
   });
 
   test("投入から並べ替え、確定まで通しでできる", async ({ page }) => {
@@ -346,14 +344,12 @@ test.describe("ページ並べ替えの対象選択", () => {
 
     // Act - ドロップで投入する
     await dropFiles(page, [entry]);
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
     await expect(cards).toHaveCount(3);
 
     // Act - 1 枚目を 3 枚目の位置へ運ぶ
     await dragCard(page, 0, 2);
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
     await expect(cards.nth(2)).toHaveAttribute("data-name", "001.jpg");
 
     // Act - 保存する。
@@ -361,9 +357,9 @@ test.describe("ページ並べ替えの対象選択", () => {
     // 人はその間に押せないので、実際の操作と同じだけ間を空けてから押す
     await page.mouse.move(5, 5);
     await page.waitForTimeout(100);
-    await page.getByTestId("save").click();
-    await expect(page.getByTestId("status")).toContainText(
-      "3 ページを並び替えました",
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toContainText(
+      "変更を反映しました",
     );
 
     // Assert - ZIP は連番のまま、中身が入れ替わっている
@@ -392,14 +388,12 @@ test.describe("ページ並べ替えの対象選択", () => {
     ]);
     await openReorder(page);
     await dropFiles(page, [dropEntry(first)]);
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
     await expect(cards).toHaveCount(3);
 
     // Arrange - 1 つ目で並べ替えて未保存の編集を作る
     await dragCard(page, 0, 2);
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
 
     // Act - 2 つ目に選び直す。
     // dnd-kit はドラッグ終了から 50ms のあいだ click を document で止める。
@@ -415,8 +409,8 @@ test.describe("ページ並べ替えの対象選択", () => {
     await expect(cards).toHaveCount(4);
 
     // Assert - 1 つ目の編集は残っていない
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "変更はありません",
+    await expect(page.getByTestId("split-confirm")).toHaveText(
+      "確認済みにする",
     );
     await expect(cards.nth(0)).toHaveAttribute("data-name", "001.jpg");
     await expect(cards.nth(3)).toHaveAttribute("data-name", "004.jpg");
@@ -444,7 +438,7 @@ test.describe("ページ並べ替えの対象選択", () => {
     await expect(page.getByTestId("archive-name")).toHaveText(
       "まとめ投入 先頭.zip",
     );
-    await expect(page.getByTestId("page-card")).toHaveCount(2);
+    await expect(page.getByTestId("editable-page")).toHaveCount(2);
   });
 });
 
@@ -507,13 +501,6 @@ type GridLayout = {
  * 一番内側の祖先、という位置関係で辿る（density.spec.ts の
  * installContentRoot() と同じ要領）。
  */
-type ToolbarShape = {
-  holdsSlider: boolean;
-  holdsModeTabs: boolean;
-  holdsCards: boolean;
-  insideHeader: boolean;
-};
-
 /**
  * サムネイルの並びを測る。
  *
@@ -524,7 +511,9 @@ type ToolbarShape = {
 async function gridLayout(page: Page): Promise<GridLayout> {
   const measured = await page.evaluate((tolerance) => {
     const cards = [
-      ...document.querySelectorAll<HTMLElement>('[data-testid="page-card"]'),
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-testid="editable-page"]',
+      ),
     ];
     if (cards.length === 0) return null;
     const first = cards[0].getBoundingClientRect();
@@ -544,33 +533,6 @@ async function gridLayout(page: Page): Promise<GridLayout> {
   return measured!;
 }
 
-async function toolbarShape(page: Page): Promise<ToolbarShape | null> {
-  return page.evaluate(() => {
-    // 本の名前は 1 冊を編集する 3 画面が共有する帯にある（#128）。
-    // ツールバーの基準は、この画面だけの「未保存の変更」の印にする
-    const name = document.querySelector<HTMLElement>(
-      '[data-testid="dirty-state"]',
-    );
-    const save = document.querySelector<HTMLElement>('[data-testid="save"]');
-    if (!name || !save) return null;
-
-    let node: HTMLElement = name;
-    while (node.parentElement && !node.contains(save)) {
-      node = node.parentElement;
-    }
-    if (!node.contains(save)) return null;
-
-    return {
-      holdsSlider: !!node.querySelector('[data-testid="card-width"]'),
-      // 画面全体を「ツールバー」と言い張れないようにする。
-      // タブやサムネイルまで含む所まで上っていたら、それはツールバーではない
-      holdsModeTabs: !!node.querySelector('[data-testid="mode-reorder"]'),
-      holdsCards: !!node.querySelector('[data-testid="page-card"]'),
-      insideHeader: !!node.closest("header"),
-    };
-  });
-}
-
 /** 密度を測るためのアーカイブを開く。ページが並びきるまで待つ */
 async function openDenseArchive(page: Page, archive: string): Promise<void> {
   await page.setViewportSize(REORDER_VIEWPORT);
@@ -578,7 +540,7 @@ async function openDenseArchive(page: Page, archive: string): Promise<void> {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&archive=${encodeURIComponent(archive)}`,
   );
-  await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
+  await expect(page.getByTestId("editable-page")).toHaveCount(DENSE_PAGE_COUNT);
 }
 
 /**
@@ -589,11 +551,11 @@ async function openDenseArchive(page: Page, archive: string): Promise<void> {
  */
 async function moveSlider(page: Page, value: string): Promise<GridLayout> {
   const before = await gridLayout(page);
-  await page.getByTestId("card-width").fill(value);
+  await page.getByTestId("split-card-width").fill(value);
   await page.waitForFunction(
     (previous) =>
       getComputedStyle(
-        document.querySelector<HTMLElement>('[data-testid="page-card"]')!
+        document.querySelector<HTMLElement>('[data-testid="editable-page"]')!
           .parentElement!,
       ).gridTemplateColumns !== previous,
     before.template,
@@ -621,47 +583,18 @@ test.describe("ページ並べ替えの表示サイズ", () => {
 
     // Assert - スライダーごと消して通らないようにする。
     // 画面のどこかに 1 つだけあることが前提
-    await expect(page.getByTestId("card-width")).toHaveCount(1);
+    await expect(page.getByTestId("split-card-width")).toHaveCount(1);
 
     // Assert - ヘッダーそのものは残っている（測る対象が消えていない）
     const header = page.locator("header");
     await expect(header).toBeVisible();
-    await expect(header.getByTestId("mode-reorder")).toHaveCount(1);
+    await expect(header.getByTestId("mode-edit")).toHaveCount(1);
 
     // Assert - 画面固有の操作はヘッダーに置かない
     await expect(
-      header.getByTestId("card-width"),
+      header.getByTestId("split-card-width"),
       "表示サイズのスライダーが共通ヘッダーの中にある",
     ).toHaveCount(0);
-  });
-
-  test("表示サイズのスライダーがページ並べ替えのツールバーの中にある", async ({
-    page,
-  }) => {
-    // Arrange
-    await openDenseArchive(page, denseArchive);
-    await expect(page.getByTestId("card-width")).toHaveCount(1);
-
-    // Act - 未保存の印と保存ボタンを含む一番内側の祖先をツールバーとみなす
-    const toolbar = await toolbarShape(page);
-
-    // Assert - 測る対象が見つからないまま通らないようにする
-    expect(toolbar, "ツールバーが見つからない").not.toBeNull();
-    expect(toolbar!.insideHeader, "ツールバーがヘッダーの中にある").toBe(false);
-    expect(
-      toolbar!.holdsModeTabs,
-      "タブまで含む所をツールバーとして測っている",
-    ).toBe(false);
-    expect(
-      toolbar!.holdsCards,
-      "サムネイルまで含む所をツールバーとして測っている",
-    ).toBe(false);
-
-    // Assert - 未保存の印や保存と同じ並びに表示サイズがある
-    expect(
-      toolbar!.holdsSlider,
-      "表示サイズのスライダーがツールバーの中に無い",
-    ).toBe(true);
   });
 
   test("格子をいちばん下まで送っても、保存と表示サイズが見えている", async ({
@@ -671,13 +604,15 @@ test.describe("ページ並べ替えの表示サイズ", () => {
     await openDenseArchive(page, denseArchive);
 
     // Act - 格子を最後のページまで送る
-    await page.getByTestId("page-card").last().scrollIntoViewIfNeeded();
+    await page.getByTestId("editable-page").last().scrollIntoViewIfNeeded();
 
     // Assert - 流れるのは格子だけ。見出しの行が一緒に流れると、保存や
     // 表示サイズのたびに一番上まで戻ることになる（#129）
-    await expect(page.getByTestId("page-card").first()).not.toBeInViewport();
-    await expect(page.getByTestId("save")).toBeInViewport();
-    await expect(page.getByTestId("card-width")).toBeInViewport();
+    await expect(
+      page.getByTestId("editable-page").first(),
+    ).not.toBeInViewport();
+    await expect(page.getByTestId("split-confirm")).toBeInViewport();
+    await expect(page.getByTestId("split-card-width")).toBeInViewport();
   });
 
   test(`既定でサムネイルが 1 行に ${MIN_CARDS_PER_ROW} 枚以上並ぶ`, async ({
@@ -710,7 +645,7 @@ test.describe("ページ並べ替えの表示サイズ", () => {
     // Arrange
     await openDenseArchive(page, denseArchive);
     const before = await gridLayout(page);
-    const slider = page.getByTestId("card-width");
+    const slider = page.getByTestId("split-card-width");
     const max = await slider.getAttribute("max");
     expect(max, "スライダーに上限が無い").not.toBeNull();
 
@@ -733,7 +668,7 @@ test.describe("ページ並べ替えの表示サイズ", () => {
     // Arrange - 動かす前の見え方を控える
     await openDenseArchive(page, denseArchive);
     const initial = await gridLayout(page);
-    const max = await page.getByTestId("card-width").getAttribute("max");
+    const max = await page.getByTestId("split-card-width").getAttribute("max");
     expect(max).not.toBeNull();
 
     // Act - 利用者が表示サイズを決める
@@ -745,7 +680,9 @@ test.describe("ページ並べ替えの表示サイズ", () => {
 
     // Act - アプリを開き直したときと同じ状態にする
     await page.reload();
-    await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
+    await expect(page.getByTestId("editable-page")).toHaveCount(
+      DENSE_PAGE_COUNT,
+    );
 
     // Assert - 保存先の実装ではなく、利用者から見える結果で確かめる
     const reloaded = await gridLayout(page);
@@ -756,14 +693,14 @@ test.describe("ページ並べ替えの表示サイズ", () => {
     ).toBe(moved.inFirstRow);
 
     // Assert - スライダーのつまみの位置も、利用者が決めた所のまま
-    await expect(page.getByTestId("card-width")).toHaveValue(max!);
+    await expect(page.getByTestId("split-card-width")).toHaveValue(max!);
   });
 
   test("表示サイズの設定が画面を移って戻っても残る", async ({ page }) => {
     // Arrange
     await openDenseArchive(page, denseArchive);
     const initial = await gridLayout(page);
-    const max = await page.getByTestId("card-width").getAttribute("max");
+    const max = await page.getByTestId("split-card-width").getAttribute("max");
     expect(max).not.toBeNull();
 
     const backToReorder = async () => {
@@ -771,9 +708,11 @@ test.describe("ページ並べ替えの表示サイズ", () => {
       // 画面を移っても格子は作り直されず隠れるだけになった（#67）ので、
       // カードは DOM に残る。離れたことは見えているかどうかで確かめる。
       // カードは 1 つの入れ物ごと隠れるため、先頭を見れば全体が分かる
-      await expect(page.getByTestId("page-card").first()).toBeHidden();
-      await page.getByTestId("mode-reorder").click();
-      await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
+      await expect(page.getByTestId("editable-page").first()).toBeHidden();
+      await page.getByTestId("mode-edit").click();
+      await expect(page.getByTestId("editable-page")).toHaveCount(
+        DENSE_PAGE_COUNT,
+      );
       return gridLayout(page);
     };
 
@@ -796,7 +735,9 @@ test.describe("ページ並べ替えの表示サイズ", () => {
     // Act & Assert - 開き直してからもう一度往復する。
     // 「別の画面を開いたままアプリを閉じ、次に開いて戻ってくる」使い方
     await page.reload();
-    await expect(page.getByTestId("page-card")).toHaveCount(DENSE_PAGE_COUNT);
+    await expect(page.getByTestId("editable-page")).toHaveCount(
+      DENSE_PAGE_COUNT,
+    );
     const afterRestart = await backToReorder();
     expect(
       afterRestart.inFirstRow,

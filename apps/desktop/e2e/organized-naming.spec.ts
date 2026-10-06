@@ -169,7 +169,7 @@ function buildLibrary(): Library {
     ],
     { cwd: CORE_DIR, encoding: "utf8" },
   );
-  return { folder, ...JSON.parse(output.trim().split("\n").pop()!) };
+  return { folder, ...JSON.parse(output.trim().split(/\r?\n/).pop()!) };
 }
 
 test.beforeAll(async () => {

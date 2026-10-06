@@ -27,7 +27,7 @@ test.beforeAll(async () => {
 test.afterAll(() => sidecar?.stop());
 
 /** 保存が通ったときの文。読み直しの失敗と見分けるのに使う */
-const SAVED_MESSAGE = "3 ページを並び替えました";
+const SAVED_MESSAGE = "変更を反映しました";
 
 /** 見張る長さ（ms）と間隔。押せる窓が一瞬でも開けば当たる細かさ */
 const WATCH_MS = 1_500;
@@ -74,7 +74,7 @@ let probeSequence = 0;
 
 /** 並んでいるカードに描かれている色を、並んでいる順に読む */
 async function paintedColoursOf(page: Page): Promise<string[]> {
-  const cards = page.locator('[data-testid="page-card"]');
+  const cards = page.locator('[data-testid="editable-page"]');
   const total = await cards.count();
   const shots: string[] = [];
   for (let index = 0; index < total; index += 1) {
@@ -104,7 +104,7 @@ async function openReorder(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=reorder&archive=${encodeURIComponent(archive)}`,
   );
-  await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+  await expect(page.getByTestId("mode-edit")).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -113,7 +113,7 @@ async function openReorder(page: Page, archive: string) {
 /** いま並んでいるカードの名前を、並んでいる順に読む */
 async function cardNames(page: Page): Promise<string[]> {
   return page
-    .locator('[data-testid="page-card"]')
+    .locator('[data-testid="editable-page"]')
     .evaluateAll((cards) =>
       cards.map((card) => (card as HTMLElement).dataset.name ?? ""),
     );
@@ -126,8 +126,8 @@ async function cardNames(page: Page): Promise<string[]> {
  * 人はその間に押せないので、運び終えたら実際の操作と同じだけ間を空ける。
  */
 async function dragCard(page: Page, from: number, to: number) {
-  const cards = page.getByTestId("page-card");
-  await cards.nth(from).hover();
+  const cards = page.getByTestId("editable-page");
+  await cards.nth(from).getByTestId("page-drag-handle").hover();
   await page.mouse.down();
   const box = (await cards.nth(to).boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
@@ -154,7 +154,7 @@ async function watchSave(page: Page, duration: number): Promise<boolean[]> {
       const started = performance.now();
       while (performance.now() - started < span) {
         const button = document.querySelector<HTMLButtonElement>(
-          '[data-testid="save"]',
+          '[data-testid="split-confirm"]',
         );
         samples.push(button !== null && !button.disabled);
         await new Promise((resolve) => setTimeout(resolve, interval));
@@ -169,7 +169,7 @@ async function watchSave(page: Page, duration: number): Promise<boolean[]> {
 async function saveIsPressable(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const button = document.querySelector<HTMLButtonElement>(
-      '[data-testid="save"]',
+      '[data-testid="split-confirm"]',
     );
     return button !== null && !button.disabled;
   });
@@ -178,7 +178,7 @@ async function saveIsPressable(page: Page): Promise<boolean> {
 /** 画面が利用者に告げている文。状態欄と警告のどちらに出しても拾う */
 async function announcedText(page: Page): Promise<string> {
   return page.evaluate(() =>
-    ['[data-testid="status"]', '[data-testid="error"]']
+    ['[data-testid="split-status"]', '[data-testid="error"]']
       .map(
         (selector) =>
           document.querySelector(selector)?.textContent?.trim() ?? "",
@@ -209,7 +209,7 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
     ]);
     const before = coloursOf(archive);
     await openReorder(page, archive);
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
 
     // 制御 - 開いた直後の絵が読めている。ここが読めないなら、以降の
     // 「絵が変わっていない」は色を読めていないだけでも成り立ってしまう
@@ -221,15 +221,16 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
 
     // Act - 1 枚目を 3 枚目の位置へ運んで保存する
     await dragCard(page, 0, 2);
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toContainText(
+      SAVED_MESSAGE,
+      {
+        timeout: 30_000,
+      },
     );
-    await page.getByTestId("save").click();
-    await expect(page.getByTestId("status")).toContainText(SAVED_MESSAGE, {
-      timeout: 30_000,
-    });
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "変更はありません",
+    await expect(page.getByTestId("split-confirm")).toHaveText(
+      "確認済みにする",
     );
 
     // 制御 - 本の側では、同じ名前が別の絵を指すようになっている。
@@ -276,10 +277,13 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
       "開いた直後の絵を読めていない",
     );
     await dragCard(page, 0, 2);
-    await page.getByTestId("save").click();
-    await expect(page.getByTestId("status")).toContainText(SAVED_MESSAGE, {
-      timeout: 30_000,
-    });
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toContainText(
+      SAVED_MESSAGE,
+      {
+        timeout: 30_000,
+      },
+    );
     await expectPainted(
       page,
       ["緑", "青", "赤"],
@@ -288,18 +292,16 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
 
     // Act - サムネイル作成で 3 枚目（赤）を表紙にする。先頭へ移すので連番が
     // 振り直され、同じ名前が別の絵を指すようになる
-    await page.getByTestId("mode-thumbnail").click();
-    await page.getByTestId("choose-page").click();
-    await page
-      .locator('[data-testid="thumbnail-candidate"][data-name="003.jpg"]')
+    await page.getByTestId("mode-edit").click();
+    const card = page.getByTestId("editable-page").filter({
+      has: page.getByRole("group", { name: "003.jpg", exact: true }),
+    });
+    await card.getByRole("button", { name: /の操作/ }).click();
+    await card
+      .getByRole("menuitem", { name: "サムネイルにする", exact: true })
       .click();
-    await expect(page.getByTestId("cover-name")).toHaveText("003.jpg");
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
-    await page.getByTestId("mode-reorder").click();
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Assert - 並べ替えの画面は作り直される。世代を数え直して作り直す前と
     // 同じ URL になると、ブラウザが覚えている保存後の古い絵が出る
@@ -326,7 +328,7 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
     // 開いたときの読み込みまで落とすと、格子が出ないまま何も確かめられない
     let armed = false;
     let blocked = 0;
-    await page.route(/\/api\/pages\?/, async (route: Route) => {
+    await page.route(/\/api\/jobs\/split-scan/, async (route: Route) => {
       if (!armed) {
         await route.continue();
         return;
@@ -342,19 +344,17 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
     });
     page.on("request", (request) => {
       if (request.method() !== "POST") return;
-      if (new URL(request.url()).pathname.endsWith("/api/jobs/reorder")) {
+      if (new URL(request.url()).pathname.endsWith("/api/jobs/split")) {
         armed = true;
       }
     });
 
     await openReorder(page, archive);
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
 
     // Act - 1 枚目を 3 枚目の位置へ運ぶ
     await dragCard(page, 0, 2);
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
 
     // 制御 - 見張りが「押せる」を観測できている。ここが取れないと、後の
     // 「一度も押せなかった」は見張りが壊れているだけでも成り立つ
@@ -364,7 +364,7 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
     ).toBe(true);
 
     // Act - 保存する。書き込みは通り、その後の読み直しだけが落ちる
-    await page.getByTestId("save").click();
+    await page.getByTestId("split-confirm").click();
     await expect
       .poll(() => blocked, {
         message: "保存の後の読み直しを落とせていない",
@@ -405,11 +405,11 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
     // Assert - 利用者と同じように押しても、2 度目は投入されない。
     // 「失敗を出したうえで押させる」実装を、文の検証だけで通さない
     if (await saveIsPressable(page)) {
-      await page.getByTestId("save").click({ force: true });
+      await page.getByTestId("split-confirm").click({ force: true });
     }
     await page.waitForTimeout(1_000);
     expect(
-      posted.filter((path) => path.endsWith("/api/jobs/reorder")),
+      posted.filter((path) => path.endsWith("/api/jobs/split")),
       "書き込む前の並びで 2 度目の保存が投入されている",
     ).toHaveLength(1);
     expect(coloursOf(archive), "2 度目の書き込みが本へ届いている").toEqual(

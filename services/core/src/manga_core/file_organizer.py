@@ -118,6 +118,7 @@ class FileOrganizer:
         series: SeriesName,
         sole: bool,
         suffix: int | None = None,
+        filename: str | None = None,
     ) -> ProcessResult | None:
         """1 巻ぶんを書き出す。行き先が元のアーカイブ自身で、作り直す必要も
         無ければ ``None`` を返す。
@@ -126,7 +127,7 @@ class FileOrganizer:
         ``suffix`` は名前に足す番号（#166）。無ければ番号なしの名前から試す。
         """
         # Generate output filename
-        output_name = series.volume_name(volume)
+        output_name = filename[:-4] if filename else series.volume_name(volume)
 
         # 行き先が元のアーカイブ自身なら、``_1`` の写しは作らない（#73 段階 4a）。
         # 既定の出力先は「投入した 1 件目の親フォルダ」なので、``蔵書/[著者] 作品``
@@ -150,7 +151,7 @@ class FileOrganizer:
         # 出力先に同じ名前が既に在るときは、その番号から上へ空きを探す。番号なしの
         # 名前へは戻らない。そこは番号なしで選ばれた本の名前で、まだ書き出して
         # いないだけかもしれない
-        if suffix:
+        if suffix and not filename:
             number = suffix
             while (manga_dir / f"{output_name}_{number}{OUTPUT_SUFFIX}").exists():
                 number += 1
@@ -367,6 +368,7 @@ class FileOrganizer:
         # 公開側（``process_single_archive``）の既定値は残してある
         volumes: Mapping[str, int | None],
         suffix: int | None,
+        filename: str | None = None,
     ) -> list[ProcessResult]:
         """裸の画像フォルダを 1 冊として整える。
 
@@ -390,7 +392,7 @@ class FileOrganizer:
                 volumes,
             )
             result = self._process_volume(
-                image_dir, image_dir, manga_dir, volume, series, True, suffix
+                image_dir, image_dir, manga_dir, volume, series, True, suffix, filename
             )
             # 書き出す先は ZIP なので、フォルダ自身と同じになることはない
             return [result] if result is not None else []
@@ -413,6 +415,7 @@ class FileOrganizer:
         volumes: Mapping[str, int | None] = NO_VOLUME_OVERRIDES,
         on_book: BookDone | None = None,
         suffixes: Mapping[str, int] = NO_SUFFIXES,
+        filenames: Mapping[str, str] | None = None,
     ) -> list[ProcessResult]:
         """Process a single archive file.
 
@@ -441,7 +444,11 @@ class FileOrganizer:
         # 巻数の訂正はそうはいかないので、あちらの経路にも渡す
         if archive_path.is_dir():
             results = self._process_image_directory(
-                archive_path, series, volumes, suffixes.get(IMAGE_DIRECTORY_KEY)
+                archive_path,
+                series,
+                volumes,
+                suffixes.get(IMAGE_DIRECTORY_KEY),
+                filenames.get(IMAGE_DIRECTORY_KEY) if filenames else None,
             )
             if on_book is not None:
                 for result in results:
@@ -510,6 +517,9 @@ class FileOrganizer:
                     # 1 冊だけのときに限る
                     sole=len(image_dirs) == 1,
                     suffix=suffixes.get(self._location_key(image_dir) or ""),
+                    filename=filenames.get(self._location_key(image_dir) or "")
+                    if filenames
+                    else None,
                 )
                 if result is None:
                     # 行き先が元のアーカイブ自身で、作り直すまでもない。外した本と

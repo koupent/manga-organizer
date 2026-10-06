@@ -93,7 +93,7 @@ async function openReorder(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=reorder&archive=${encodeURIComponent(archive)}`,
   );
-  await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+  await expect(page.getByTestId("mode-edit")).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -102,7 +102,7 @@ async function openReorder(page: Page, archive: string) {
 /** いま並んでいるカードの名前を、並んでいる順に読む */
 async function cardNames(page: Page): Promise<string[]> {
   return page
-    .locator('[data-testid="page-card"]')
+    .locator('[data-testid="editable-page"]')
     .evaluateAll((cards) =>
       cards.map((card) => (card as HTMLElement).dataset.name ?? ""),
     );
@@ -115,8 +115,8 @@ async function cardNames(page: Page): Promise<string[]> {
  * 人はその間に押せないので、運び終えたら実際の操作と同じだけ間を空ける。
  */
 async function dragCard(page: Page, from: number, to: number) {
-  const cards = page.getByTestId("page-card");
-  await cards.nth(from).hover();
+  const cards = page.getByTestId("editable-page");
+  await cards.nth(from).getByTestId("page-drag-handle").hover();
   await page.mouse.down();
   const box = (await cards.nth(to).boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
@@ -136,10 +136,10 @@ test.describe("ページ分割の確定と、ページ並べ替えの画面", ()
     // 「古いまま残る」かどうかを確かめたことにならない
     const archive = writeSpreadArchive("分割してから並べ替え.zip");
     await openReorder(page, archive);
-    await expect(page.getByTestId("page-card")).toHaveCount(BEFORE_PAGES);
+    await expect(page.getByTestId("editable-page")).toHaveCount(BEFORE_PAGES);
 
     // Act - ページ分割へ移り、見開きを 1 枚割る
-    await page.getByTestId("mode-split").click();
+    await page.getByTestId("split-step-split").click();
     await expect(page.getByTestId("split-grid")).toBeVisible({
       timeout: 30_000,
     });
@@ -161,12 +161,12 @@ test.describe("ページ分割の確定と、ページ並べ替えの画面", ()
     expect(entries, "分割が本を書き換えていない").toHaveLength(AFTER_PAGES);
 
     // Act - ページ並べ替えへ戻る
-    await page.getByTestId("mode-reorder").click();
+    await page.getByTestId("editor-pages").click();
 
     // Assert - 枚数が新しいページ数になっている。ここを先に見るのは、
     // 1 枚も描かれていない格子で名前の検証が空回りしないようにするため
     await expect(
-      page.getByTestId("page-card"),
+      page.getByTestId("editable-page"),
       "割ってページが増えたのに、古い枚数のまま並んでいる",
     ).toHaveCount(AFTER_PAGES);
 
@@ -180,14 +180,12 @@ test.describe("ページ分割の確定と、ページ並べ替えの画面", ()
     // Act - その画面で並べ替えて保存する。名前まで読み直したかどうかは、
     // 保存が通るかどうかにしか現れない
     await dragCard(page, 0, 2);
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
-    await page.getByTestId("save").click();
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
+    await page.getByTestId("split-confirm").click();
     await expect(
-      page.getByTestId("status"),
+      page.getByTestId("split-status"),
       "古い名前で保存しようとして断られている",
-    ).toContainText(`${AFTER_PAGES} ページを並び替えました`, {
+    ).toContainText("変更を反映しました", {
       timeout: 30_000,
     });
 
@@ -220,16 +218,14 @@ test.describe("ページ分割の確定と、ページ並べ替えの画面", ()
     // 中身と突き合わせて「どのページが来たか」を見る
     const before = coloursOf(archive);
     await openReorder(page, archive);
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
 
     // Act - 1 枚目を 3 枚目の位置へ運んで保存する
     await dragCard(page, 0, 2);
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
-    await page.getByTestId("save").click();
-    await expect(page.getByTestId("status")).toContainText(
-      "3 ページを並び替えました",
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toContainText(
+      "変更を反映しました",
       { timeout: 30_000 },
     );
 
@@ -243,10 +239,10 @@ test.describe("ページ分割の確定と、ページ並べ替えの画面", ()
     // Assert - 保存が通った並びは、もう「未保存の変更」ではない。
     // 出たままだと、利用者は保存が効いていないと思ってもう一度押す
     await expect(
-      page.getByTestId("dirty-state"),
+      page.getByTestId("split-confirm"),
       "保存が通ったのに未保存の印が消えない",
-    ).toHaveText("変更はありません");
-    await expect(page.getByTestId("save")).toBeDisabled();
+    ).toHaveText("確認済みにする");
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Assert - 書き込みで連番は振り直される。画面が抱える名前もその新しい
     // 連番でなければならない。ここが古いままだと、次に保存したとき

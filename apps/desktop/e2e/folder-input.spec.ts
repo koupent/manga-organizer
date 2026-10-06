@@ -28,7 +28,7 @@ test.afterAll(() => sidecar?.stop());
 function producedNames(root: string): string[] {
   try {
     return readdirSync(root, { recursive: true, encoding: "utf8" })
-      .map((entry) => entry.split("/").pop()!)
+      .map((entry) => entry.split(/[\\/]/).pop()!)
       .filter((name) => name.endsWith(".zip"))
       .sort();
   } catch {

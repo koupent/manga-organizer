@@ -1,3 +1,4 @@
+import { openCoverTools, saveCoverTools } from "./cover-tools";
 import { expect, test, type Page } from "@playwright/test";
 import { VIEWER_CONTRACT_IMPORT, pageSizesOf, runPython } from "./archive";
 import { startSidecar, type Sidecar } from "./sidecar";
@@ -82,6 +83,7 @@ async function openCover(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=thumbnail&archive=${encodeURIComponent(archive)}`,
   );
+  await openCoverTools(page);
   await expect(page.getByTestId("crop-frame")).toBeVisible();
 }
 
@@ -116,11 +118,7 @@ async function delayCoverFor(page: Page, slow: string): Promise<string[]> {
 
 /** 候補一覧から 1 枚選ぶ。応答は待たない。待つと前後が起こらない */
 async function pickPage(page: Page, name: string) {
-  await page.getByTestId("choose-page").click();
-  await expect(page.getByTestId("page-candidates")).toBeVisible();
-  await page
-    .locator(`[data-testid="thumbnail-candidate"][data-name="${name}"]`)
-    .click();
+  await openCoverTools(page, name);
 }
 
 /**
@@ -184,11 +182,10 @@ test.describe("サムネイル作成: 選び直しの応答が前後して届く
     await raceTheSelections(page, archive);
 
     // Act - そのまま確定する
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
+    await saveCoverTools(page);
+    await expect(page.getByTestId("split-status")).toContainText("確認済み", {
+      timeout: 30_000,
+    });
 
     // Assert - 選び直した方（先に選んだ 1 枚）は 1 バイトも変わっていない。
     // 書き換えられていれば、その中身の指紋がページから消える

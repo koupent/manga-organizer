@@ -675,6 +675,11 @@ export interface components {
        * @description 名前に足す番号（_1 なら 1）。同じ巻を複数作るとき、画面が選んだ順に決める。省くと、出力先で空いている名前を前から使う
        */
       suffix?: number | null;
+      /**
+       * Filename
+       * @description 手動で指定した出力 ZIP ファイル名
+       */
+      filename?: string | null;
     };
     /**
      * BrowseEntry
@@ -1209,6 +1214,20 @@ export interface components {
        * @description ページ順に並べた行ぜんぶ
        */
       rows: components["schemas"]["SplitIntentRowView"][];
+      /**
+       * Allow Reorder
+       * @description 行の順序変更も反映する
+       * @default false
+       */
+      allow_reorder: boolean;
+      /**
+       * Reviewed
+       * @description 本に確認済みの記録を残す
+       * @default false
+       */
+      reviewed: boolean;
+      /** @description 同じ保存に含める表紙の画像調整 */
+      cover?: components["schemas"]["CoverRequest"] | null;
     };
     /**
      * SplitIntentRowView

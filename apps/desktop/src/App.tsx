@@ -4,11 +4,9 @@ import type { Update } from "@tauri-apps/plugin-updater";
 import { cn } from "./lib/utils";
 import { baseName, parentDirectory } from "./path";
 import { SidecarClient } from "./api/client";
-import { CoverEditor } from "./components/CoverEditor";
 import { FilePicker } from "./components/FilePicker";
-import { PageGrid } from "./components/PageGrid";
 import { OrganizePanel } from "./components/OrganizePanel";
-import { SplitEditor } from "./components/SplitEditor";
+import { FileEditor } from "./components/FileEditor";
 import type { HandoffMode } from "./components/EditShortcuts";
 import {
   onFilesDragging,
@@ -22,73 +20,13 @@ import { Alert } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
 import { Segmented } from "./components/ui/segmented";
 
-type Page = { name: string; size: number; modified: string };
-type Mode = "organize" | "reorder" | "thumbnail" | "split";
-
-/** もう一度落とされた投入を光らせておく時間 */
+type Mode = "organize" | "edit";
 const FLASH_MS = 600;
-
-// 対象物ではなく、そこで何ができるかでタブを名付ける
-// 使う順に並べる。整理はほぼ必ず通り、サムネイルは良し悪しが一目で分かる。
-// ページ順の異常は読んで初めて気づくもので、後から戻ってくる使い方が主になる。
-// 見開きを割るのは、順序を直し終えてから最後に通る
-//
-// 整理は複数のファイルをまとめて処理し、残りの 3 つは 1 冊を開いて編集する。
-// 性質が違うので組を分けて並べる（#128）。同じ並びに置くと、4 つが同じ作りの
-// 画面に見え、整理の画面だけ勝手が違うことに戸惑う
-const BATCH_MODES: { id: Mode; label: string }[] = [
-  { id: "organize", label: "ファイル整理" },
+const MODES: { id: Mode; label: string; testId: string }[] = [
+  { id: "organize", label: "ディレクトリ整理", testId: "mode-organize" },
+  { id: "edit", label: "ファイル編集", testId: "mode-edit" },
 ];
-// 使う順に並べる。ページ並べ替えは、読んでいて並びのおかしさに気づいたときに
-// 使うもので、整理した直後にはまず使わない。だから最後（#173）
-const BOOK_MODES: { id: Mode; label: string }[] = [
-  { id: "thumbnail", label: "サムネイル作成" },
-  { id: "split", label: "ページ分割・結合" },
-  { id: "reorder", label: "ページ並べ替え" },
-];
-const MODES = [...BATCH_MODES, ...BOOK_MODES];
-
-const withTestIds = (items: { id: Mode; label: string }[]) =>
-  items.map((item) => ({ ...item, testId: `mode-${item.id}` }));
-
-/** 1 冊を読み込んで使う画面。アーカイブが書き換わると中身が古くなる */
-type ArchiveMode = "thumbnail" | "reorder" | "split";
-
-/**
- * 画面ごとの「読み直しの世代」。
- *
- * どれか 1 つがアーカイブを書き換えると、ページ名もページ数も変わる。他の画面が
- * 抱えているページは、その瞬間に別の本のものになる。世代を進めて作り直させる。
- *
- * 書いた画面自身は進めない。自分の結果は自分で読み直しているうえ、作り直すと
- * 「何をしたか」の報告ごと消える。利用者は押した結果を確かめられなくなる。
- */
-type ArchiveVersions = Record<ArchiveMode, number>;
-
-const FIRST_VERSIONS: ArchiveVersions = { thumbnail: 0, reorder: 0, split: 0 };
-
-function staleAfter(
-  current: ArchiveVersions,
-  writer: ArchiveMode,
-): ArchiveVersions {
-  return {
-    thumbnail: current.thumbnail + (writer === "thumbnail" ? 0 : 1),
-    reorder: current.reorder + (writer === "reorder" ? 0 : 1),
-    split: current.split + (writer === "split" ? 0 : 1),
-  };
-}
-
-/** 対象を選ぶ画面の見出し。どの作業のために選ぶのかを言う */
-const PICKER_TITLES: Record<ArchiveMode, string> = {
-  reorder: "並べ替えるアーカイブ",
-  thumbnail: "サムネイルを作るアーカイブ",
-  split: "ページを分割・結合するアーカイブ",
-};
-
-const isArchiveMode = (mode: Mode): mode is ArchiveMode => mode !== "organize";
-
-const isMode = (value: string | null): value is Mode =>
-  MODES.some((item) => item.id === value);
+const isArchiveMode = (mode: Mode) => mode === "edit";
 
 /**
  * 起動時のクエリ文字列。
@@ -116,27 +54,28 @@ function Panel({ active, children }: { active: boolean; children: ReactNode }) {
   return <div className={active ? "contents" : "hidden"}>{children}</div>;
 }
 
-/** ファイル整理・サムネイル作成・ページ並べ替え・ページ分割を切り替えて使う */
+/** ディレクトリ整理と、1 冊のファイル編集を切り替える */
 export function App() {
   const [client, setClient] = useState<SidecarClient | null>(null);
   // 起動したら、まずファイル整理を出す（#180）。1 冊を編集する画面は、整理した
   // 本の行の近道から移って使う。本を名指しして開いたときだけ、その本の
-  // ページ並べ替えを出す
+  // ファイル編集を出す
   const [mode, setMode] = useState<Mode>(() => {
     const params = startupParams();
     const requested = params.get("mode");
-    if (isMode(requested)) return requested;
-    return params.get("archive") ? "reorder" : "organize";
+    if (requested === "organize") return "organize";
+    if (["edit", "thumbnail", "split", "reorder"].includes(requested ?? ""))
+      return "edit";
+    return params.get("archive") ? "edit" : "organize";
   });
   const [archive, setArchive] = useState(
     () => startupParams().get("archive") ?? "",
   );
-  const [pages, setPages] = useState<Page[]>([]);
   const [error, setError] = useState("");
   const [health, setHealth] = useState("");
   // 新しい版の案内。起動時と、設定の「更新を確認」が出す（#136）
   const [update, setUpdate] = useState<Update | null>(null);
-  const [versions, setVersions] = useState<ArchiveVersions>(FIRST_VERSIONS);
+  const [editsVersion, setEditsVersion] = useState(0);
 
   /**
    * 一度でも開いた画面。開いた画面は隠すだけで捨てず、状態を残す。
@@ -225,14 +164,7 @@ export function App() {
   const addSourcesRef = useRef(addSources);
   addSourcesRef.current = addSources;
 
-  /**
-   * どれかの画面がアーカイブを書き換えた。
-   *
-   * ページ名もページ数も変わるので、他の画面が抱えているページは古い。
-   * 世代を進めて作り直させる。
-   */
-  const archiveChanged = (writer: ArchiveMode) =>
-    setVersions((current) => staleAfter(current, writer));
+  const archiveChanged = () => setEditsVersion((version) => version + 1);
 
   /** 画面を移る。移った先は初回だけ作り、以後は隠すだけで捨てない */
   const changeMode = (next: Mode) => {
@@ -257,9 +189,6 @@ export function App() {
    * 出ないまま空の画面が残る。並べ替えの途中経過もそのまま続けられる。
    */
   const changeArchive = (path: string, keep: Mode = modeRef.current) => {
-    const sameGrid =
-      path === archive && keep === "reorder" && opened.includes("reorder");
-    if (!sameGrid) setPages([]);
     setArchive(path);
     setError("");
     setOpened((current) =>
@@ -360,38 +289,6 @@ export function App() {
     };
   }, []);
 
-  /**
-   * ページ並べ替えが使う一覧を読み込む。
-   *
-   * 切っ掛けは「その画面が在るか」であって「いま見ているか」ではない。見ている
-   * 画面で絞ると、他の画面が本を書き換えて世代が進んでも一覧は古いままで、
-   * 作り直された格子が消えたページ名を抱えたまま立ち上がる。世代と同じ切っ掛けで
-   * 読み直せば、新しい一覧は格子が出来た直後に追い付く。
-   *
-   * 逆に、画面を移っただけでは読み直さない。読み直すと並べ替えの途中経過を
-   * 捨てることになり、覗いて戻るたびに利用者の手が消える。
-   */
-  const hasReorder = opened.includes("reorder");
-
-  useEffect(() => {
-    if (!client || !archive || !hasReorder) return;
-    // 本を替えた後に前の本の返事が届いても使わない（#145）。使うと、新しい
-    // 本の格子が前の本のページ名で並び、名前の合わないサムネイルが出ない
-    let current = true;
-    setError("");
-    client
-      .listPages(archive)
-      .then((payload) => {
-        if (current) setPages(payload.pages as Page[]);
-      })
-      .catch((reason) => {
-        if (current) setError(String(reason.message ?? reason));
-      });
-    return () => {
-      current = false;
-    };
-  }, [client, archive, hasReorder, versions.reorder]);
-
   const archiveName = archive ? baseName(archive) : "";
 
   return (
@@ -409,18 +306,7 @@ export function App() {
         </div>
 
         <nav className="flex items-center gap-2" aria-label="機能">
-          <Segmented
-            items={withTestIds(BATCH_MODES)}
-            value={mode}
-            onChange={changeMode}
-          />
-          <span className="h-4 w-px bg-line" aria-hidden />
-          <span className="text-[11.5px] text-ink-faint">1 冊を編集</span>
-          <Segmented
-            items={withTestIds(BOOK_MODES)}
-            value={mode}
-            onChange={changeMode}
-          />
+          <Segmented items={MODES} value={mode} onChange={changeMode} />
         </nav>
 
         <div className="flex-1" />
@@ -463,9 +349,7 @@ export function App() {
           </Alert>
         ) : null}
 
-        {/* 1 冊を編集する 3 画面が共有する「いま開いている本」（#128）。
-            画面ごとの見出しに置くと、タブを移るたびに同じ本の名前が別の場所に
-            出直し、3 つの道具が同じ 1 冊を相手にしていることが伝わらない */}
+        {/* 編集対象と、別の本を選ぶ操作を常に一覧の上に置く */}
         {isArchiveMode(mode) && archive ? (
           <div
             className="flex h-8 shrink-0 items-center gap-2 rounded-card border border-line bg-surface px-3"
@@ -508,9 +392,7 @@ export function App() {
               onOpenSettings={() => setSettingsOpen(true)}
               onOutputDirectoryChange={setOutputDirectory}
               onOpenProduced={openArchiveIn}
-              editsVersion={
-                versions.thumbnail + versions.reorder + versions.split
-              }
+              editsVersion={editsVersion}
               onAddSources={addSources}
               nativeDragging={nativeDragging}
               flashing={flashing}
@@ -518,40 +400,15 @@ export function App() {
           </Panel>
         ) : null}
 
-        {opened.includes("thumbnail") && client && archive ? (
-          <Panel active={mode === "thumbnail"}>
-            <CoverEditor
-              // 対象が変われば別の表紙。選んだ 1 枚も切り抜き枠も作り直す。
-              // 別の画面が本を書き換えたときも、抱えている 1 枚は別物になる
-              key={`${archive}:${versions.thumbnail}`}
+        {opened.includes("edit") && client && archive ? (
+          <Panel active={mode === "edit"}>
+            <FileEditor
+              key={archive}
               client={client}
               archive={archive}
-              onArchiveChanged={() => archiveChanged("thumbnail")}
-            />
-          </Panel>
-        ) : null}
-
-        {opened.includes("reorder") && client && archive && pages.length > 0 ? (
-          <Panel active={mode === "reorder"}>
-            <PageGrid
-              // 対象が変われば別の本。並べ替えの途中経過ごと作り直す
-              key={`${archive}:${versions.reorder}`}
-              active={mode === "reorder"}
-              client={client}
-              archive={archive}
-              pages={pages}
-              onArchiveChanged={() => archiveChanged("reorder")}
-            />
-          </Panel>
-        ) : null}
-
-        {opened.includes("split") && client && archive ? (
-          <Panel active={mode === "split"}>
-            <SplitEditor
-              key={`${archive}:${versions.split}`}
-              client={client}
-              archive={archive}
-              onArchiveChanged={() => archiveChanged("split")}
+              active={mode === "edit"}
+              startWithSplit={startupParams().get("mode") === "split"}
+              onArchiveChanged={archiveChanged}
             />
           </Panel>
         ) : null}
@@ -562,7 +419,7 @@ export function App() {
           <FilePicker
             client={client}
             single
-            title={PICKER_TITLES[mode]}
+            title="編集するファイル"
             selected={[]}
             onChange={(paths) => changeArchive(paths[0] ?? "")}
           />

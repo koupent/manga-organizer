@@ -305,7 +305,7 @@ function buildLibrary(): Library {
   return {
     folder,
     organizedFolder,
-    ...JSON.parse(output.trim().split("\n").pop()!),
+    ...JSON.parse(output.trim().split(/\r?\n/).pop()!),
   };
 }
 
@@ -1108,7 +1108,7 @@ test.describe("整理済みの本の見せ方", () => {
  * - `data-dim`       … 薄める側に回る子に付ける印。行がオフのときだけ効く
  * - `plan-row-name`  … 行に出す名前（薄める側）
  * - `plan-row-path`  … 名前の隣。オフなら元、オンの整理済みなら行き先（薄める側）
- * - `plan-to-thumbnail` / `plan-to-reorder`
+ * - `plan-to-edit` / `plan-to-edit`
  *                    … 整理済みの行にだけ置く近道。薄めない
  */
 test.describe("整理済みの行の仕上げ", () => {
@@ -1359,37 +1359,17 @@ test.describe("整理済みの行の仕上げ", () => {
     // 整理済みの本は既に最終形なので、出来上がる名前は今の名前と同じになる。
     // 説明に出す名前がこの 1 つで決まることを、先に押さえておく
     expect(name, "整理済みの行の名前が、そのファイルの名前と違う").toBe(
-      library.organized.split("/").pop(),
+      library.organized.split(/[\\/]/).pop(),
     );
 
     // Assert - 1 冊を編集する 3 画面への近道（#143）。整理して出来た本の行と
     // 同じ顔にする。違う顔をしていると、押す前に読み直すことになる。
     // アイコンだけにして、何をするかは乗せたときの説明で伝える
-    for (const [testId, icon, tip] of [
-      ["plan-to-thumbnail", "svg.lucide-image", `${name} のサムネイルを作る`],
-      [
-        "plan-to-reorder",
-        "svg.lucide-list-ordered",
-        `${name} のページを並べ替える`,
-      ],
-      [
-        "plan-to-split",
-        "svg.lucide-columns-2",
-        `${name} のページを分割・結合する`,
-      ],
-    ] as const) {
-      const button = row.getByTestId(testId);
-      await expect(button, `整理済みの行に ${testId} が無い`).toHaveCount(1);
-      await expect(button.locator(icon), `${testId} の絵が違う`).toHaveCount(1);
-      await expect(
-        button,
-        `${testId} に、どの本を開くのかの説明が無い`,
-      ).toHaveAttribute("title", tip);
-      // 近道は薄めない。外れている行でも押せるものだと読めなくなる
-      expect(await inDimmed(button), `${testId} が薄める側に入っている`).toBe(
-        false,
-      );
-    }
+    const button = row.getByTestId("plan-to-edit");
+    await expect(button).toHaveCount(1);
+    await expect(button.locator("svg.lucide-pencil")).toHaveCount(1);
+    await expect(button).toHaveAttribute("title", `${name} を編集`);
+    expect(await inDimmed(button)).toBe(false);
 
     // Assert - 整理済みでない本には出さない。その本はまだディスク上に無く、
     // 押しても開くものが無い
@@ -1397,26 +1377,22 @@ test.describe("整理済みの行の仕上げ", () => {
       ["整理済みでない本", bookRow(page, library.nameMismatch)],
     ] as const) {
       await expect(
-        target.getByTestId("plan-to-thumbnail"),
+        target.getByTestId("plan-to-edit"),
         `${what}の行にまで近道が出ている`,
       ).toHaveCount(0);
       await expect(
-        target.getByTestId("plan-to-reorder"),
+        target.getByTestId("plan-to-edit"),
         `${what}の行にまで近道が出ている`,
       ).toHaveCount(0);
       await expect(
-        target.getByTestId("plan-to-split"),
+        target.getByTestId("plan-to-edit"),
         `${what}の行にまで近道が出ている`,
       ).toHaveCount(0);
     }
 
     // Assert - 一覧全体でも整理済みの冊数ちょうど。全部の行に付ける実装は
     // ここで落ちる
-    for (const testId of [
-      "plan-to-thumbnail",
-      "plan-to-reorder",
-      "plan-to-split",
-    ] as const) {
+    for (const testId of ["plan-to-edit"] as const) {
       await expect(
         page.getByTestId(testId),
         `${testId} が整理済み以外の行にも出ている`,
@@ -1426,7 +1402,7 @@ test.describe("整理済みの行の仕上げ", () => {
     // Assert - 乗せる前から見えている。編集済みの印は、整理済みの印と同じく
     // 行を眺めただけで読めないと意味が無い（#143）
     expect(
-      await opacityOf(row.getByTestId("plan-to-thumbnail")),
+      await opacityOf(row.getByTestId("plan-to-edit")),
       "乗せないと近道が見えない",
     ).toBe(FULL);
   });
@@ -1445,20 +1421,20 @@ test.describe("整理済みの行の仕上げ", () => {
       checkOf(row),
       "整理済みの行が既定で外れていない（前提が崩れている）",
     ).toHaveAttribute("aria-checked", "false");
-    const thumbnail = row.getByTestId("plan-to-thumbnail");
+    const thumbnail = row.getByTestId("plan-to-edit");
     await expect(thumbnail, "サムネイルの近道が無い").toHaveCount(1);
     await thumbnail.click();
 
     // Assert - 押した行のファイルが読み込まれた状態でサムネイル作成へ移る。
     // 画面だけ移ってファイルを選び直させると、近道の意味が無くなる
-    await expect(page.getByTestId("mode-thumbnail")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     await expect(
       page.getByTestId("archive-name"),
       "移った先が別のファイルを読んでいる",
-    ).toHaveText(source.split("/").pop()!);
+    ).toHaveText(source.split(/[\\/]/).pop()!);
     // ファイル整理は隠れるだけで残る（#67）ので、その中のドロップ領域も
     // DOM には居続ける。見えていないことで確かめる
     await expect(
@@ -1478,23 +1454,23 @@ test.describe("整理済みの行の仕上げ", () => {
 
     // Act - もう一方の近道も、別の行から試す
     const another = library.organized;
-    const reorder = bookRow(page, another).getByTestId("plan-to-reorder");
+    const reorder = bookRow(page, another).getByTestId("plan-to-edit");
     await expect(reorder, "ページ並べ替えの近道が無い").toHaveCount(1);
     await reorder.click();
 
     // Assert
-    await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     await expect(
       page.getByTestId("archive-name"),
       "移った先が別のファイルを読んでいる",
-    ).toHaveText(another.split("/").pop()!);
+    ).toHaveText(another.split(/[\\/]/).pop()!);
     // 名前だけなら見出しを書き換えるだけでも通る。中身まで読めていることを
     // ページ数で確かめる（整理済みの本はどれも 3 ページ）
     await expect(
-      page.getByTestId("page-card"),
+      page.getByTestId("editable-page"),
       "移った先が中身まで読み込めていない",
     ).toHaveCount(3);
   });

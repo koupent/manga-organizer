@@ -1,3 +1,4 @@
+import { FileNameEditor } from "./FileNameEditor";
 import {
   ArrowRight,
   BookMarked,
@@ -113,7 +114,7 @@ const COLUMNS = [
   { key: "name", label: "変換後のファイル名", width: 260, min: 150 },
   { key: "count", label: "画像枚数", width: 64, min: 64 },
   { key: "status", label: "状態", width: 80, min: 76 },
-  { key: "actions", label: "操作", width: 104, min: 104 },
+  { key: "actions", label: "操作", width: 64, min: 64 },
 ] as const;
 const GRID =
   "40px var(--plan-source) 12px var(--plan-name) var(--plan-count) var(--plan-status) var(--plan-actions)";
@@ -158,12 +159,14 @@ type PlanListProps = {
   edits: EditMarks;
   /** 利用者が巻数を直した本の鍵 */
   corrected: ReadonlySet<string>;
+  renamed: ReadonlySet<string>;
   /** 作る本どうしで名前が重なった本の鍵 */
   collided: ReadonlySet<string>;
   /** 巻数を直す。null は Unknown */
   onCorrect: (row: PlanRow, volume: number | null) => void;
   /** 直したうえで、同じ入れ物の下の本に続き番号を振る */
   onFill: (row: PlanRow, volume: number) => void;
+  onRename: (row: PlanRow, name: string | null) => void;
 };
 
 /** 行の見出しに置く絵。何を指している行なのかを字を読まずに掴めるようにする */
@@ -198,9 +201,11 @@ export function PlanList({
   onTrash,
   edits,
   corrected,
+  renamed,
   collided,
   onCorrect,
   onFill,
+  onRename,
 }: PlanListProps) {
   const [widths, setWidths] = useState<number[]>(
     COLUMNS.map((column) => column.width),
@@ -256,6 +261,7 @@ export function PlanList({
     onTrash,
     onCorrect,
     onFill,
+    onRename,
   });
   useLayoutEffect(() => {
     latest.current = {
@@ -265,6 +271,7 @@ export function PlanList({
       onTrash,
       onCorrect,
       onFill,
+      onRename,
     };
   });
   const handlers = useMemo<RowHandlers>(
@@ -288,6 +295,7 @@ export function PlanList({
       trash: (target) => latest.current.onTrash(target),
       correct: (row, volume) => latest.current.onCorrect(row, volume),
       fill: (row, volume) => latest.current.onFill(row, volume),
+      rename: (row, name) => latest.current.onRename(row, name),
     }),
     [],
   );
@@ -396,6 +404,7 @@ export function PlanList({
             handlers={handlers}
             edited={edits[madePath ?? row.source] ?? NOT_EDITED}
             corrected={corrected.has(row.id)}
+            renamed={renamed.has(row.id)}
             collided={collided.has(row.id)}
           />
         );
@@ -421,6 +430,7 @@ type PlanListRowProps = {
   handlers: RowHandlers;
   edited: readonly string[];
   corrected: boolean;
+  renamed: boolean;
   collided: boolean;
 };
 
@@ -431,6 +441,7 @@ type RowHandlers = {
   trash: (target: TrashTarget) => void;
   correct: (row: PlanRow, volume: number | null) => void;
   fill: (row: PlanRow, volume: number) => void;
+  rename: (row: PlanRow, name: string | null) => void;
 };
 
 /** 編集済みの印が無い本に渡す空の並び。毎回作ると、行の描き直しを省けない */
@@ -453,6 +464,7 @@ const PlanListRow = memo(function PlanListRow({
   handlers,
   edited,
   corrected,
+  renamed,
   collided,
 }: PlanListRowProps) {
   // 整理して出来た本（#172）。もう処理の対象ではないのでチェックを出さず、
@@ -562,15 +574,25 @@ const PlanListRow = memo(function PlanListRow({
               dim,
             )}
           >
-            <ResultName
-              name={name}
-              row={row}
-              corrected={corrected}
-              // 出来た本は処理の対象ではないので、巻数も直させない
-              locked={locked || done}
-              onCorrect={handlers.correct}
-              onFill={handlers.fill}
-            />
+            {renamed ? (
+              <span className="min-w-0 truncate">{name}</span>
+            ) : (
+              <ResultName
+                name={name}
+                row={row}
+                corrected={corrected}
+                // 出来た本は処理の対象ではないので、巻数も直させない
+                locked={locked || done}
+                onCorrect={handlers.correct}
+                onFill={handlers.fill}
+              />
+            )}
+            {!locked && !done && !row.existing ? (
+              <FileNameEditor
+                name={name}
+                onChange={(name) => handlers.rename(row, name)}
+              />
+            ) : null}
           </span>
         </>
       ) : (
@@ -638,7 +660,7 @@ const PlanListRow = memo(function PlanListRow({
             </Button>
           ) : null}
         </span>
-        <span className="flex w-[4.5rem] shrink-0">
+        <span className="flex w-6 shrink-0">
           {finished ? (
             <EditShortcuts
               name={name}

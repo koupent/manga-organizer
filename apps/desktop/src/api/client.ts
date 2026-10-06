@@ -25,7 +25,7 @@ type HealthResponse =
   paths["/api/health"]["get"]["responses"][200]["content"]["application/json"];
 type OrganizeRequest =
   paths["/api/jobs/organize"]["post"]["requestBody"]["content"]["application/json"];
-type CoverRequest =
+export type CoverRequest =
   paths["/api/jobs/cover"]["post"]["requestBody"]["content"]["application/json"];
 type OutputRoot =
   paths["/api/output-roots"]["post"]["responses"][200]["content"]["application/json"];

@@ -72,7 +72,7 @@ _DERIVED_KEY = "derived"
 _EDITS_KEY = "edits"
 
 # 本に施した編集の種類（#143）。画面は整理の画面でこの名前ごとに印を出す
-EDIT_KINDS = ("thumbnail", "reorder", "split")
+EDIT_KINDS = ("thumbnail", "reorder", "split", "review")
 _SOURCE_KEY = "source"
 _OPERATIONS_KEY = "operations"
 
@@ -175,6 +175,7 @@ def plan_record(
     source_name: str,
     produced: bytes,
     operations: Sequence[Operation] = (),
+    planned: Mapping[str, bytes] | None = None,
 ) -> dict[str, bytes]:
     """1 枚の元画像から 1 枚が出る加工を記録する。plan_manifest の 1 件版"""
     return plan_manifest(
@@ -182,6 +183,7 @@ def plan_record(
         source=source,
         source_name=source_name,
         derivations=(Derivation(produced=produced, operations=tuple(operations)),),
+        planned=planned,
     )
 
 

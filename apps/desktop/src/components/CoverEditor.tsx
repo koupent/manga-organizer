@@ -1,7 +1,6 @@
 import {
   Check,
   Image as ImageIcon,
-  Images,
   RotateCcw,
   RotateCw,
   TriangleAlert,
@@ -10,7 +9,6 @@ import { useEffect, useState } from "react";
 import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { CoverCandidates } from "./CoverCandidates";
 import { CoverPreview } from "./CoverPreview";
 import {
   CropFrame,
@@ -32,7 +30,7 @@ import { EditorLayout } from "./EditorLayout";
 import { SectionTitle } from "./ui/section-title";
 import { fitInside, useBoxSize } from "../lib/stage";
 import { firstImageGeneration } from "../lib/utils";
-import type { SidecarClient } from "../api/client";
+import type { CoverRequest, SidecarClient } from "../api/client";
 
 /** 絵を囲う枠線の太さ。この画面で唯一、絵の縁を背景から切り分けるもの */
 const FRAME_BORDER = 1;
@@ -90,42 +88,40 @@ function initialEdit(cover: Cover): {
 type CoverEditorProps = {
   client: SidecarClient;
   archive: string;
-  /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
-  onArchiveChanged?: () => void;
+  pageName: string;
+  onDraft: (request: CoverRequest) => void;
 };
 
 /**
- * サムネイル作成の画面。
+ * サムネイルの画像調整。選んだ加工を共通編集画面へ返す。
  *
  * viewer は辞書順で先頭のページを表紙として描き、縦長 2:3 に中央クロップする。
  * どの絵をサムネイルにするか選んで切り取り、足りない側に余白を足して 2:3 に
  * してから先頭ページへ移す（#146）。2:3 の表紙なら viewer で切られない。
  *
- * 加工（切り抜きと回転）はすべて保留にし、確定したときに 1 回だけ書き込む。
+ * 加工（切り抜きと回転）は保留にし、共通画面で保存したときに一度だけ書き込む。
  * 押すたびに書き込む作りでは、次の加工が書き換わった画像へ更に重なり、
  * 押した回数だけ原稿が縮み、JPEG が劣化する。取り返しが付かない。
  */
 export function CoverEditor({
   client,
   archive,
-  onArchiveChanged,
+  pageName,
+  onDraft,
 }: CoverEditorProps) {
-  const [pages, setPages] = useState<string[]>([]);
-  const [selected, setSelected] = useState("");
+  const selected = pageName;
   const [cover, setCover] = useState<Cover | null>(null);
   // 枠を触っていない間は null。初期状態は画像の寸法から毎回導く。
   // 座標は「回した後の絵」で持つ。画面で見えている向きと枠の向きが揃う
   const [crop, setCrop] = useState<CropRect | null>(null);
   // 保留中の回転。確定するまでファイルには触れない
   const [angle, setAngle] = useState<QuarterTurn>(0);
-  const [choosing, setChoosing] = useState(false);
   const [status, setStatus] = useState("");
-  const [running, setRunning] = useState(false);
   // 加工しても名前は変わらないことがある。src が同じままだと img は取りに
   // 行かないので、確定のたびにここを進めて読み直させる。
   // これは「同じ画面で加工した」ときの合図でしかない。開き直したときに古い絵を
   // 出さないことは、サイドカー側の ETag による再確認が受け持つ
-  const [reloadKey, setReloadKey] = useState(firstImageGeneration);
+  const [reloadKey] = useState(firstImageGeneration);
 
   // 絵を置ける面の実寸。候補一覧の開け閉てや窓の大きさで変わる
   const [stageRef, stage] = useBoxSize<HTMLDivElement>();
@@ -148,20 +144,6 @@ export function CoverEditor({
     // 絵の向きが変われば、どこを 2:3 で切るかも変わる。持ち越さない
     setCrop(null);
   };
-
-  useEffect(() => {
-    client
-      .listPages(archive)
-      .then((payload) => {
-        const names = payload.pages.map((page) => page.name);
-        setPages(names);
-        // 既定は先頭ページ。選び直した後は、その 1 枚が残っている限り保つ
-        setSelected((current) =>
-          names.includes(current) ? current : (names[0] ?? ""),
-        );
-      })
-      .catch((reason) => setStatus(String(reason.message ?? reason)));
-  }, [client, archive, reloadKey]);
 
   useEffect(() => {
     if (!selected) return;
@@ -193,42 +175,20 @@ export function CoverEditor({
    * サイドカーは 切り抜き → 回転 の順に適用する。枠は回した後の座標で
    * 持っているので、逆向きに戻して元画像の座標へ直してから渡す。
    */
-  const applyPending = async (frame: CropRect, turn: QuarterTurn) => {
+  const applyPending = (frame: CropRect, turn: QuarterTurn) => {
     if (!cover) return;
     const source = sourceOf(cover);
     const shown = rotatedSize(source, turn);
     const upright = rotateCrop(frame, shown, oppositeTurn(turn));
-    setRunning(true);
-    setStatus("加工しています...");
-    try {
-      const accepted = await client.editCover({
-        archive,
-        name: cover.name,
-        split: null,
-        crop: toCropBox(upright, source),
-        rotate: turn,
-        make_first: true,
-        // 枠は加工前の画像の上で選んでいる。サイドカーにも同じ画素へ当てさせないと、
-        // 保存済みの狭い画像に当たり、選んだとおりの範囲が切り出されない
-        from_original: Boolean(cover.original),
-      });
-      const job = await client.waitForJob(accepted.id);
-      if (job.state !== "succeeded") {
-        throw new Error(job.error ?? "加工に失敗しました");
-      }
-      // 先頭へ移すと連番が振り直される。加工した 1 枚を新しい名前で追い続ける
-      const produced = job.result as { name?: string } | null;
-      if (produced?.name) setSelected(produced.name);
-      setStatus("表紙を加工しました");
-      setReloadKey((key) => key + 1);
-      // 先頭へ移すと連番が振り直される。この本を抱えている他の画面は、
-      // そのままでは無くなった名前のページを並べ続ける
-      onArchiveChanged?.();
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRunning(false);
-    }
+    onDraft({
+      archive,
+      name: cover.name,
+      split: null,
+      crop: toCropBox(upright, source),
+      rotate: turn,
+      make_first: true,
+      from_original: Boolean(cover.original),
+    });
   };
 
   if (!cover) {
@@ -308,12 +268,10 @@ export function CoverEditor({
           )}
           {/* 枠は掴めると分かって初めて使われる。説明は枠のある作業面の
             すぐ上に出す。枠が退いている間は言っても指す先が無い */}
-          {choosing ? null : (
-            <span className="shrink-0 text-[12px] text-ink-faint">
-              枠を掴んで動かし、右下の角で大きさを変えます（足りない所は縁の色で塗って
-              2:3 にします）
-            </span>
-          )}
+          <span className="shrink-0 text-[12px] text-ink-faint">
+            枠を掴んで動かし、右下の角で大きさを変えます（足りない所は縁の色で塗って
+            2:3 にします）
+          </span>
           <div className="flex-1" />
           <span
             className="min-w-0 truncate text-[12px] text-ink-muted"
@@ -329,35 +287,20 @@ export function CoverEditor({
         {/* 作業面。切り抜きの面と候補一覧が、同じ場所を入れ替わりで使う。
             200 ページから 1 枚を探すには、帯ではなくこの面の広さが要る */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          {choosing ? (
-            <CoverCandidates
-              client={client}
-              archive={archive}
-              pages={pages}
-              current={cover.name}
-              reloadKey={reloadKey}
-              onSelect={(name) => {
-                setSelected(name);
-                setChoosing(false);
-              }}
-            />
-          ) : (
-            /* 絵は上端を揃える。窓の大きさで面の高さが変わっても、
-               見ている絵が上下に泳がない */
+          <div
+            ref={stageRef}
+            className="flex min-h-0 flex-1 justify-center overflow-hidden"
+          >
+            {/* 枠の位置を絵そのものに合わせるため、枠線は外側の箱に持たせる */}
             <div
-              ref={stageRef}
-              className="flex min-h-0 flex-1 justify-center overflow-hidden"
+              data-testid="cover-canvas"
+              className="relative self-start overflow-hidden rounded border border-line"
+              style={{
+                width: display.width + FRAME_BORDER * 2,
+                height: display.height + FRAME_BORDER * 2,
+              }}
             >
-              {/* 枠の位置を絵そのものに合わせるため、枠線は外側の箱に持たせる */}
-              <div
-                data-testid="cover-canvas"
-                className="relative self-start overflow-hidden rounded border border-line"
-                style={{
-                  width: display.width + FRAME_BORDER * 2,
-                  height: display.height + FRAME_BORDER * 2,
-                }}
-              >
-                {/*
+              {/*
                   回転は保留なので、原稿ではなく見え方だけを回す。回す前の
                   寸法で置いてから中心で回すと、外側の箱にちょうど収まる。
 
@@ -365,24 +308,23 @@ export function CoverEditor({
                   「箱の幅まで」に刈られると、回した後に箱を埋められない。
                   絵と枠がずれ、枠で選んだ範囲と結果が食い違う。
                 */}
-                <img
-                  data-testid="cover-image"
-                  className="absolute block"
-                  style={{
-                    width: upright.width,
-                    height: upright.height,
-                    maxWidth: "none",
-                    left: (display.width - upright.width) / 2,
-                    top: (display.height - upright.height) / 2,
-                    transform: `rotate(${angle}deg)`,
-                  }}
-                  src={imageUrl}
-                  alt={cover.name}
-                />
-                <CropFrame image={shown} crop={frame} onChange={setCrop} />
-              </div>
+              <img
+                data-testid="cover-image"
+                className="absolute block"
+                style={{
+                  width: upright.width,
+                  height: upright.height,
+                  maxWidth: "none",
+                  left: (display.width - upright.width) / 2,
+                  top: (display.height - upright.height) / 2,
+                  transform: `rotate(${angle}deg)`,
+                }}
+                src={imageUrl}
+                alt={cover.name}
+              />
+              <CropFrame image={shown} crop={frame} onChange={setCrop} />
             </div>
-          )}
+          </div>
         </div>
 
         {/*
@@ -427,16 +369,6 @@ export function CoverEditor({
 
           <section className="flex flex-col gap-1.5">
             <SectionTitle>加工</SectionTitle>
-            <Button
-              variant="secondary"
-              className="w-full"
-              data-testid="choose-page"
-              disabled={running}
-              onClick={() => setChoosing((open) => !open)}
-            >
-              <Images />
-              {choosing ? "候補を閉じる" : "画像を選ぶ"}
-            </Button>
             {/* 2 つ 1 組の操作なので横に並べる。列の幅に収まる短い名前にし、
                 言い足りないぶんは title で補う */}
             <div className="grid grid-cols-2 gap-1.5">
@@ -444,7 +376,6 @@ export function CoverEditor({
                 variant="secondary"
                 data-testid="crop-reset"
                 title="切り抜く枠と回転を初期状態に戻す"
-                disabled={running}
                 onClick={resetEdits}
               >
                 <RotateCcw />
@@ -454,7 +385,6 @@ export function CoverEditor({
                 variant="secondary"
                 data-testid="rotate"
                 title="時計回りに 90 度回す（確定するまで書き込まない）"
-                disabled={running}
                 onClick={turnClockwise}
               >
                 <RotateCw />
@@ -471,11 +401,10 @@ export function CoverEditor({
               size="lg"
               className="w-full"
               data-testid="apply-thumbnail"
-              disabled={running}
               onClick={() => applyPending(frame, angle)}
             >
               <Check />
-              この範囲をサムネイルにする
+              この調整を使う
             </Button>
           </div>
         </aside>

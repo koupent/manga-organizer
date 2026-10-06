@@ -267,7 +267,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     await expect(page.getByTestId("split-status")).toHaveText(
       "変更はありません",
     );
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     await page.context().close();
   });
@@ -448,7 +448,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
       "data-pending",
       "false",
     );
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Assert - 開き直しても同じ。戻した見開きは見開きのまま残し、①の
     // 「すべて分割」の対象にしない（#151 #153）。①の対象が無いので②から開く
