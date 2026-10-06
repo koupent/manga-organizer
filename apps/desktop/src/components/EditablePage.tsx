@@ -100,9 +100,16 @@ export function EditablePage({
         >
           <GripVertical />
         </Button>
-        <span className="min-w-0 flex-1 truncate text-[11px]" title={name}>
+        <Button
+          variant="ghost"
+          className="h-6 min-w-0 flex-1 justify-start truncate px-0 text-[11px]"
+          title={`${name} を選択`}
+          aria-label={`${name} を選択`}
+          disabled={disabled}
+          onClick={onSelect}
+        >
           {cover ? "サムネイル" : name}
-        </span>
+        </Button>
         <Button
           variant="ghost"
           size="icon"

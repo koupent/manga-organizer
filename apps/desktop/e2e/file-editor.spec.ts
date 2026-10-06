@@ -61,6 +61,11 @@ test("2つの入口と1つのページ一覧で、変更なしでも確認済み
     "ファイル編集",
   ]);
   await expect(page.getByTestId("editable-page")).toHaveCount(3);
+  await expect(page.getByTestId("editor-pages")).toHaveCount(0);
+  await expect(page.getByTestId("split-step-split")).toHaveText("ページを分割");
+  await expect(page.getByTestId("split-step-merge")).toHaveText("ページを結合");
+  await expect(page.getByTestId("split-next")).toBeDisabled();
+  await expect(page.getByTestId("split-previous")).toBeDisabled();
   await expect(page.getByTestId("split-confirm")).toHaveText("確認済みにする");
   await save(page);
   expect(coloursOf(archive)).toEqual(before);
@@ -160,7 +165,7 @@ test("途中のページの画像調整は保留され、上の保存ボタン�
   await expect(page.getByTestId("editable-page")).toHaveCount(3);
 });
 
-test("分割の保留を消さず結合モードへ移り、保存後の半ページを個別に並べ替えられる", async ({
+test("分割の保留を残して保存し、分割済みの対も半ページも並べ替えられる", async ({
   page,
 }) => {
   const archive = join(sidecar.workDir, "split-and-reorder.zip");
@@ -179,7 +184,18 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
   await save(page);
   expect(pageEntriesOf(archive)).toHaveLength(4);
-  await page.getByTestId("editor-pages").click();
+  const splitColours = Object.values(coloursOf(archive));
+  await page.getByTestId("split-step-split").click();
+  await expect(page.getByTestId("editable-page")).toHaveCount(3);
+  await drag(page, 1, 2);
+  await save(page);
+  expect(Object.values(coloursOf(archive))).toEqual([
+    splitColours[0],
+    splitColours[3],
+    splitColours[1],
+    splitColours[2],
+  ]);
+  await page.getByTestId("split-step-merge").click();
   await expect(page.getByTestId("editable-page")).toHaveCount(4);
   await drag(page, 1, 3);
   await save(page);
@@ -241,11 +257,7 @@ test("大きな窓でも小さな窓でも、全モードの操作と画像調�
     { width: 1000, height: 560 },
   ]) {
     await page.setViewportSize(viewport);
-    for (const mode of [
-      "editor-pages",
-      "split-step-split",
-      "split-step-merge",
-    ]) {
+    for (const mode of ["split-step-split", "split-step-merge"]) {
       await page.getByTestId(mode).click();
       await expect(page.getByTestId("split-confirm")).toBeInViewport();
       expect(
@@ -256,7 +268,7 @@ test("大きな窓でも小さな窓でも、全モードの操作と画像調�
         ),
       ).toBe(true);
     }
-    await page.getByTestId("editor-pages").click();
+    await page.getByTestId("split-step-merge").click();
     if (viewport.width === 1920)
       await page.screenshot({ path: testInfo.outputPath("editor-wide.png") });
   }
@@ -266,3 +278,31 @@ test("大きな窓でも小さな窓でも、全モードの操作と画像調�
   await expect(page.getByTestId("cover-image")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("cover-small.png") });
 });
+
+for (const mode of ["split", "merge"]) {
+  test(`${mode}モードでも複数のページをまとめて並べ替えられる`, async ({
+    page,
+  }) => {
+    const archive = book(`multi-${mode}.zip`);
+    const before = coloursOf(archive);
+    await open(page, archive);
+    await page.getByTestId(`split-step-${mode}`).click();
+    const cards = page.getByTestId("editable-page");
+    await cards
+      .nth(0)
+      .getByRole("button", { name: "001.png を選択", exact: true })
+      .click();
+    await cards
+      .nth(1)
+      .getByRole("button", { name: "002.png を選択", exact: true })
+      .click({ modifiers: ["Control"] });
+    await expect(page.getByTestId("selection-count")).toHaveText("2 件選択");
+    await drag(page, 0, 2);
+    await save(page);
+    expect(Object.values(coloursOf(archive))).toEqual([
+      before["003.png"],
+      before["001.png"],
+      before["002.png"],
+    ]);
+  });
+}

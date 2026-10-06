@@ -388,7 +388,6 @@ export function App() {
               client={client}
               archive={archive}
               active={mode === "edit"}
-              startWithSplit={startupParams().get("mode") === "split"}
               onArchiveChanged={archiveChanged}
             />
           </Panel>

@@ -250,6 +250,28 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
 }
 
 test.describe("ページ分割・結合: 結合の候補（#149 #153）", () => {
+  test("結合候補も最後から最初へ、最初から最後へ循環する", async ({ page }) => {
+    const archive = writeSeamBook("結合候補の循環.zip");
+    runPython(
+      `import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'a') as z:
+ z.writestr('004.png', z.read('001.png'))
+ z.writestr('005.png', z.read('002.png'))`,
+      archive,
+    );
+    await open(page, archive, 3);
+    const position = page.getByTestId("split-focus-position");
+    await page.getByTestId("split-next").click();
+    await expect(position).toHaveText("1 / 2");
+    await expect(card(page, 0)).toHaveAttribute("data-focused", "true");
+    await page.getByTestId("split-previous").click();
+    await expect(position).toHaveText("2 / 2");
+    await expect(card(page, 3)).toHaveAttribute("data-focused", "true");
+    await page.getByTestId("split-next").click();
+    await expect(position).toHaveText("1 / 2");
+    await expect(card(page, 0)).toHaveAttribute("data-focused", "true");
+  });
+
   test("継ぎ目の色がつながる 2 枚を、結合した姿で候補に出す", async ({
     page,
   }) => {
@@ -299,6 +321,10 @@ test.describe("ページ分割・結合: 結合の候補（#149 #153）", () => 
     // Act - 候補を指して Enter
     await page.getByTestId("split-next").click();
     await expect(card(page, 0)).toHaveAttribute("data-focused", "true");
+    await expect(page.getByTestId("split-focus-position")).toHaveText("1 / 1");
+    await page.getByTestId("split-next").click();
+    await expect(page.getByTestId("split-focus-position")).toHaveText("1 / 1");
+    await page.getByTestId("split-previous").click();
     await expect(page.getByTestId("split-focus-position")).toHaveText("1 / 1");
     await page.keyboard.press("Enter");
 

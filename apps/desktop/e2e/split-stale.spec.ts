@@ -161,7 +161,7 @@ test.describe("ページ分割の確定と、ページ並べ替えの画面", ()
     expect(entries, "分割が本を書き換えていない").toHaveLength(AFTER_PAGES);
 
     // Act - ページ並べ替えへ戻る
-    await page.getByTestId("editor-pages").click();
+    await page.getByTestId("split-step-merge").click();
 
     // Assert - 枚数が新しいページ数になっている。ここを先に見るのは、
     // 1 枚も描かれていない格子で名前の検証が空回りしないようにするため

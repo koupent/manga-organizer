@@ -51,7 +51,9 @@ const card = (page: Page, index: number) =>
   page.locator(`[data-testid="split-card"][data-index="${index}"]`);
 
 test.describe("ページ分割: 候補へ送る・割った印・左から右の並び", () => {
-  test("前後のボタンで、①の対象だけを順に指す", async ({ page }) => {
+  test("前後のボタンで分割候補だけを指し、端から反対の端へ循環する", async ({
+    page,
+  }) => {
     // Arrange
     await open(page, writeTwoSpreads("送る.zip"), "split");
     await expect(page.locator('[data-testid="split-card"]')).toHaveCount(7);
@@ -60,19 +62,27 @@ test.describe("ページ分割: 候補へ送る・割った印・左から右の
     // Assert - まだ何も指していない
     await expect(position).toHaveText("– / 2");
 
-    // Act / Assert - 次へ送ると 1 つ目の対象（2 枚目の見開き）を指す。その
-    // 前に対象は無いので、前へは送れない
+    // Act / Assert - 最初の候補から前へ送ると最後の候補へ循環する
     await page.getByTestId("split-next").click();
     await expect(card(page, 1)).toHaveAttribute("data-focused", "true");
     await expect(position).toHaveText("1 / 2");
-    await expect(page.getByTestId("split-previous")).toBeDisabled();
+    await expect(page.getByTestId("split-previous")).toBeEnabled();
+    await page.getByTestId("split-previous").click();
+    await expect(position).toHaveText("2 / 2");
+    await page.getByTestId("split-next").click();
+    await expect(position).toHaveText("1 / 2");
 
     // Act / Assert - 対象でないページは飛ばして、5 枚目の見開きへ
     await page.getByTestId("split-next").click();
     await expect(card(page, 4)).toHaveAttribute("data-focused", "true");
     await expect(card(page, 1)).toHaveAttribute("data-focused", "false");
     await expect(position).toHaveText("2 / 2");
-    await expect(page.getByTestId("split-next")).toBeDisabled();
+    await expect(page.getByTestId("split-next")).toBeEnabled();
+    await page.getByTestId("split-next").click();
+    await expect(position).toHaveText("1 / 2");
+    await expect(card(page, 1)).toHaveAttribute("data-focused", "true");
+    await page.getByTestId("split-previous").click();
+    await expect(position).toHaveText("2 / 2");
 
     // Act / Assert - 戻る
     await page.getByTestId("split-previous").click();
