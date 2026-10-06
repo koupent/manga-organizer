@@ -57,9 +57,10 @@ def _refresh_folder(folder: Path) -> None:
             ctypes.c_void_p,
         ]
         notify.restype = None
-        # SHCNE_UPDATEDIR / SHCNF_PATHW | SHCNF_FLUSHNOWAIT。
-        # 表示更新の処理を待って保存の完了を遅らせない。
-        notify(0x1000, 0x2005, str(folder), None)
+        # SHCNE_UPDATEDIR | SHCNE_UPDATEITEM / SHCNF_PATHW | SHCNF_FLUSHNOWAIT。
+        # 本のフォルダと、その親に残ったアイコンも更新する。処理は待たない。
+        for changed in (folder, *folder.parents):
+            notify(0x3000, 0x2005, str(changed), None)
     except (AttributeError, OSError):
         # データの保存は完了している。表示だけの失敗で保存失敗とはしない。
         logger.warning("フォルダ表示の更新通知に失敗しました: %s", folder)
