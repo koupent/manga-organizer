@@ -771,38 +771,40 @@ export function FileEditor({
               すべて解く
             </Button>
           ) : null}
-          <span className="flex shrink-0 items-center gap-1">
-            <Button
-              variant="secondary"
-              size="icon"
-              className="size-7"
-              data-testid="split-previous"
-              title="前の対象を指す"
-              aria-label="前の対象を指す"
-              disabled={previous === undefined}
-              onClick={() => pointAt(previous)}
-            >
-              <ChevronLeft />
-            </Button>
-            <span
-              className="tabular min-w-12 text-center text-[12px] text-ink-muted"
-              data-testid="split-focus-position"
-            >
-              {focusedAt < 0 ? "–" : focusedAt + 1} / {targets.length}
+          {step !== "pages" ? (
+            <span className="flex shrink-0 items-center gap-1">
+              <Button
+                variant="secondary"
+                size="icon"
+                className="size-7"
+                data-testid="split-previous"
+                title="前の対象を指す"
+                aria-label="前の対象を指す"
+                disabled={previous === undefined}
+                onClick={() => pointAt(previous)}
+              >
+                <ChevronLeft />
+              </Button>
+              <span
+                className="tabular min-w-12 text-center text-[12px] text-ink-muted"
+                data-testid="split-focus-position"
+              >
+                {focusedAt < 0 ? "–" : focusedAt + 1} / {targets.length}
+              </span>
+              <Button
+                variant="secondary"
+                size="icon"
+                className="size-7"
+                data-testid="split-next"
+                title="次の対象を指す"
+                aria-label="次の対象を指す"
+                disabled={following === undefined}
+                onClick={() => pointAt(following)}
+              >
+                <ChevronRight />
+              </Button>
             </span>
-            <Button
-              variant="secondary"
-              size="icon"
-              className="size-7"
-              data-testid="split-next"
-              title="次の対象を指す"
-              aria-label="次の対象を指す"
-              disabled={following === undefined}
-              onClick={() => pointAt(following)}
-            >
-              <ChevronRight />
-            </Button>
-          </span>
+          ) : null}
           <div className="flex-1" />
           <span
             role="status"

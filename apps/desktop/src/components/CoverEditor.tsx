@@ -284,8 +284,7 @@ export function CoverEditor({
       }
     >
       <div className="flex min-h-0 flex-1 gap-3">
-        {/* 作業面。切り抜きの面と候補一覧が、同じ場所を入れ替わりで使う。
-            200 ページから 1 枚を探すには、帯ではなくこの面の広さが要る */}
+        {/* 切り抜きの作業面は残りの高さを使う */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
           <div
             ref={stageRef}
@@ -332,70 +331,71 @@ export function CoverEditor({
           広げて得をするものではないため。溢れたらこの列だけがスクロールし、
           絵は巻き添えにしない。
         */}
-        <aside className="flex w-[280px] shrink-0 flex-col gap-2 overflow-y-auto">
-          {/* 警告は列の先頭に置く。見本と操作の間に出入りさせると、出た
+        <aside className="flex min-h-0 w-[280px] shrink-0 flex-col gap-2">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+            {/* 警告は列の先頭に置く。見本と操作の間に出入りさせると、出た
               引っ込んだで押したいボタンが上下にずれ、連続して押せなくなる */}
-          {cover.is_spread ? (
-            <Alert tone="warn" data-testid="spread-warning">
-              <TriangleAlert />
-              {/* 判定の相手は保存されている 1 枚。見えている絵が見開きでも、
+            {cover.is_spread ? (
+              <Alert tone="warn" data-testid="spread-warning">
+                <TriangleAlert />
+                {/* 判定の相手は保存されている 1 枚。見えている絵が見開きでも、
                   保存済みが片側だけならこの警告は出ない。どちらの話かを
                   文面で言っておかないと、出ない理由が分からない */}
-              <span>
-                保存されている表紙は見開きです。使いたい側へ枠を寄せると、その半分が表紙になります
-              </span>
-            </Alert>
-          ) : null}
+                <span>
+                  保存されている表紙は見開きです。使いたい側へ枠を寄せると、その半分が表紙になります
+                </span>
+              </Alert>
+            ) : null}
 
-          <section className="flex flex-col gap-1">
-            <SectionTitle>viewer での見え方（2:3）</SectionTitle>
-            <div
-              className="aspect-2/3 overflow-hidden rounded border border-line bg-canvas"
-              style={{ width: PREVIEW_WIDTH }}
-              data-testid="cover-frame"
-            >
-              {/* 保存済みの画像ではなく、保留中の加工を当てた結果を描く。
+            <section className="flex flex-col gap-1">
+              <SectionTitle>viewer での見え方（2:3）</SectionTitle>
+              <div
+                className="aspect-2/3 overflow-hidden rounded border border-line bg-canvas"
+                style={{ width: PREVIEW_WIDTH }}
+                data-testid="cover-frame"
+              >
+                {/* 保存済みの画像ではなく、保留中の加工を当てた結果を描く。
                   確定するまで結果が見えないと、確定してみるまで正しいか
                   分からない */}
-              <CoverPreview
-                src={imageUrl}
-                image={source}
-                angle={angle}
-                crop={frame}
-                width={PREVIEW_WIDTH}
-              />
-            </div>
-          </section>
+                <CoverPreview
+                  src={imageUrl}
+                  image={source}
+                  angle={angle}
+                  crop={frame}
+                  width={PREVIEW_WIDTH}
+                />
+              </div>
+            </section>
 
-          <section className="flex flex-col gap-1.5">
-            <SectionTitle>加工</SectionTitle>
-            {/* 2 つ 1 組の操作なので横に並べる。列の幅に収まる短い名前にし、
+            <section className="flex flex-col gap-1.5">
+              <SectionTitle>加工</SectionTitle>
+              {/* 2 つ 1 組の操作なので横に並べる。列の幅に収まる短い名前にし、
                 言い足りないぶんは title で補う */}
-            <div className="grid grid-cols-2 gap-1.5">
-              <Button
-                variant="secondary"
-                data-testid="crop-reset"
-                title="切り抜く枠と回転を初期状態に戻す"
-                onClick={resetEdits}
-              >
-                <RotateCcw />
-                加工を戻す
-              </Button>
-              <Button
-                variant="secondary"
-                data-testid="rotate"
-                title="時計回りに 90 度回す（確定するまで書き込まない）"
-                onClick={turnClockwise}
-              >
-                <RotateCw />
-                90 度回す
-              </Button>
-            </div>
-          </section>
-
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button
+                  variant="secondary"
+                  data-testid="crop-reset"
+                  title="切り抜く枠と回転を初期状態に戻す"
+                  onClick={resetEdits}
+                >
+                  <RotateCcw />
+                  加工を戻す
+                </Button>
+                <Button
+                  variant="secondary"
+                  data-testid="rotate"
+                  title="時計回りに 90 度回す（確定するまで書き込まない）"
+                  onClick={turnClockwise}
+                >
+                  <RotateCw />
+                  90 度回す
+                </Button>
+              </div>
+            </section>
+          </div>
           {/* 主操作は列の最下部に固定する。操作の数で位置が上下すると、
               押す場所を毎回探すことになる */}
-          <div className="mt-auto pt-2">
+          <div className="shrink-0 pt-2">
             <Button
               variant="primary"
               size="lg"

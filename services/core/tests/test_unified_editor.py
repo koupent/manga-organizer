@@ -20,7 +20,7 @@ def image(color: str, size: tuple[int, int] = (60, 90)) -> bytes:
 class UnifiedEditorTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.path = self.root / "book.zip"
         self.pages = {
             "a.png": image("red"),

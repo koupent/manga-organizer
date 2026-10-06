@@ -225,7 +225,7 @@ test("変換後の名前全体を変更でき、プレビューの名前でZIP�
 
 test("大きな窓でも小さな窓でも、全モードの操作と画像調整が画面内に収まる", async ({
   page,
-}) => {
+}, testInfo) => {
   const archive = writeArchive(
     sidecar.workDir,
     "layout.zip",
@@ -258,11 +258,11 @@ test("大きな窓でも小さな窓でも、全モードの操作と画像調�
     }
     await page.getByTestId("editor-pages").click();
     if (viewport.width === 1920)
-      await page.screenshot({ path: ".sandbox-editor-wide.png" });
+      await page.screenshot({ path: testInfo.outputPath("editor-wide.png") });
   }
-  await page.screenshot({ path: ".sandbox-editor-small.png" });
+  await page.screenshot({ path: testInfo.outputPath("editor-small.png") });
   await adjust(page, 0);
   await expect(page.getByTestId("apply-thumbnail")).toBeInViewport();
   await expect(page.getByTestId("cover-image")).toBeVisible();
-  await page.screenshot({ path: ".sandbox-cover-small.png" });
+  await page.screenshot({ path: testInfo.outputPath("cover-small.png") });
 });

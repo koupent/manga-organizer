@@ -174,26 +174,10 @@ export function App() {
     );
   };
 
-  /**
-   * ページ並べ替え・サムネイル作成の対象を差し替える。
-   *
-   * 前の対象のページを残したまま次を読み込むと、並べ替え途中の順序が
-   * 別のファイルへ持ち越される。空にしてから読み直し、編集ごと捨てる。
-   *
-   * 対象が変われば別の本なので、表紙も並べ替えも作り直しになる。作り直しに
-   * なる画面は隠れたまま抱えても残せる状態が無く、読み込みだけが走る。
-   * keep（移った先の画面）とファイル整理だけを残し、他は一旦落とす。
-   *
-   * ただし、開いている並べ替えの本へ戻るだけなら一覧を捨てない（#145）。
-   * 本も画面も変わらないので一覧を読み直す切っ掛けが来ず、捨てると格子が
-   * 出ないまま空の画面が残る。並べ替えの途中経過もそのまま続けられる。
-   */
-  const changeArchive = (path: string, keep: Mode = modeRef.current) => {
+  /** 別の本は key の変更で編集状態を作り直す。同じ本へ戻るときは保留を残す。 */
+  const changeArchive = (path: string) => {
     setArchive(path);
     setError("");
-    setOpened((current) =>
-      current.filter((item) => item === "organize" || item === keep),
-    );
   };
   // ドロップの購読は起動時の一度きりなので、いまの本と画面を読む最新の
   // changeArchive は ref から呼ぶ
@@ -207,12 +191,9 @@ export function App() {
    * 同時に決めるので、移った先で選び直す必要がない。対象を先に入れてから
    * 画面を切り替えるのではなく一度に済ませるのは、対象の無い状態を経由すると
    * 移った先で一瞬ファイル選択が出てしまうため。
-   *
-   * 各機能は今までどおり単独でも使える。ここを通らなければ、移った先の
-   * 見た目も振る舞いも従来のままになる。
    */
   const openArchiveIn = (path: string, next: HandoffMode) => {
-    changeArchive(path, next);
+    changeArchive(path);
     changeMode(next);
   };
 

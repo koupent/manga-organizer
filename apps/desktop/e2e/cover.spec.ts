@@ -570,9 +570,7 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
   });
 
   test("90 度回してもボタンの位置が動かない", async ({ page }) => {
-    // Arrange - 操作の列が縦に溢れる大きさで見る。溢れていない間は主操作が
-    // 列の下端に貼り付くので、間の警告が出入りしてもずれない。実機で報告
-    // されたずれは、列が溢れて下端に貼り付けなくなったときに起きる
+    // 操作の列が縦に溢れる小さな窓で、決定ボタンが固定されているか確かめる。
     await page.setViewportSize({ width: 1000, height: 560 });
     const archive = writeSpreadArchive(sidecar.workDir, "ボタン位置.zip");
     await openCover(page, archive);
@@ -584,49 +582,30 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
       if (!box) throw new Error(`${id} が描画されていません`);
       return Math.round(box.y);
     };
-    /**
-     * 見え方の見本から測った、ボタンまでの距離。
-     *
-     * 溢れた列は押した拍子にスクロールするので、画面上の y をそのまま比べると
-     * スクロールぶんまで拾ってしまう。警告は見本とボタンの間にあるので、
-     * 見本からの距離で見れば、警告が場所を空けたままかどうかだけが残る。
-     */
-    const gaps = async () => {
-      const preview = await topOf("cover-frame");
-      return {
-        apply: (await topOf("apply-thumbnail")) - preview,
-      };
-    };
-    const before = await gaps();
+    // 決定ボタンはスクロール欄の外に固定され、常に画面内にある。
+    await expect(page.getByTestId("apply-thumbnail")).toBeInViewport();
+    const before = await topOf("apply-thumbnail");
 
     // Act
     await rotateOnce(page, await settledPreview(page));
 
-    // Assert - 見開きの警告が出入りしても、押す場所は動かない。
+    // Assert - 回転のために操作欄をスクロールしても、押す場所は動かない。
     // 加工の反映は後から届くので、しばらく見張って一番動いた量を見る。
     // 1 回だけ測ると、届く前の値を見て「動かなかった」と取り違える
     const worst = { apply: 0 };
     const until = Date.now() + BUTTON_WATCH_MS;
     while (Date.now() < until) {
-      const now = await gaps();
-      worst.apply = Math.max(worst.apply, Math.abs(now.apply - before.apply));
+      const now = await topOf("apply-thumbnail");
+      worst.apply = Math.max(worst.apply, Math.abs(now - before));
       await page.waitForTimeout(50);
     }
     expect(
       worst.apply,
-      `確定ボタンが、見え方の見本から ${before.apply}px の所から ${worst.apply}px ぶん動いた`,
+      `確定ボタンが画面上の ${before}px の位置から ${worst.apply}px ぶん動いた`,
     ).toBeLessThanOrEqual(BUTTON_SHIFT_TOLERANCE);
   });
 });
 
-/** 候補を格子で見るために用意するページ数。1 行には収まらない量にする */
-
-/**
- * 候補一覧は、切り抜きの面と入れ替えて大きく出す。
- *
- * 単行本は 150〜200 ページある。1 行のフィルムストリップでは、中ほどの
- * ページへ辿り着けない。
- */
 test.describe("サムネイル作成の対象選択と加工", () => {
   /**
    * 実際のドロップを再現する。
