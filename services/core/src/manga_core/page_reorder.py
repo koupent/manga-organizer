@@ -10,7 +10,6 @@ import io
 import logging
 import os
 import struct
-import tempfile
 import threading
 import time
 import zipfile
@@ -23,6 +22,7 @@ from pathlib import Path, PurePosixPath
 
 from PIL import Image
 
+from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.naming import natural_sort_key
 from manga_core.viewer_contract import (
@@ -36,8 +36,6 @@ logger = logging.getLogger(__name__)
 EDITABLE_SUFFIXES = {".zip", ".cbz"}
 # 画像は既に圧縮済みなので、高い圧縮レベルは時間を使うだけで容量は減らない
 DEFLATE_LEVEL = 1
-TEMP_PREFIX = ".reorder-"
-TEMP_SUFFIX = ".tmp"
 # Zip64 拡張情報はオフセットを含み、書き直した ZIP では無効になる
 _ZIP64_EXTRA_ID = 0x0001
 _EXTRA_HEADER_STRUCT = struct.Struct("<HH")
@@ -390,7 +388,7 @@ class ZipPageEditor:
 
             self.close()
             original_times = capture_file_times(self.zip_path)
-            temp_path = self._create_temp_file()
+            temp_path = create_archive_temp()
             try:
                 self._write_reordered(
                     temp_path, pages, names, progress, replaced, extras
@@ -399,7 +397,7 @@ class ZipPageEditor:
                 self._verify_carried_content(temp_path, pages, names, replaced)
                 self._verify_replacements(temp_path, written)
                 self._verify_extra_entries(temp_path, extras)
-                os.replace(temp_path, self.zip_path)
+                replace_archive(temp_path, self.zip_path)
             finally:
                 # 置き換えに成功していれば既に消えている
                 temp_path.unlink(missing_ok=True)
@@ -416,20 +414,6 @@ class ZipPageEditor:
                 ),
                 times_restored=times_restored,
             )
-
-    def _create_temp_file(self) -> Path:
-        """同じディレクトリに、排他生成した一時ファイルを用意する。
-
-        固定名だと既存ファイルやシンボリックリンクを切り詰めうるうえ、
-        同時実行で衝突する。os.replace のために配置先と同じ場所に作る。
-        """
-        handle, name = tempfile.mkstemp(
-            dir=self.zip_path.parent,
-            prefix=self.zip_path.name + TEMP_PREFIX,
-            suffix=TEMP_SUFFIX,
-        )
-        os.close(handle)
-        return Path(name)
 
     def _verify_written(
         self, temp_path: Path, names: tuple[str, ...], dropped: tuple[str, ...]

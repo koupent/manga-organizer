@@ -1,6 +1,4 @@
 import logging
-import os
-import tempfile
 import zipfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -8,6 +6,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from manga_core.archive_handler import ArchiveHandler
+from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.organized_detector import judge_organized
 from manga_core.original_store import sidecar_members
@@ -199,36 +198,23 @@ class FileOrganizer:
     ) -> ProcessResult:
         """元のアーカイブを、整理の出力で置き換える（#127）。
 
-        同じフォルダの一時ファイルへ書き、読み直して壊れていないと確かめて
+        OSの一時領域へ書き、読み直して壊れていないと確かめて
         から置き換える。元は展開済みなので、置き換えた後に読む物は無い。
         途中で失敗したら元には触れず、一時ファイルだけを消す。
 
         ファイルの時刻は元のまま残す。蔵書の中の本を書き直す操作なので、
         ページ並べ替えやサムネイル作成と同じく、日付で並べた蔵書の並びを崩さない。
         """
-        handle, raw = tempfile.mkstemp(
-            dir=archive_path.parent,
-            prefix=f".{archive_path.name}.organize-",
-            suffix=".tmp",
-        )
-        os.close(handle)
-        temp_path = Path(raw)
-        try:
-            error = self._build_volume_archive(image_dir, temp_path, volume)
-            if error is None:
-                error = _damaged(temp_path)
-            if error is not None:
-                return ProcessResult(
-                    original_path=archive_path,
-                    output_path=None,
-                    success=False,
-                    error_message=error,
-                )
-            times = capture_file_times(archive_path)
-            os.replace(temp_path, archive_path)
-            restore_file_times(archive_path, times)
-        finally:
-            temp_path.unlink(missing_ok=True)
+        times = capture_file_times(archive_path)
+        error = self._build_volume_archive(image_dir, archive_path, volume)
+        if error is not None:
+            return ProcessResult(
+                original_path=archive_path,
+                output_path=None,
+                success=False,
+                error_message=error,
+            )
+        restore_file_times(archive_path, times)
         self._log(f"Rebuilt in place: {archive_path.name}")
         return ProcessResult(
             original_path=archive_path,
@@ -245,9 +231,18 @@ class FileOrganizer:
         本文を書いてから同梱物を足す 2 段構えにする。同梱物はページではないので
         連番の振り直しへ巻き込まない、という順序をここで表す。
         """
-        if not self.archive_handler.create_archive(image_dir, output_path):
-            return f"Failed to create archive for volume {volume}"
-        return self._carry_sidecar(image_dir, output_path)
+        temp_path = create_archive_temp()
+        try:
+            if not self.archive_handler.create_archive(image_dir, temp_path):
+                return f"Failed to create archive for volume {volume}"
+            error = self._carry_sidecar(image_dir, temp_path)
+            if error is None:
+                error = _damaged(temp_path)
+            if error is None:
+                replace_archive(temp_path, output_path)
+            return error
+        finally:
+            temp_path.unlink(missing_ok=True)
 
     def _carry_sidecar(self, image_dir: Path, output_path: Path) -> str | None:
         """加工前の画像と紐づけの記録を、作り直した本へそのまま持ち越す（#96）。
