@@ -92,7 +92,7 @@ async function add(page: Page, names: { name: string; folder?: boolean }[]) {
 function book(page: Page, archive: string, entry = "") {
   return page.locator(
     `[data-testid="plan-row"][data-kind="book"]` +
-      `[data-source="${join(sidecar.workDir, FOLDER, archive)}"]` +
+      `[data-source=${JSON.stringify(join(sidecar.workDir, FOLDER, archive))}]` +
       `[data-entry="${entry}"]`,
   );
 }

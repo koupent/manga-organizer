@@ -65,7 +65,7 @@ function unknownName(title: string): string {
 function producedNames(root: string): string[] {
   try {
     return readdirSync(root, { recursive: true, encoding: "utf8" })
-      .map((entry) => entry.split("/").pop()!)
+      .map((entry) => entry.split(/[/\\]/).pop()!)
       .filter((name) => name.endsWith(".zip"))
       .sort();
   } catch {
@@ -196,14 +196,7 @@ function bookRow(page: Page, outputName: string): Locator {
 /** アーカイブの行 */
 function archiveRow(page: Page, path: string): Locator {
   return page.locator(
-    `[data-testid="plan-row"][data-kind="archive"][data-path="${path}"]`,
-  );
-}
-
-/** フォルダの行 */
-function folderRow(page: Page, path: string): Locator {
-  return page.locator(
-    `[data-testid="plan-row"][data-kind="folder"][data-path="${path}"]`,
+    `[data-testid="plan-row"][data-kind="archive"][data-path=${JSON.stringify(path)}]`,
   );
 }
 
@@ -233,70 +226,71 @@ async function preparePlan(page: Page, name: string, title: string) {
 }
 
 test.describe("解析した本の一覧", () => {
-  test("フォルダを投入すると、フォルダ・アーカイブ・本の 3 階層で並ぶ", async ({
+  test("複数の投入フォルダとアーカイブをまたいで巻数順に並び、Shift選択も表示順に働く", async ({
     page,
   }) => {
-    // Arrange / Act
-    const title = "三階層の作品";
-    const { folder, compound, single } = await preparePlan(
-      page,
-      "三階層",
-      title,
-    );
-
-    // Assert - 放り込んだフォルダ、その中で見つかったアーカイブ、
-    // そこから出来上がる本が、それぞれ行として見える
-    const rows = await readRows(page);
-    const folders = rows.filter((row) => row.kind === "folder");
-    const archives = rows.filter((row) => row.kind === "archive");
-    const books = rows.filter((row) => row.kind === "book");
-
-    expect(
-      folders.map((row) => row.path),
-      `放り込んだフォルダの行が無い: ${JSON.stringify(rows)}`,
-    ).toEqual([folder]);
-    expect(
-      archives.map((row) => row.path).sort(),
-      `見つかったアーカイブの行が揃っていない: ${JSON.stringify(rows)}`,
-    ).toEqual([compound, single].sort());
-    expect(
-      books.map((row) => row.outputName).sort(),
-      `出来上がる本の行が揃っていない: ${JSON.stringify(rows)}`,
-    ).toEqual(
-      [volumeName(title, 1), volumeName(title, 2), volumeName(title, 3)].sort(),
-    );
-
-    // Assert - 3 つは同じ深さに並んでいない。平らな一覧に data-kind を
-    // 足しただけでは 3 階層とは言えない
-    expect(Math.min(...archives.map((row) => row.level))).toBeGreaterThan(
-      folders[0].level,
-    );
-    expect(Math.min(...books.map((row) => row.level))).toBeGreaterThan(
-      Math.max(...archives.map((row) => row.level)),
-    );
-
-    // Assert - 本の行は、自分の元になったアーカイブの下に続く
-    let grouped = 0;
-    for (const [index, row] of rows.entries()) {
-      if (row.kind !== "archive") continue;
-      const children: PlanRow[] = [];
-      for (let next = index + 1; rows[next]?.kind === "book"; next += 1) {
-        children.push(rows[next]);
+    const title = "全体の並び";
+    const first = "全体順A";
+    const second = "全体順B";
+    for (const [folder, volumes] of [
+      [first, [1, 4]],
+      [second, [3, 6]],
+    ] as const) {
+      mkdirSync(join(sidecar.workDir, folder));
+      for (const volume of volumes) {
+        writeArchive(sidecar.workDir, `${folder}/第${volume}巻.zip`, [
+          { name: "001.jpg", color: "#ff0000" },
+        ]);
       }
-      grouped += children.length;
-      expect(
-        [...new Set(children.map((child) => child.source))],
-        `${row.path} の下に、別のアーカイブの本が混ざっている`,
-      ).toEqual([row.path]);
     }
-    expect(grouped, "どのアーカイブにも属さない本の行がある").toBe(
-      books.length,
+    const archive = "全体順_第2巻.zip";
+    writeArchive(sidecar.workDir, archive, [
+      { name: "001.jpg", color: "#00ff00" },
+    ]);
+    await openOrganize(page, sidecar.workDir);
+    await fillMangaInfo(page, title);
+    await addFolder(page, first);
+    await addFolder(page, second);
+    await page.getByTestId("open-browser").click();
+    await page
+      .locator(`[data-testid="browse-entry"][data-name="${archive}"]`)
+      .getByRole("button", { name: "追加", exact: true })
+      .click();
+    await page.getByTestId("browse-close").click();
+    await waitForBooks(page, 5);
+    expect((await readRows(page)).map((row) => row.outputName)).toEqual(
+      [1, 2, 3, 4, 6].map((n) => volumeName(title, n)),
     );
-
-    // Assert - 1 つの ZIP から出た 2 冊は、位置で区別できる
-    const inside = books.filter((row) => row.source === compound);
+    await checkOf(bookRow(page, volumeName(title, 2))).click();
+    await checkOf(bookRow(page, volumeName(title, 4))).click({
+      modifiers: ["Shift"],
+    });
+    for (const n of [2, 3, 4]) {
+      await expect(
+        checkOf(bookRow(page, volumeName(title, n))),
+      ).toHaveAttribute("aria-checked", "false");
+    }
+    for (const n of [1, 6]) {
+      await expect(
+        checkOf(bookRow(page, volumeName(title, n))),
+      ).toHaveAttribute("aria-checked", "true");
+    }
+  });
+  test("フォルダを投入すると、本がフラットな一覧で並ぶ", async ({ page }) => {
+    const title = "平らな一覧の作品";
+    const { compound } = await preparePlan(page, "平らな一覧", title);
+    const rows = await readRows(page);
+    expect(rows.map((row) => row.kind)).toEqual(["book", "book", "book"]);
+    expect(rows.map((row) => row.level)).toEqual([0, 0, 0]);
+    expect(rows.map((row) => row.outputName)).toEqual(
+      [1, 2, 3].map((n) => volumeName(title, n)),
+    );
+    const inside = rows.filter((row) => row.source === compound);
     expect(inside).toHaveLength(2);
     expect(inside[0].entry).not.toBe(inside[1].entry);
+    await expect(
+      bookRow(page, volumeName(title, 1)).getByTestId("plan-row-path"),
+    ).toHaveAttribute("title", compound + " / " + inside[0].entry);
   });
 
   test("主操作の行が一覧の直上にある", async ({ page }) => {
@@ -341,7 +335,7 @@ test.describe("解析した本の一覧", () => {
     const rows = page.getByTestId("plan-row");
     const checks = page.getByTestId("plan-check");
     const rowCount = await rows.count();
-    expect(rowCount, "一覧に行が無い").toBeGreaterThanOrEqual(6);
+    expect(rowCount, "一覧に行が無い").toBe(3);
     await expect(checks, "チェックが無い段がある").toHaveCount(rowCount);
     for (let index = 0; index < rowCount; index += 1) {
       await expect(
@@ -357,73 +351,33 @@ test.describe("解析した本の一覧", () => {
     );
   });
 
-  test("本のチェックを外すと、その上の行が三態になる", async ({ page }) => {
-    // Arrange
+  test("本のチェックを外すと、全体のチェックが三態になる", async ({ page }) => {
     const title = "三態の作品";
-    const { folder, compound, single } = await preparePlan(page, "三態", title);
-
-    // Act - 2 冊入りの ZIP から出る 2 冊目だけを外す
+    await preparePlan(page, "三態", title);
     await checkOf(bookRow(page, volumeName(title, 2))).click();
-
-    // Assert - 外した本はオフ、兄弟はオンのまま
     await expect(checkOf(bookRow(page, volumeName(title, 2)))).toHaveAttribute(
       "aria-checked",
       "false",
     );
-    await expect(checkOf(bookRow(page, volumeName(title, 1)))).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-
-    // Assert - 一部だけ外れた親は「一部」。全部オフにしてしまう実装で通らない
-    await expect(
-      checkOf(archiveRow(page, compound)),
-      "一部だけ外したアーカイブが三態になっていない",
-    ).toHaveAttribute("aria-checked", "mixed");
-    await expect(
-      checkOf(folderRow(page, folder)),
-      "一部だけ外したフォルダが三態になっていない",
-    ).toHaveAttribute("aria-checked", "mixed");
+    for (const n of [1, 3]) {
+      await expect(
+        checkOf(bookRow(page, volumeName(title, n))),
+      ).toHaveAttribute("aria-checked", "true");
+    }
     await expect(page.getByTestId("plan-master-check")).toHaveAttribute(
       "aria-checked",
       "mixed",
     );
-
-    // Assert - 関係のないアーカイブは巻き込まれない
-    await expect(checkOf(archiveRow(page, single))).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-
-    // Assert - 外した行は消さずに薄く残す
     await expect(bookRow(page, volumeName(title, 2))).toBeVisible();
   });
 
-  test("親のチェックを外すと下が全部外れる", async ({ page }) => {
-    // Arrange
-    const title = "親を外す作品";
-    const { folder } = await preparePlan(page, "親を外す", title);
-    const before = await page.getByTestId("plan-row").count();
-
-    // Act - 放り込んだフォルダのチェックを外す
-    await checkOf(folderRow(page, folder)).click();
-
-    // Assert - 下のアーカイブも本も全部オフになる
-    const checks = page.getByTestId("plan-check");
-    const count = await checks.count();
-    for (let index = 0; index < count; index += 1) {
-      await expect(
-        checks.nth(index),
-        `${index} 行目が外れていない`,
-      ).toHaveAttribute("aria-checked", "false");
+  test("全体のチェックを外すと全冊が外れ、行は残る", async ({ page }) => {
+    await preparePlan(page, "全体を外す", "全体を外す作品");
+    await page.getByTestId("plan-master-check").click();
+    await expect(page.getByTestId("plan-row")).toHaveCount(3);
+    for (const check of await page.getByTestId("plan-check").all()) {
+      await expect(check).toHaveAttribute("aria-checked", "false");
     }
-    await expect(page.getByTestId("plan-master-check")).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
-
-    // Assert - 外した行は消えない。何を外したかが後で分かるようにする
-    await expect(page.getByTestId("plan-row")).toHaveCount(before);
   });
 
   test("Shift を押しながら押すと、前に押した行からそこまでをまとめて切り替える（#158）", async ({
@@ -690,7 +644,9 @@ test.describe("解析した本の一覧", () => {
     // Assert - 対照。読めたアーカイブには付けない。全部に付ける実装では
     // 印そのものが意味を失う
     await expect(
-      archiveRow(page, healthy),
+      page.locator(
+        `[data-testid="plan-row"][data-source=${JSON.stringify(healthy)}]`,
+      ),
       "読めているアーカイブにまで印が付いている",
     ).toHaveAttribute("data-issues", "");
 
@@ -722,7 +678,9 @@ test.describe("解析した本の一覧", () => {
     // Assert - 本は出来上がる名前（巻）の順。同じ巻どうしは隣り合う
     const books = page.locator('[data-testid="plan-row"][data-kind="book"]');
     const sources = await books.evaluateAll((nodes) =>
-      nodes.map((node) => node.getAttribute("data-source")!.split("/").pop()),
+      nodes.map((node) =>
+        node.getAttribute("data-source")!.split(/[/\\]/).pop(),
+      ),
     );
     expect(sources).toEqual(["dup_01.zip", "m_01.zip", "a_02.zip", "z_03.zip"]);
 
@@ -841,7 +799,7 @@ test.describe("解析した本の一覧", () => {
     await waitForBooks(page, 3);
     const row = (source: string) =>
       page.locator(
-        `[data-testid="plan-row"][data-kind="book"][data-source$="/${source}"]`,
+        `[data-testid="plan-row"][data-kind="book"][data-source$="${source}"]`,
       );
 
     // Assert - 1 巻は大きい z_01 だけが入り、番号なしの名前になる。2 巻は入る
@@ -970,7 +928,7 @@ test.describe("解析した本の一覧", () => {
                     ?.getAttribute("aria-checked") === "true",
               )
               .map((node) =>
-                (node.getAttribute("data-source") ?? "").split("/").pop(),
+                (node.getAttribute("data-source") ?? "").split(/[/\\]/).pop(),
               ),
           )
       ).sort();
@@ -989,7 +947,7 @@ test.describe("解析した本の一覧", () => {
     // Act - 2 巻の大きい方（d）を外してから、入れ直す
     await checkOf(
       page.locator(
-        '[data-testid="plan-row"][data-kind="book"][data-source$="/d_02.zip"]',
+        '[data-testid="plan-row"][data-kind="book"][data-source$="d_02.zip"]',
       ),
     ).click();
     await oneEach.click();

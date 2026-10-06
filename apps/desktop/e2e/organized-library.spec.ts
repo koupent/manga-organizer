@@ -434,20 +434,6 @@ function bookRow(page: Page, source: string, entry = ""): Locator {
   );
 }
 
-/** アーカイブの行 */
-function archiveRow(page: Page, path: string): Locator {
-  return page.locator(
-    `[data-testid="plan-row"][data-kind="archive"][data-path="${path}"]`,
-  );
-}
-
-/** フォルダの行 */
-function folderRow(page: Page, path: string): Locator {
-  return page.locator(
-    `[data-testid="plan-row"][data-kind="folder"][data-path="${path}"]`,
-  );
-}
-
 /** 行のチェック */
 function checkOf(row: Locator): Locator {
   return row.getByTestId("plan-check");
@@ -806,23 +792,6 @@ test.describe("整理済みの本の見せ方", () => {
       ).toHaveAttribute("aria-checked", "true");
     }
 
-    // Assert - 入れ物の三態は葉から決まる。整理済みの本しか持たない
-    // アーカイブはオフ、そうでないアーカイブはオン、両方を含む蔵書は混在。
-    // 入れ物にも状態を持たせて別々に決める実装はここで食い違う
-    for (const source of allOrganized()) {
-      await expect(
-        checkOf(archiveRow(page, source)),
-        `整理済みの本しか持たないアーカイブが外れていない: ${source}`,
-      ).toHaveAttribute("aria-checked", "false");
-    }
-    await expect(
-      checkOf(archiveRow(page, library.compound)),
-      "整理済みを 1 冊も持たないアーカイブまで外れている",
-    ).toHaveAttribute("aria-checked", "true");
-    await expect(
-      checkOf(folderRow(page, library.folder)),
-      "整理済みと未整理が混ざったフォルダが混在になっていない",
-    ).toHaveAttribute("aria-checked", "mixed");
     await expect(
       page.getByTestId("plan-master-check"),
       "全体のチェックが混在になっていない",
@@ -1276,24 +1245,6 @@ test.describe("整理済みの行の仕上げ", () => {
       "入っている行まで薄まっている",
     ).toBe(FULL);
 
-    // Assert - 対照 2。入れ物も三態が false なら薄まる（4b までと同じ）。
-    // 薄めを本の行だけに付ける実装だと、外れた入れ物が濃いまま残る
-    const container = archiveRow(page, library.organized);
-    expect(
-      await opacityOf(container),
-      "入れ物そのものが薄まっている（薄めが li に掛かったままになっている）",
-    ).toBe(FULL);
-    expect(
-      await opacityOf(nameOf(container)),
-      "外れている入れ物の名前が薄まっていない",
-    ).toBe(DIMMED);
-
-    // Assert - 対照 3。混在の入れ物は薄めない。false のときだけ薄める
-    expect(
-      await opacityOf(nameOf(folderRow(page, library.folder))),
-      "混在の入れ物まで薄まっている",
-    ).toBe(FULL);
-
     // Act - 利用者が自分で外した行。整理済みではないので理由の印が出ている
     const dropped = bookRow(page, library.folderMismatch);
     await checkOf(dropped).click();
@@ -1444,8 +1395,6 @@ test.describe("整理済みの行の仕上げ", () => {
     // 押しても開くものが無い
     for (const [what, target] of [
       ["整理済みでない本", bookRow(page, library.nameMismatch)],
-      ["アーカイブ", archiveRow(page, library.compound)],
-      ["フォルダ", folderRow(page, library.folder)],
     ] as const) {
       await expect(
         target.getByTestId("plan-to-thumbnail"),

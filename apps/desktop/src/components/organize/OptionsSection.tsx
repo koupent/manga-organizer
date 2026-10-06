@@ -7,6 +7,7 @@ type OptionsSectionProps = {
   client: SidecarClient;
   outputDirectory: string;
   onOutputDirectoryChange: (path: string) => void;
+  onOpenSettings: () => void;
   keepOriginals: boolean;
   onKeepOriginalsChange: (keep: boolean) => void;
 };
@@ -16,6 +17,7 @@ export function OptionsSection({
   client,
   outputDirectory,
   onOutputDirectoryChange,
+  onOpenSettings,
   keepOriginals,
   onKeepOriginalsChange,
 }: OptionsSectionProps) {
@@ -29,6 +31,7 @@ export function OptionsSection({
         client={client}
         value={outputDirectory}
         onChange={onOutputDirectoryChange}
+        onOpenSettings={onOpenSettings}
       />
       <label className="flex w-fit cursor-pointer items-center gap-2 text-[12.5px] text-ink-muted">
         <Checkbox

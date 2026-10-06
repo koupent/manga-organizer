@@ -303,7 +303,7 @@ test.describe("画面を切り替えても状態が残る", () => {
     // 一覧は 3 階層になった（#70 第 3 段階）。落としたものは一番外側の行
     expect(
       await page
-        .locator('[data-testid="plan-row"][data-level="0"]')
+        .locator('[data-testid="source-row"]')
         .evaluateAll((nodes) =>
           nodes.map((node) => node.getAttribute("data-path")),
         ),

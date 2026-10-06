@@ -554,7 +554,7 @@ function sameRow(a: PlanRow, b: PlanRow): boolean {
 }
 
 /** 名前の並べ方。数字は桁ではなく値で比べる（第2巻を第10巻より先に） */
-function byName(a: string, b: string): number {
+export function byName(a: string, b: string): number {
   return NAME_ORDER.compare(a, b);
 }
 

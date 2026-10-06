@@ -22,7 +22,7 @@ const ROW_MAX_HEIGHT = 30;
  * 一覧は 放り込んだもの → 出来上がる本 の階層になったので、アーカイブ 1 件
  * につき「落としたものの行」と「そこから出来る本の行」の 2 行が並ぶ。
  */
-const ROWS_PER_ARCHIVE = 2;
+const ROWS_PER_ARCHIVE = 1;
 
 /** 入力欄と既定のボタン。28px を狙い、端数だけ許す */
 const CONTROL_MIN_HEIGHT = 27;

@@ -114,7 +114,7 @@ async function enterArchiveDirectory(page: Page) {
  * 出来上がる本の行も同じ testid で並ぶので、深さで絞り込む。
  */
 function droppedRows(page: Page) {
-  return page.locator('[data-testid="plan-row"][data-level="0"]');
+  return page.locator('[data-testid="source-row"]');
 }
 
 /** ブラウザを閉じ、一覧が指定の件数になったことまで確かめる */
@@ -602,9 +602,7 @@ test.describe("ワークベンチ: ファイル整理", () => {
 
     // Assert - 一覧は退かない。件数ではなくパスで名指しした 1 行を見る
     await expect(
-      page.locator(
-        `[data-testid="plan-row"][data-level="0"][data-path="${first}"]`,
-      ),
+      page.locator(`[data-testid="source-row"][data-path="${first}"]`),
       "ファイルを選ぶ間に、投入した一覧が画面から消えている",
     ).toBeVisible();
 

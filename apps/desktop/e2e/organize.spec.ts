@@ -100,7 +100,7 @@ function producedNames(root: string): string[] {
  * 出来上がる本の行も同じ testid で並ぶので、深さで絞り込む。
  */
 function droppedRows(page: Page) {
-  return page.locator('[data-testid="plan-row"][data-level="0"]');
+  return page.locator('[data-testid="source-row"]');
 }
 
 /**
@@ -215,9 +215,7 @@ async function addArchiveViaBrowser(
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeHidden();
   await expect(
-    page.locator(
-      `[data-testid="plan-row"][data-level="0"][data-path="${archive}"]`,
-    ),
+    page.locator(`[data-testid="source-row"][data-path="${archive}"]`),
   ).toBeVisible();
 }
 

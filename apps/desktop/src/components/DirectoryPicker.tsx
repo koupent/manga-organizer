@@ -1,6 +1,7 @@
 import { ChevronUp, Folder, FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SidecarClient } from "../api/client";
+import { sidecarReason } from "../api/client";
 import { Button } from "./ui/button";
 import { CardHeader } from "./ui/card";
 import {
@@ -26,10 +27,14 @@ export function DirectoryPicker({
   client,
   value,
   onChange,
+  label = "出力先",
+  onOpenSettings,
 }: {
   client: SidecarClient;
   value: string;
   onChange: (path: string) => void;
+  label?: string;
+  onOpenSettings?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [location, setLocation] = useState<{
@@ -40,6 +45,9 @@ export function DirectoryPicker({
     parent: null,
   });
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [address, setAddress] = useState("");
+  const [error, setError] = useState("");
+  const browseRequest = useRef(0);
 
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -73,29 +81,32 @@ export function DirectoryPicker({
   // client は接続できたときに一度作るきりなので、ここで留めておく
   const load = useCallback(
     (path = "") => {
-      client.browse(path).then((result) => {
-        setLocation({ path: result.path, parent: result.parent ?? null });
-        setEntries(
-          (result.entries as Entry[]).filter((entry) => entry.is_directory),
-        );
-      });
+      const request = ++browseRequest.current;
+      setError("");
+      client
+        .browse(path)
+        .then((result) => {
+          if (request !== browseRequest.current) return;
+          setLocation({ path: result.path, parent: result.parent ?? null });
+          setAddress(result.path);
+          setEntries(
+            (result.entries as Entry[]).filter((entry) => entry.is_directory),
+          );
+        })
+        .catch((reason) => {
+          if (request === browseRequest.current)
+            setError(sidecarReason(reason));
+        });
     },
     [client],
   );
-
-  // 開いたときに、まだ何も読んでいなければ手で入れてある所から読む。
-  // 読み込めた後は location.path が埋まるので、この効果が走り直しても
-  // 何もしない。開いている間は重ねて出しているので value も動かない
-  useEffect(() => {
-    if (open && !location.path) load(value || "");
-  }, [open, location.path, load, value]);
 
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-end gap-2">
         <label className="flex min-w-[280px] flex-1 flex-col gap-1">
           <span className="text-[11.5px] font-medium text-ink-muted">
-            出力先
+            {label}
           </span>
           <Input
             data-testid="output-directory"
@@ -115,7 +126,10 @@ export function DirectoryPicker({
         <Button
           variant={open ? "primary" : "secondary"}
           data-testid="browse-output"
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => {
+            if (!open) load(value || "");
+            setOpen((current) => !current);
+          }}
         >
           <FolderOpen />
           参照
@@ -142,15 +156,34 @@ export function DirectoryPicker({
               <ChevronUp />
               上へ
             </Button>
-            <code className="max-w-[52ch] truncate rounded bg-canvas px-2 py-0.5 text-[11.5px] text-ink-muted">
-              {location.path}
-            </code>
+            <form
+              className="flex min-w-0 flex-1 items-center gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (address.trim()) load(address.trim());
+              }}
+            >
+              <Input
+                aria-label="フォルダのパスを入力"
+                data-testid="output-browser-path"
+                placeholder="パスを入力して Enter"
+                value={address}
+                onChange={(event) => {
+                  // 入力中に、開いた直後の読み込み結果でパスを上書きしない。
+                  browseRequest.current += 1;
+                  setAddress(event.target.value);
+                }}
+              />
+              <Button type="submit" disabled={!address.trim()}>
+                移動
+              </Button>
+            </form>
             <div className="flex-1" />
             <Button
               variant="primary"
               data-testid="use-this-directory"
               // 読み込み前に押されると出力先が空になってしまう
-              disabled={!location.path}
+              disabled={!location.path || address !== location.path || !!error}
               onClick={() => {
                 onChange(location.path);
                 // 押した時点で決まりきっているので、待たずに伝える
@@ -161,6 +194,14 @@ export function DirectoryPicker({
               ここを出力先にする
             </Button>
           </CardHeader>
+          <p className="text-[11.5px] text-ink-muted">
+            上の欄にフォルダのパスを入力して、Enter または「移動」で開けます。
+          </p>
+          {error ? (
+            <p role="alert" className="text-[12px] text-danger">
+              {error}
+            </p>
+          ) : null}
           <ul className="max-h-[50vh] overflow-y-auto p-1">
             {entries.length === 0 ? (
               <li className="px-2 py-3 text-center text-[12px] text-ink-faint">
@@ -183,6 +224,18 @@ export function DirectoryPicker({
               ))
             )}
           </ul>
+          {onOpenSettings ? (
+            <Button
+              variant="ghost"
+              data-testid="output-default-settings"
+              onClick={() => {
+                setOpen(false);
+                onOpenSettings();
+              }}
+            >
+              デフォルトの出力先を設定する
+            </Button>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
