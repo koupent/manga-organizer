@@ -22,7 +22,7 @@ async function save(page: Page) {
     "data-state",
     "done",
   );
-  await expect(page.getByTestId("split-confirm")).toBeEnabled();
+  await expect(page.getByTestId("split-confirm")).toBeDisabled();
 }
 async function drag(page: Page, from: number, to: number) {
   const cards = page.getByTestId("editable-page");
@@ -56,6 +56,7 @@ test("2つの入口と1つのページ一覧で、変更なしでも確認済み
   const before = coloursOf(archive);
   const modified = statSync(archive).mtimeMs;
   await open(page, archive);
+  await expect(page.getByTestId("split-confirm")).toBeEnabled();
   await expect(page.locator('[data-testid^="mode-"]')).toHaveText([
     "ディレクトリ整理",
     "ファイル編集",
@@ -68,6 +69,8 @@ test("2つの入口と1つのページ一覧で、変更なしでも確認済み
   await expect(page.getByTestId("split-previous")).toBeDisabled();
   await expect(page.getByTestId("split-confirm")).toHaveText("確認済みにする");
   await save(page);
+  await page.getByTestId("split-step-split").click();
+  await expect(page.getByTestId("split-confirm")).toBeDisabled();
   expect(coloursOf(archive)).toEqual(before);
   expect(statSync(archive).mtimeMs).toBe(modified);
   expect(
@@ -119,6 +122,27 @@ test("ページをドラッグして変更を反映し、別のファイルに�
     "001.png",
   );
   await expect(page.getByTestId("split-confirm")).toHaveText("確認済みにする");
+  await expect(page.getByTestId("split-confirm")).toBeEnabled();
+});
+
+test("確認後は編集すると保存でき、取り消しやリセットで元に戻すと再び無効になる", async ({
+  page,
+}) => {
+  await open(page, book("review-and-edit.zip"));
+  await save(page);
+  await drag(page, 0, 2);
+  await expect(page.getByTestId("split-confirm")).toBeEnabled();
+  await page.keyboard.press("Control+z");
+  await expect(page.getByTestId("split-confirm")).toBeDisabled();
+  await drag(page, 0, 2);
+  await expect(page.getByTestId("split-confirm")).toBeEnabled();
+  await page.getByTestId("split-reset").click();
+  await expect(page.getByTestId("split-confirm")).toBeDisabled();
+  await adjust(page, 0);
+  await page.getByTestId("rotate").click();
+  await page.getByTestId("apply-thumbnail").click();
+  await expect(page.getByTestId("split-confirm")).toBeEnabled();
+  await save(page);
 });
 
 test("右クリックでサムネイルを選び、画像の中身を変えず先頭に保存する", async ({
