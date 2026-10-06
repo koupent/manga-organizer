@@ -75,7 +75,7 @@ async function fillMangaInfo(page: Page, title: string, author: string) {
 
 /** ファイルブラウザから対象を選ぶ。許可された蔵書フォルダから辿る */
 async function selectArchive(page: Page, archive: string) {
-  const name = archive.split("/").pop()!;
+  const name = archive.split(/[\\/]/).pop()!;
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
   await page

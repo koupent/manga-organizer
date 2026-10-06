@@ -27,8 +27,10 @@ from typing import Any
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 
+from manga_api.cover_job import CoverRequest
 from manga_api.jobs import ProgressReporter
 from manga_api.thumbnails import ThumbnailCache
+from manga_core.cover_editor import CoverTransform
 from manga_core.page_reorder import PageEntry, ZipPageEditor
 from manga_core.page_splitter import (
     MergeIntent,
@@ -91,6 +93,11 @@ class SplitConfirmRequest(BaseModel):
     archive: str = Field(description="対象アーカイブの絶対パス")
     token: str = Field(description="走査が返した印")
     rows: list[SplitIntentRowView] = Field(description="ページ順に並べた行ぜんぶ")
+    allow_reorder: bool = Field(default=False, description="行の順序変更も反映する")
+    reviewed: bool = Field(default=False, description="本に確認済みの記録を残す")
+    cover: CoverRequest | None = Field(
+        default=None, description="同じ保存に含める表紙の画像調整"
+    )
 
 
 class SplitRowView(BaseModel):
@@ -199,7 +206,10 @@ def refuse_stale_token(pages: Sequence[PageEntry], token: str) -> None:
 
 
 def intent_rows(
-    pages: Sequence[PageEntry], rows: Sequence[SplitIntentRowView]
+    pages: Sequence[PageEntry],
+    rows: Sequence[SplitIntentRowView],
+    *,
+    allow_reorder: bool = False,
 ) -> tuple[SplitIntent, ...]:
     """画面から届いた行を、コアが受け取る形へ落とす。
 
@@ -227,7 +237,11 @@ def intent_rows(
             if len(row.names) == 2 and not row.merge
         },
     )
-    if submitted != current:
+    if (
+        (sorted(submitted) != sorted(page.name for page in pages))
+        if allow_reorder
+        else (submitted != current)
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="行の名前を並べたものが、いまのページ順と一致しません",
@@ -284,7 +298,10 @@ def scan_work(path: Path) -> Callable[[ProgressReporter], dict[str, Any]]:
 
 
 def confirm_work(
-    path: Path, rows: Sequence[SplitIntent | MergeIntent], thumbnails: ThumbnailCache
+    path: Path,
+    rows: Sequence[SplitIntent | MergeIntent],
+    thumbnails: ThumbnailCache,
+    request: SplitConfirmRequest | None = None,
 ) -> Callable[[ProgressReporter], dict[str, Any]]:
     """確定ジョブの中身を組み立てる"""
 
@@ -294,6 +311,19 @@ def confirm_work(
             path,
             rows,
             progress=lambda current, total: report(current=current, total=total),
+            allow_reorder=request.allow_reorder if request else False,
+            reviewed=request.reviewed if request else False,
+            cover=(
+                request.cover.name,
+                CoverTransform(
+                    split=request.cover.split,
+                    crop=request.cover.crop,
+                    rotate=request.cover.rotate,
+                ),
+                request.cover.from_original,
+            )
+            if request and request.cover
+            else None,
         )
         # 連番を振り直すので、002.jpg はもう別の絵。捨てないと、画面は
         # 同じ URL で割る前のサムネイルを並べ続ける

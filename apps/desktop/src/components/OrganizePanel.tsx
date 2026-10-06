@@ -159,6 +159,9 @@ export function OrganizePanel({
 }: OrganizePanelProps) {
   const [libraryOpen, setLibraryOpen] = useState(false);
   // 利用者が直した巻数。本の鍵で覚え、解析をやり直しても消さない（段階 5）
+  const [customNames, setCustomNames] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  );
   const [volumes, setVolumes] = useState<VolumeCorrections>(new Map());
   // 窓の上をブラウザのドラッグが通っているか（Tauri のドラッグは App から届く）
   const [browserDragging, setBrowserDragging] = useState(false);
@@ -284,6 +287,7 @@ export function OrganizePanel({
     analyzedSources.current = sources;
     if (sources.length === 0) {
       if (before.length > 0) changeTitle("");
+      setCustomNames(new Map());
       setAnalysis(IDLE_ANALYSIS);
       return;
     }
@@ -603,8 +607,9 @@ export function OrganizePanel({
         off,
         decisions,
         doneBooks.map((book) => baseName(book.path)),
+        customNames,
       ),
-    [rows, author, title, off, decisions, doneBooks],
+    [rows, author, title, off, decisions, doneBooks, customNames],
   );
   // 同じ巻の本の数（#162）。外した本も数える
   const sameVolume = useMemo(
@@ -962,7 +967,7 @@ export function OrganizePanel({
         keep_originals: keepOriginals,
         // 一覧で残した本だけを作る。空の配列は「1 冊も作らない」であって
         // 「指定なし」ではないので、省かずに必ず載せる
-        books: selectedBooks(rows, off, volumes, names),
+        books: selectedBooks(rows, off, volumes, names, customNames),
       });
       jobId.current = accepted.id;
 
@@ -1316,7 +1321,16 @@ export function OrganizePanel({
                 onOpenArchive={onOpenProduced}
                 edits={edits}
                 corrected={new Set(volumes.keys())}
+                renamed={new Set(customNames.keys())}
                 collided={collided}
+                onRename={(row, name) =>
+                  setCustomNames((current) => {
+                    const next = new Map(current);
+                    if (name === null) next.delete(row.id);
+                    else next.set(row.id, name);
+                    return next;
+                  })
+                }
                 onCorrect={correctVolume}
                 onFill={fillVolumes}
               />

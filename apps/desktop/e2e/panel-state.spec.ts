@@ -1,3 +1,5 @@
+import { openCoverTools } from "./cover-tools";
+import { pageSizesOf } from "./archive";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -68,10 +70,7 @@ async function openApp(page: Page, params: Record<string, string>) {
 }
 
 /** タブを押して画面を移る。押した先が選ばれたことまで見る */
-async function switchMode(
-  page: Page,
-  mode: "organize" | "thumbnail" | "reorder",
-) {
+async function switchMode(page: Page, mode: "organize" | "edit") {
   await page.getByTestId(`mode-${mode}`).click();
   await expect(page.getByTestId(`mode-${mode}`)).toHaveAttribute(
     "aria-pressed",
@@ -103,7 +102,7 @@ async function selectArchives(page: Page, paths: string[]) {
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
   for (const path of paths) {
-    const name = path.split("/").pop()!;
+    const name = path.split(/[\\/]/).pop()!;
     await page
       .locator(
         `[data-testid="browse-entry"][data-name="${name}"] .browser-name`,
@@ -143,7 +142,7 @@ if root.exists():
     ],
     { cwd: CORE_DIR, encoding: "utf8" },
   );
-  return output.trim() ? output.trim().split("\n") : [];
+  return output.trim() ? output.trim().split(/\r?\n/) : [];
 }
 
 /**
@@ -207,49 +206,10 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
   return target;
 }
 
-/** 枠の位置と大きさ。動いたかどうかを実際の描画から見る */
-async function frameBox(page: Page) {
-  const box = await page.getByTestId("crop-frame").boundingBox();
-  if (!box) throw new Error("crop-frame が描画されていません");
-  return box;
-}
-
-/** 枠の描画が落ち着くまで待ち、その位置と大きさを返す */
-async function settledFrameBox(page: Page) {
-  let current = await frameBox(page);
-  await expect
-    .poll(
-      async () => {
-        const previous = current;
-        current = await frameBox(page);
-        return (
-          Math.abs(current.x - previous.x) < 0.5 &&
-          Math.abs(current.y - previous.y) < 0.5 &&
-          Math.abs(current.width - previous.width) < 0.5
-        );
-      },
-      { timeout: 20_000, message: "切り抜き枠の描画が落ち着きません" },
-    )
-    .toBe(true);
-  return current;
-}
-
-/** 指定した点から掴んで、そのぶんだけ運ぶ */
-async function dragFrom(
-  page: Page,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-) {
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move(to.x, to.y, { steps: 12 });
-  await page.mouse.up();
-}
-
 /** 画面に並んでいるページを、見えている順で読む */
 function shownOrder(page: Page): Promise<(string | null)[]> {
   return page
-    .getByTestId("page-card")
+    .getByTestId("editable-page")
     .evaluateAll((nodes) =>
       nodes.map((node) => node.getAttribute("data-name")),
     );
@@ -283,8 +243,8 @@ test.describe("画面を切り替えても状態が残る", () => {
     await selectArchives(page, paths);
 
     // Act - サムネイル作成を覗いてから戻る
-    await switchMode(page, "thumbnail");
-    await expect(page.getByTestId("cover-name")).toBeVisible();
+    await switchMode(page, "edit");
+    await expect(page.getByTestId("editable-page").first()).toBeVisible();
     await switchMode(page, "organize");
 
     // Assert - 作品名と著者は入れたまま。ここが OrganizePanel の中の状態で、
@@ -335,7 +295,7 @@ test.describe("画面を切り替えても状態が残る", () => {
 
     // Act - 利用者が指摘した動き。出来た本の行からサムネイル作成へ
     // 移り、そこからファイル整理へ戻って次の作業を選ぼうとする
-    await madeRow(page, expected[1]).getByTestId("plan-to-thumbnail").click();
+    await madeRow(page, expected[1]).getByTestId("plan-to-edit").click();
     await expect(page.getByTestId("archive-name")).toHaveText(expected[1]);
     await switchMode(page, "organize");
 
@@ -363,14 +323,14 @@ test.describe("画面を切り替えても状態が残る", () => {
     );
     await openApp(page, { mode: "reorder", archive });
 
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
     await expect(cards).toHaveCount(4);
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "変更はありません",
+    await expect(page.getByTestId("split-confirm")).toHaveText(
+      "確認済みにする",
     );
 
     // Act - 1 枚目を 3 枚目の位置へ運び、保存しないまま置いておく
-    await cards.nth(0).hover();
+    await cards.nth(0).getByTestId("page-drag-handle").hover();
     await page.mouse.down();
     const target = (await cards.nth(2).boundingBox())!;
     await page.mouse.move(
@@ -380,9 +340,7 @@ test.describe("画面を切り替えても状態が残る", () => {
     );
     await page.mouse.up();
 
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
     const edited = await shownOrder(page);
     expect(edited).not.toEqual(["001.jpg", "002.jpg", "003.jpg", "004.jpg"]);
 
@@ -393,14 +351,12 @@ test.describe("画面を切り替えても状態が残る", () => {
     await page.waitForTimeout(100);
     await switchMode(page, "organize");
     await expect(page.getByTestId("confirm")).toBeVisible();
-    await switchMode(page, "reorder");
+    await switchMode(page, "edit");
     await expect(cards).toHaveCount(4);
 
     // Assert - 並べ替えた順序も、保存していないという印も残る
     expect(await shownOrder(page)).toEqual(edited);
-    await expect(page.getByTestId("dirty-state")).toHaveText(
-      "未保存の変更があります",
-    );
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
 
     // Assert - 取り消せる履歴も残る。戻った先で 1 手前に戻せなければ、
     // 途中経過を持ち越したとは言えない
@@ -414,70 +370,27 @@ test.describe("画面を切り替えても状態が残る", () => {
     ]);
   });
 
-  test("サムネイル作成の保留中の加工は、ファイル整理へ往復しても残る", async ({
+  test("サムネイル画像調整の保留は、整理画面へ往復しても残る", async ({
     page,
   }) => {
-    // Arrange - 2:3 でない表紙。枠に動かせる余りがある
     const archive = writeWideArchive("状態保持_表紙.zip");
-    await openApp(page, { mode: "thumbnail", archive });
-    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
-    await expect(page.getByTestId("pending-rotation")).toHaveCount(0);
-    const initial = await settledFrameBox(page);
-
-    // Act - 90 度回してから枠を動かす。
-    // 回すと枠は選び直しになるので、この順でないと枠の加工が消える
+    await openApp(page, { mode: "edit", archive });
+    await openCoverTools(page);
     await page.getByTestId("rotate").click();
-    await expect(page.getByTestId("pending-rotation")).toHaveText(
-      "90 度回転（未確定）",
-    );
-    const upright = await settledFrameBox(page);
-
-    // Act - 枠を小さくしてから右下へ寄せる。初期状態から遠い所へ置き、
-    // 作り直された初期状態とたまたま一致しないようにする
-    const handle = (await page
-      .getByTestId("crop-handle")
-      .first()
-      .boundingBox())!;
-    await dragFrom(
-      page,
-      { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 },
-      {
-        x: upright.x + upright.width / 2,
-        y: upright.y + upright.height / 2,
-      },
-    );
-    const shrunk = await settledFrameBox(page);
-    expect(shrunk.width).toBeLessThan(upright.width - 15);
-
-    await dragFrom(
-      page,
-      { x: shrunk.x + shrunk.width / 2, y: shrunk.y + shrunk.height / 2 },
-      { x: 2000, y: 2000 },
-    );
-    const edited = await settledFrameBox(page);
-    // 位置は横と縦を合わせて見る。回した後の縦長は、既定の枠が画像の全体に
-    // なる（#146）。左上は回す前の既定の枠とたまたま重なりうるので、右下へ寄せる
-    expect(
-      Math.abs(edited.x - initial.x) + Math.abs(edited.y - initial.y),
-    ).toBeGreaterThan(10);
-    expect(Math.abs(edited.width - initial.width)).toBeGreaterThan(10);
-
-    // Act - ファイル整理を覗いてから戻る
+    await page.getByTestId("apply-thumbnail").click();
     await switchMode(page, "organize");
     await expect(page.getByTestId("confirm")).toBeVisible();
-    await switchMode(page, "thumbnail");
-    await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
-
-    // Assert - 回転は保留のまま残る
-    await expect(page.getByTestId("pending-rotation")).toHaveText(
-      "90 度回転（未確定）",
+    await switchMode(page, "edit");
+    await expect(page.getByTestId("split-status")).toContainText(
+      "画像調整を反映します",
     );
-
-    // Assert - 枠も動かした所にある。初期状態へ戻っていれば落ちる
-    const after = await settledFrameBox(page);
-    expect(Math.abs(after.x - edited.x)).toBeLessThan(3);
-    expect(Math.abs(after.y - edited.y)).toBeLessThan(3);
-    expect(Math.abs(after.width - edited.width)).toBeLessThan(3);
+    await expect(page.getByTestId("split-confirm")).toHaveText("変更を反映");
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toHaveAttribute(
+      "data-state",
+      "done",
+    );
+    expect(pageSizesOf(archive)["001.jpg"]).toEqual([1200, 1800]);
   });
 
   /**
@@ -503,7 +416,7 @@ test.describe("画面を切り替えても状態が残る", () => {
     // Chromium の先読みが全部さらってしまい、取り残しが作れない。表示サイズは
     // 開く前から効くよう保存先に入れておく（利用者が前回動かした状態と同じ）
     await page.addInitScript((width) => {
-      window.localStorage.setItem("manga-organizer:reorder.cardWidth", width);
+      window.localStorage.setItem("manga-organizer:split.cardWidth", width);
     }, String(CARD_WIDTH_MAX));
 
     const archive = writeArchive(
@@ -515,8 +428,8 @@ test.describe("画面を切り替えても状態が残る", () => {
       })),
     );
     await openApp(page, { mode: "reorder", archive });
-    await expect(page.getByTestId("page-card")).toHaveCount(MANY_PAGES);
-    await expect(page.getByTestId("card-width")).toHaveValue(
+    await expect(page.getByTestId("editable-page")).toHaveCount(MANY_PAGES);
+    await expect(page.getByTestId("split-card-width")).toHaveValue(
       String(CARD_WIDTH_MAX),
     );
 
@@ -552,10 +465,10 @@ test.describe("画面を切り替えても状態が残る", () => {
     expect(requested.slice(mark)).toEqual([]);
 
     // Assert - 戻れば再開する。止めたまま白いカードが並ぶのでは意味がない
-    await switchMode(page, "reorder");
-    await expect(page.getByTestId("page-card")).toHaveCount(MANY_PAGES);
+    await switchMode(page, "edit");
+    await expect(page.getByTestId("editable-page")).toHaveCount(MANY_PAGES);
     await expect(
-      page.getByTestId("page-card").first().locator("img"),
+      page.getByTestId("editable-page").first().locator("img"),
     ).toHaveJSProperty("naturalWidth", CARD_WIDTH_MAX);
   });
 });

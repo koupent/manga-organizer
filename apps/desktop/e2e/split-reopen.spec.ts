@@ -267,7 +267,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     await expect(page.getByTestId("split-status")).toHaveText(
       "変更はありません",
     );
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     await page.context().close();
   });
@@ -279,7 +279,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
    * 置いた実装を素通しする。どれも利用者に届く経路で、届いた時点でこの機能の
    * 約束（元画像と割った半分の区別を見せない）は破れている。
    */
-  test("カードにファイル名は出ない。畳んだ行も畳まない行も同じ", async ({
+  test("分割の作業面はページ番号で表示し、復元用の元画像名を出さない", async ({
     browser,
   }) => {
     // Arrange
@@ -296,7 +296,11 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     // 畳んだ行だけを見る検証は、縦長ページに名前を出す実装でも通る。
     // その実装では「名前が 2 つある行」と「1 つの行」の違いが、名前が
     // 出ていないことそのもので分かってしまう
-    const text = await page.getByTestId("split-grid").textContent();
+    // 共通カードのヘッダーには保存済みのファイル名を表示する。
+    // 分割の作業面は引き続きページ番号だけで、復元用の名前を見せない。
+    const text = (await page.getByTestId("split-card").allTextContents()).join(
+      "",
+    );
     for (const name of entries) {
       expect(text, `カードに ${name} が出ている`).not.toContain(name);
       // 拡張子を落として出す実装も同じ漏れ方をする。番号の札は "3–4" の
@@ -448,7 +452,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
       "data-pending",
       "false",
     );
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Assert - 開き直しても同じ。戻した見開きは見開きのまま残し、①の
     // 「すべて分割」の対象にしない（#151 #153）。①の対象が無いので②から開く

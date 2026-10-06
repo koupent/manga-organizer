@@ -309,7 +309,7 @@ function makeGate(): Gate {
 
 /** 対象を選び直す画面から、名前で 1 件選ぶ（page-reorder.spec.ts と同じ要領） */
 async function chooseArchiveViaBrowser(page: Page, archive: string) {
-  const name = archive.split("/").pop()!;
+  const name = archive.split(/[\\/]/).pop()!;
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
   await page

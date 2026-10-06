@@ -103,7 +103,7 @@ async function openReorder(page: Page) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=reorder`,
   );
-  await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+  await expect(page.getByTestId("mode-edit")).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -256,7 +256,7 @@ test.describe("ファイルブラウザを別窓で出す", () => {
 
     // Assert - 選んだ 1 冊が実際に読み込まれている
     await expect(page.getByTestId("archive-name")).toHaveText("窓で選ぶ.zip");
-    await expect(page.getByTestId("page-card")).toHaveCount(REORDER_PAGES);
+    await expect(page.getByTestId("editable-page")).toHaveCount(REORDER_PAGES);
     expect(archive.endsWith("窓で選ぶ.zip")).toBe(true);
   });
 

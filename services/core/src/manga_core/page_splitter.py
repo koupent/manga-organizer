@@ -27,7 +27,12 @@ from pathlib import Path
 
 from PIL import Image
 
-from manga_core.cover_editor import is_spread
+from manga_core.cover_editor import (
+    CoverTransform,
+    is_spread,
+    prepare_cover,
+    record_review,
+)
 from manga_core.original_store import (
     Derivation,
     Operation,
@@ -240,6 +245,10 @@ def apply_rows(
     archive_path: Path,
     rows: Sequence[SplitRow | SplitIntent | MergeIntent],
     progress: ProgressCallback | None = None,
+    *,
+    allow_reorder: bool = False,
+    reviewed: bool = False,
+    cover: tuple[str, CoverTransform, bool] | None = None,
 ) -> SplitResult:
     """行ぜんぶを受け取り、split の変化を 1 回の書き直しで適用する。
 
@@ -266,7 +275,7 @@ def apply_rows(
         extras: dict[str, bytes] = {}
         changes: Counter[str] = Counter()
         for row in rows:
-            planned = _apply_row(editor, path, row, extras)
+            planned = _apply_row(editor, path, row, extras, allow_reorder)
             outputs.extend(planned.outputs)
             dropped.extend(planned.dropped)
             extras = planned.extras
@@ -275,6 +284,35 @@ def apply_rows(
             # 分割・結合したこと（#143）を記録に残す。何も変わらない確定では
             # 残さない。書き足すものがあると、それだけで書き直しになる
             extras = plan_edit(path, "split", planned=extras)
+        moved = [name for row in rows for name in row.names] != [
+            page.name for page in editor.pages
+        ]
+        if (
+            reviewed
+            and not moved
+            and not _tally(len(outputs), changes).changed
+            and cover is None
+        ):
+            editor.close()
+            record_review(path)
+            return _tally(len(outputs), changes)
+        if allow_reorder and moved:
+            extras = plan_edit(path, "reorder", planned=extras)
+        if cover is not None:
+            name, transform, from_original = cover
+            targets = [
+                index for index, output in enumerate(outputs) if output.source == name
+            ]
+            if len(targets) != 1 or outputs[targets[0]].content is not None:
+                raise PageSplitError(
+                    "表紙の画像調整と、そのページの分割・結合は別々に保存してください"
+                )
+            produced, extras = prepare_cover(
+                path, name, editor.read_entry(name), transform, from_original, extras
+            )
+            outputs[targets[0]] = OutputPage(name, produced)
+        if reviewed:
+            extras = plan_edit(path, "review", planned=extras)
         editor.apply_pages(
             outputs,
             progress=progress,
@@ -285,7 +323,10 @@ def apply_rows(
         raise PageSplitError(str(error)) from error
     finally:
         editor.close()
-    return _tally(len(outputs), changes)
+    result = _tally(len(outputs), changes)
+    return replace(
+        result, changed=result.changed or (allow_reorder and moved) or cover is not None
+    )
 
 
 def _tally(page_count: int, changes: Counter[str]) -> SplitResult:
@@ -656,10 +697,11 @@ def _apply_row(
     path: Path,
     row: SplitRow | SplitIntent | MergeIntent,
     extras: dict[str, bytes],
+    allow_reorder: bool = False,
 ) -> _RowPlan:
     """1 行ぶんの出力ページと記録を組み立てる"""
     if isinstance(row, MergeIntent):
-        return _merge_pages(editor, path, row.names, extras)
+        return _merge_pages(editor, path, row.names, extras, allow_reorder)
     if len(row.names) == 1:
         if row.split is None:
             return _RowPlan((OutputPage(row.names[0]),), (), extras, _CHANGE_NONE)
@@ -786,6 +828,7 @@ def _merge_pages(
     path: Path,
     names: tuple[str, str],
     extras: dict[str, bytes],
+    allow_reorder: bool = False,
 ) -> _RowPlan:
     """隣り合う 2 ページを、1 枚の見開きへ貼り合わせる（#139）。
 
@@ -802,7 +845,9 @@ def _merge_pages(
     first_name, second_name = names
     order = [page.name for page in editor.pages]
     position = order.index(first_name) if first_name in order else -1
-    if position < 0 or order[position + 1 : position + 2] != [second_name]:
+    if not allow_reorder and (
+        position < 0 or order[position + 1 : position + 2] != [second_name]
+    ):
         raise PageSplitError(f"結合できるのは隣り合う 2 ページです: {names}")
     right = _rgb(editor.read_entry(first_name))
     left = _rgb(editor.read_entry(second_name))

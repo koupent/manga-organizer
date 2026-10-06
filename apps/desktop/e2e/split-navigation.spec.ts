@@ -120,7 +120,7 @@ test.describe("ページ分割: 候補へ送る・割った印・左から右の
   test("ページ並べ替えも左から右へ並ぶ", async ({ page }) => {
     // Arrange
     await open(page, writeTwoSpreads("並べ替え.zip"), "reorder");
-    const cards = page.getByTestId("page-card");
+    const cards = page.getByTestId("editable-page");
     await expect(cards).toHaveCount(7);
 
     // Assert - 1 ページ目が左端

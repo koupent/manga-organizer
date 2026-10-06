@@ -192,7 +192,7 @@ function buildFixture(): string {
     ],
     { cwd: CORE_DIR, encoding: "utf8" },
   );
-  return JSON.parse(output.trim().split("\n").pop()!).library as string;
+  return JSON.parse(output.trim().split(/\r?\n/).pop()!).library as string;
 }
 
 test.beforeAll(() => {

@@ -1,3 +1,4 @@
+import { openCoverTools, saveCoverTools } from "./cover-tools";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
@@ -80,6 +81,7 @@ async function openCover(
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=thumbnail&archive=${encodeURIComponent(archive)}`,
   );
+  await openCoverTools(page);
 }
 
 /** 枠の位置と大きさ。動いたかどうかを実際の描画から見る */
@@ -167,12 +169,13 @@ async function rotateOnce(page: Page, previous: string): Promise<string> {
  * page-reorder.spec.ts と同じ要領で、実パスはサーバー側が返す。
  */
 async function chooseArchiveViaBrowser(page: Page, archive: string) {
-  const name = archive.split("/").pop()!;
+  const name = archive.split(/[\\/]/).pop()!;
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
   await page
     .locator(`[data-testid="browse-entry"][data-name="${name}"] .browser-name`)
     .click();
+  await openCoverTools(page);
 }
 
 test.describe("サムネイル作成", () => {
@@ -189,13 +192,10 @@ test.describe("サムネイル作成", () => {
     // Act - 2:3 の枠を右半分へ寄せて確定する。
     // 見開きの表紙は、使いたい側へ枠を合わせれば表紙になる
     await dragFrameTo(page, "right");
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      {
-        timeout: 30_000,
-      },
-    );
+    await saveCoverTools(page);
+    await expect(page.getByTestId("split-status")).toContainText("確認済み", {
+      timeout: 30_000,
+    });
 
     // Assert - 見開きでなくなり、viewer の枠に収まる
     await expect(page.getByTestId("cover-size")).toHaveText("800×1200");
@@ -211,13 +211,10 @@ test.describe("サムネイル作成", () => {
 
     // Act - 右半分（青）へ枠を寄せて確定する
     await dragFrameTo(page, "right");
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      {
-        timeout: 30_000,
-      },
-    );
+    await saveCoverTools(page);
+    await expect(page.getByTestId("split-status")).toContainText("確認済み", {
+      timeout: 30_000,
+    });
 
     // Assert - 残ったのは右半分（青）で、他ページは無変更
     const inspected = runPython(
@@ -424,11 +421,10 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
     expect(archiveState(archive)).toEqual(before);
 
     // Act - 確定する
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
+    await saveCoverTools(page);
+    await expect(page.getByTestId("split-status")).toContainText("確認済み", {
+      timeout: 30_000,
+    });
 
     // Assert - 回転はここで 1 回ぶんだけ効く。
     // 左右に並んでいた赤と青が、上下に並ぶ
@@ -444,11 +440,10 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
     const spun = writeNoisyArchive(sidecar.workDir, "四回転 実験.zip");
     await openCover(page, control);
     await expect(page.getByTestId("cover-size")).toHaveText("1600×1200");
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
+    await saveCoverTools(page);
+    await expect(page.getByTestId("split-status")).toContainText("確認済み", {
+      timeout: 30_000,
+    });
 
     // Act - もう一方は 90 度を 4 回押してから確定する。1 周して元の向きに戻る
     await openCover(page, spun);
@@ -457,11 +452,10 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
     for (let turn = 0; turn < 4; turn += 1) {
       shot = await rotateOnce(page, shot);
     }
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
+    await saveCoverTools(page);
+    await expect(page.getByTestId("split-status")).toContainText("確認済み", {
+      timeout: 30_000,
+    });
 
     // Assert - 向きも寸法も同じで、画素もほぼ一致する。
     // 押すたびに書き直す作りでは、4 回ぶんの再エンコードが画素に残る
@@ -554,6 +548,7 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
     await rotateOnce(page, await settledPreview(page));
 
     // Act - 確定しないまま別のファイルを選ぶ
+    await page.keyboard.press("Escape");
     await page.getByTestId("change-archive").click();
     await expect(page.getByTestId("dropzone")).toBeVisible();
     await chooseArchiveViaBrowser(page, second);
@@ -575,9 +570,7 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
   });
 
   test("90 度回してもボタンの位置が動かない", async ({ page }) => {
-    // Arrange - 操作の列が縦に溢れる大きさで見る。溢れていない間は主操作が
-    // 列の下端に貼り付くので、間の警告が出入りしてもずれない。実機で報告
-    // されたずれは、列が溢れて下端に貼り付けなくなったときに起きる
+    // 操作の列が縦に溢れる小さな窓で、決定ボタンが固定されているか確かめる。
     await page.setViewportSize({ width: 1000, height: 560 });
     const archive = writeSpreadArchive(sidecar.workDir, "ボタン位置.zip");
     await openCover(page, archive);
@@ -589,120 +582,27 @@ test.describe("サムネイル作成: 加工は確定するまで保留する", 
       if (!box) throw new Error(`${id} が描画されていません`);
       return Math.round(box.y);
     };
-    /**
-     * 見え方の見本から測った、ボタンまでの距離。
-     *
-     * 溢れた列は押した拍子にスクロールするので、画面上の y をそのまま比べると
-     * スクロールぶんまで拾ってしまう。警告は見本とボタンの間にあるので、
-     * 見本からの距離で見れば、警告が場所を空けたままかどうかだけが残る。
-     */
-    const gaps = async () => {
-      const preview = await topOf("cover-frame");
-      return {
-        choose: (await topOf("choose-page")) - preview,
-        apply: (await topOf("apply-thumbnail")) - preview,
-      };
-    };
-    const before = await gaps();
+    // 決定ボタンはスクロール欄の外に固定され、常に画面内にある。
+    await expect(page.getByTestId("apply-thumbnail")).toBeInViewport();
+    const before = await topOf("apply-thumbnail");
 
     // Act
     await rotateOnce(page, await settledPreview(page));
 
-    // Assert - 見開きの警告が出入りしても、押す場所は動かない。
+    // Assert - 回転のために操作欄をスクロールしても、押す場所は動かない。
     // 加工の反映は後から届くので、しばらく見張って一番動いた量を見る。
     // 1 回だけ測ると、届く前の値を見て「動かなかった」と取り違える
-    const worst = { choose: 0, apply: 0 };
+    const worst = { apply: 0 };
     const until = Date.now() + BUTTON_WATCH_MS;
     while (Date.now() < until) {
-      const now = await gaps();
-      worst.choose = Math.max(worst.choose, Math.abs(now.choose - before.choose)); // prettier-ignore
-      worst.apply = Math.max(worst.apply, Math.abs(now.apply - before.apply));
+      const now = await topOf("apply-thumbnail");
+      worst.apply = Math.max(worst.apply, Math.abs(now - before));
       await page.waitForTimeout(50);
     }
     expect(
       worst.apply,
-      `確定ボタンが、見え方の見本から ${before.apply}px の所から ${worst.apply}px ぶん動いた`,
+      `確定ボタンが画面上の ${before}px の位置から ${worst.apply}px ぶん動いた`,
     ).toBeLessThanOrEqual(BUTTON_SHIFT_TOLERANCE);
-    expect(
-      worst.choose,
-      `画像を選ぶボタンが、見え方の見本から ${before.choose}px の所から ${worst.choose}px ぶん動いた`,
-    ).toBeLessThanOrEqual(BUTTON_SHIFT_TOLERANCE);
-  });
-});
-
-/** 候補を格子で見るために用意するページ数。1 行には収まらない量にする */
-const MANY_PAGES = 24;
-
-/**
- * 候補一覧は、切り抜きの面と入れ替えて大きく出す。
- *
- * 単行本は 150〜200 ページある。1 行のフィルムストリップでは、中ほどの
- * ページへ辿り着けない。
- */
-test.describe("サムネイル作成: 候補一覧", () => {
-  test("候補一覧は切り抜きの面と入れ替わる", async ({ page }) => {
-    // Arrange
-    const archive = writeArchive(sidecar.workDir, "候補と入れ替え.zip", [
-      { name: "page-a.jpg", color: "#ff0000" },
-      { name: "page-b.jpg", color: "#00ff00" },
-      { name: "page-c.jpg", color: "#0000ff" },
-    ]);
-    await openCover(page, archive);
-    await expect(page.getByTestId("crop-frame")).toBeVisible();
-
-    // Act - 候補を開く
-    await page.getByTestId("choose-page").click();
-
-    // Assert - 切り抜きの面は退く。同時に見比べる必要は薄い
-    await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(3);
-    await expect(page.getByTestId("crop-frame")).toBeHidden();
-
-    // Act - 閉じる
-    await page.getByTestId("choose-page").click();
-
-    // Assert - 切り抜きの面が戻る
-    await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(0);
-    await expect(page.getByTestId("crop-frame")).toBeVisible();
-  });
-
-  test(`${MANY_PAGES} ページの候補が 1 行に収まらず格子に並ぶ`, async ({
-    page,
-  }) => {
-    // Arrange - 1 行では収まらない数のページ
-    const archive = writeArchive(
-      sidecar.workDir,
-      "候補が多い.zip",
-      Array.from({ length: MANY_PAGES }, (_, index) => ({
-        name: `${String(index + 1).padStart(3, "0")}.jpg`,
-        color: "#3366cc",
-      })),
-    );
-    await openCover(page, archive);
-
-    // Act
-    await page.getByTestId("choose-page").click();
-    const candidates = page.getByTestId("thumbnail-candidate");
-    await expect(candidates).toHaveCount(MANY_PAGES);
-
-    // Assert - 縦に積まれている
-    const boxes = await candidates.evaluateAll((nodes) =>
-      nodes.map((node) => {
-        const rect = node.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, width: rect.width };
-      }),
-    );
-    const rows = new Set(boxes.map((box) => Math.round(box.y)));
-    expect(rows.size, `候補が ${rows.size} 行に並んでいる`).toBeGreaterThan(1);
-
-    // Assert - 横へ流して隠さない。全部が候補の場所の幅に収まる
-    const area = (await page.getByTestId("page-candidates").boundingBox())!;
-    const spread =
-      Math.max(...boxes.map((box) => box.x + box.width)) -
-      Math.min(...boxes.map((box) => box.x));
-    expect(
-      spread,
-      `候補が横へ ${Math.round(spread)}px 続き、幅 ${Math.round(area.width)}px に収まらない`,
-    ).toBeLessThanOrEqual(area.width + 2);
   });
 });
 
@@ -731,12 +631,13 @@ test.describe("サムネイル作成の対象選択と加工", () => {
         return transfer;
       }, files),
     });
+    await openCoverTools(page);
   }
 
   /** 作った ZIP を、ドロップに渡す名前とサイズの組にする */
   function dropEntry(archive: string) {
     return {
-      name: archive.split("/").pop()!,
+      name: archive.split(/[\\/]/).pop()!,
       size: readFileSync(archive).length,
     };
   }
@@ -747,7 +648,7 @@ test.describe("サムネイル作成の対象選択と加工", () => {
       `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
         `&mode=thumbnail`,
     );
-    await expect(page.getByTestId("mode-thumbnail")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -860,13 +761,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     await expect(page.getByTestId("cover-size")).toHaveText("900×900");
 
     // Act - アーカイブ内の画像から 2 枚目を選ぶ
-    await page.getByTestId("choose-page").click();
-    const candidates = page.getByTestId("thumbnail-candidate");
-    await expect(candidates).toHaveCount(3);
-    await expect(candidates.first()).toHaveAttribute("data-name", "page-a.jpg");
-    await page
-      .locator('[data-testid="thumbnail-candidate"][data-name="page-b.jpg"]')
-      .click();
+    await openCoverTools(page, "page-b.jpg");
 
     // Assert - 加工画面が選んだ画像に切り替わる
     await expect(page.getByTestId("cover-name")).toHaveText("page-b.jpg");
@@ -944,16 +839,12 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     await openCover(page, archive);
 
     // Act - 2 枚目を選んで確定する
-    await page.getByTestId("choose-page").click();
-    await page
-      .locator('[data-testid="thumbnail-candidate"][data-name="page-b.jpg"]')
-      .click();
+    await openCoverTools(page, "page-b.jpg");
     await expect(page.getByTestId("cover-name")).toHaveText("page-b.jpg");
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
-    );
+    await saveCoverTools(page);
+    await expect(page.getByTestId("split-status")).toContainText("確認済み", {
+      timeout: 30_000,
+    });
 
     // Assert - 選んだ絵が先頭に来て、ページ数は変わらない
     const pages = pageEntriesOf(archive);
@@ -979,10 +870,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
 
     // Arrange - 1 つ目で 2 枚目を選び、枠も縮めて状態を作る。既定の枠は
     // 画像の全体が収まる 2:3 で、それより広げも動かしもできない（#141）
-    await page.getByTestId("choose-page").click();
-    await page
-      .locator('[data-testid="thumbnail-candidate"][data-name="page-b.jpg"]')
-      .click();
+    await openCoverTools(page, "page-b.jpg");
     await expect(page.getByTestId("cover-name")).toHaveText("page-b.jpg");
     const moved = await frameBox(page);
     const grip = (await page.getByTestId("crop-handle").first().boundingBox())!;
@@ -994,6 +882,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     expect((await frameBox(page)).width).toBeLessThan(moved.width - 15);
 
     // Act - 2 つ目に選び直す
+    await page.keyboard.press("Escape");
     await page.getByTestId("change-archive").click();
     await expect(page.getByTestId("dropzone")).toBeVisible();
     await chooseArchiveViaBrowser(page, second);

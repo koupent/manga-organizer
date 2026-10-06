@@ -792,11 +792,11 @@ def create_app(
         finally:
             editor.close()
         refuse_stale_token(pages, request.token)
-        rows = intent_rows(pages, request.rows)
+        rows = intent_rows(pages, request.rows, allow_reorder=request.allow_reorder)
         job_id = app.state.jobs.submit(
             "split", {"archive": str(path), "rows": len(rows)}
         )
-        start_job(app, job_id, confirm_work(path, rows, app.state.thumbnails))
+        start_job(app, job_id, confirm_work(path, rows, app.state.thumbnails, request))
         return JobAccepted(id=job_id)
 
     @app.post(

@@ -138,7 +138,7 @@ async function selectArchives(page: Page, paths: string[]) {
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
   for (const path of paths) {
-    const name = path.split("/").pop()!;
+    const name = path.split(/[\\/]/).pop()!;
     await page
       .locator(
         `[data-testid="browse-entry"][data-name="${name}"] .browser-name`,

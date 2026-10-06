@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
+import { openCoverTools } from "./cover-tools";
 
 const CORE_DIR = fileURLToPath(
   new URL("../../../services/core", import.meta.url),
@@ -80,7 +81,7 @@ if root.exists():
     ],
     { cwd: CORE_DIR, encoding: "utf8" },
   );
-  return output.trim() ? output.trim().split("\n") : [];
+  return output.trim() ? output.trim().split(/\r?\n/) : [];
 }
 
 /**
@@ -90,7 +91,7 @@ if root.exists():
  * ファイル名なので、照合にはここを使う。
  */
 function producedNames(root: string): string[] {
-  return producedFiles(root).map((path) => path.split("/").pop()!);
+  return producedFiles(root).map((path) => path.split(/[\\/]/).pop()!);
 }
 
 /**
@@ -139,7 +140,7 @@ async function selectArchives(page: Page, paths: string[]) {
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
   for (const path of paths) {
-    const name = path.split("/").pop()!;
+    const name = path.split(/[\\/]/).pop()!;
     await page
       .locator(
         `[data-testid="browse-entry"][data-name="${name}"] .browser-name`,
@@ -196,7 +197,7 @@ async function addArchiveViaBrowser(
   archive: string,
   directory?: string,
 ) {
-  const name = archive.split("/").pop()!;
+  const name = archive.split(/[\\/]/).pop()!;
   await page.getByTestId("open-browser").click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
   if (directory) {
@@ -774,8 +775,8 @@ test.describe("整理画面", () => {
 
   test("ファイル整理とページ並べ替えを切り替えられる", async ({ page }) => {
     await openOrganize(page, join(sidecar.workDir, "out-mode"));
-    await page.getByTestId("mode-reorder").click();
-    await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+    await page.getByTestId("mode-edit").click();
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -784,18 +785,17 @@ test.describe("整理画面", () => {
 });
 
 test.describe("タブ", () => {
-  test("タブは ファイル整理 / サムネイル作成 / ページ並べ替え の 3 つで、辞書は無い", async ({
+  test("タブは ディレクトリ整理 / ファイル編集 の 2 つで、辞書は整理画面から開く", async ({
     page,
   }) => {
     // Arrange
     await openOrganize(page, join(sidecar.workDir, "out-tabs"));
 
     // Assert - 機能を表す名前が並ぶ
-    await expect(page.getByTestId("mode-organize")).toHaveText("ファイル整理");
-    await expect(page.getByTestId("mode-thumbnail")).toHaveText(
-      "サムネイル作成",
-    );
-    await expect(page.getByTestId("mode-reorder")).toHaveText("ページ並べ替え");
+    await expect(page.locator('[data-testid^="mode-"]')).toHaveText([
+      "ディレクトリ整理",
+      "ファイル編集",
+    ]);
 
     // Assert - 辞書はタブから外れ、ファイル整理の中のボタンから開く
     await expect(page.getByTestId("mode-library")).toHaveCount(0);
@@ -885,7 +885,7 @@ test.describe("整理後の受け渡し", () => {
       `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
         `&mode=${mode}`,
     );
-    await expect(page.getByTestId(`mode-${mode}`)).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -893,7 +893,7 @@ test.describe("整理後の受け渡し", () => {
 
   /** ファイルブラウザを辿って対象を 1 件選ぶ */
   async function chooseArchiveViaBrowser(page: Page, archive: string) {
-    const name = archive.split("/").pop()!;
+    const name = archive.split(/[\\/]/).pop()!;
     await page.getByTestId("open-browser").click();
     await expect(page.getByTestId("file-browser")).toBeVisible();
     await page
@@ -982,15 +982,9 @@ test.describe("整理後の受け渡し", () => {
     for (const name of expected) {
       const row = madeRow(page, name);
       await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
-      for (const [mode, action] of [
-        ["thumbnail", "サムネイルを作る"],
-        ["reorder", "ページを並べ替える"],
-        ["split", "ページを分割・結合する"],
-      ] as const) {
-        const shortcut = row.getByTestId(`plan-to-${mode}`);
-        await expect(shortcut).toHaveAttribute("title", `${name} の${action}`);
-        await expect(shortcut).toHaveAttribute("data-edited", "false");
-      }
+      const shortcut = row.getByTestId("plan-to-edit");
+      await expect(shortcut).toHaveAttribute("title", `${name} を編集`);
+      await expect(shortcut).toHaveAttribute("data-edited", "false");
     }
 
     // Assert - 出来た本はもう処理の対象ではないので、チェックが無い（#172）
@@ -1003,13 +997,7 @@ test.describe("整理後の受け渡し", () => {
     await page.mouse.move(0, 0);
     await expect(row.getByTestId("plan-trash")).toHaveCSS("opacity", "1");
     const lefts: number[] = [];
-    for (const id of [
-      "plan-row-state",
-      "plan-trash",
-      "plan-to-thumbnail",
-      "plan-to-split",
-      "plan-to-reorder",
-    ]) {
+    for (const id of ["plan-row-state", "plan-trash", "plan-to-edit"]) {
       lefts.push((await row.getByTestId(id).boundingBox())!.x);
     }
     expect(lefts).toEqual([...lefts].sort((a, b) => a - b));
@@ -1070,14 +1058,14 @@ test.describe("整理後の受け渡し", () => {
     await expect(
       page
         .locator('[data-testid="plan-row"][data-kind="book"]:not([data-made])')
-        .getByTestId("plan-to-thumbnail"),
+        .getByTestId("plan-to-edit"),
     ).toHaveCount(0);
 
     // Act - 整理が終わるのを待たずに、出来た本のサムネイル作成へ移る
-    await row.getByTestId("plan-to-thumbnail").click();
+    await row.getByTestId("plan-to-edit").click();
 
     // Assert - その本を読み込んだ状態で移る
-    await expect(page.getByTestId("mode-thumbnail")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -1099,10 +1087,10 @@ test.describe("整理後の受け渡し", () => {
     // Act - 先頭を渡して済ませる実装を落とすため、2 件目の行から移る
     const expected = producedNames(output);
     expect(expected).toHaveLength(2);
-    await madeRow(page, expected[1]).getByTestId("plan-to-thumbnail").click();
+    await madeRow(page, expected[1]).getByTestId("plan-to-edit").click();
 
     // Assert - サムネイル作成へ移り、ドロップ領域ではなく編集面が出る
-    await expect(page.getByTestId("mode-thumbnail")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -1113,8 +1101,7 @@ test.describe("整理後の受け渡し", () => {
     await expect(page.getByTestId("dropzone")).toBeHidden();
 
     // Assert - 中身も 2 件目のもの。1 件目は 2 ページ、2 件目は 3 ページ
-    await page.getByTestId("choose-page").click();
-    await expect(page.getByTestId("thumbnail-candidate")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
   });
 
   test("出来た本の行からページ並べ替えへ移ると、そのファイルが読み込まれている", async ({
@@ -1130,10 +1117,10 @@ test.describe("整理後の受け渡し", () => {
     // Act - こちらも 2 件目から移る
     const expected = producedNames(output);
     expect(expected).toHaveLength(2);
-    await madeRow(page, expected[1]).getByTestId("plan-to-reorder").click();
+    await madeRow(page, expected[1]).getByTestId("plan-to-edit").click();
 
     // Assert - ページ並べ替えへ移り、ドロップ領域ではなく格子が出る
-    await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -1142,7 +1129,7 @@ test.describe("整理後の受け渡し", () => {
     await expect(page.getByTestId("dropzone")).toBeHidden();
 
     // Assert - 中身も 2 件目のもの。ページ数で 1 件目と見分ける
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
   });
 
   test("出来た本の行からページ分割・結合へも移れ、編集した画面には印が付く", async ({
@@ -1159,10 +1146,10 @@ test.describe("整理後の受け渡し", () => {
     const item = (name: string) => madeRow(page, name);
 
     // Act - ページ分割・結合へ移る（#143）
-    await item(expected[1]).getByTestId("plan-to-split").click();
+    await item(expected[1]).getByTestId("plan-to-edit").click();
 
     // Assert - そのファイルを読み込んだ状態で移る
-    await expect(page.getByTestId("mode-split")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -1170,31 +1157,23 @@ test.describe("整理後の受け渡し", () => {
 
     // Act - 戻って、同じ本のサムネイルを作る
     await page.getByTestId("mode-organize").click();
-    await item(expected[1]).getByTestId("plan-to-thumbnail").click();
-    await page.getByTestId("apply-thumbnail").click();
-    await expect(page.getByTestId("cover-status")).toContainText(
-      "加工しました",
-      { timeout: 30_000 },
+    await item(expected[1]).getByTestId("plan-to-edit").click();
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toHaveAttribute(
+      "data-state",
+      "done",
     );
     await page.getByTestId("mode-organize").click();
-
-    // Assert - サムネイルの近道にだけ編集済みの印が付く。見ただけの分割・
-    // 結合と、触っていないもう 1 冊には付かない
-    const thumbnail = item(expected[1]).getByTestId("plan-to-thumbnail");
-    await expect(thumbnail).toHaveAttribute("data-edited", "true");
-    await expect(thumbnail).toHaveAttribute(
+    const shortcut = item(expected[1]).getByTestId("plan-to-edit");
+    await expect(shortcut).toHaveAttribute("data-edited", "true");
+    await expect(shortcut).toHaveAttribute(
       "title",
-      `${expected[1]} のサムネイルを作る（編集済み）`,
+      `${expected[1]} を編集（確認・編集済み）`,
     );
-    await expect(
-      item(expected[1]).getByTestId("plan-to-split"),
-    ).toHaveAttribute("data-edited", "false");
-    await expect(
-      item(expected[1]).getByTestId("plan-to-reorder"),
-    ).toHaveAttribute("data-edited", "false");
-    await expect(
-      item(expected[0]).getByTestId("plan-to-thumbnail"),
-    ).toHaveAttribute("data-edited", "false");
+    await expect(item(expected[0]).getByTestId("plan-to-edit")).toHaveAttribute(
+      "data-edited",
+      "false",
+    );
   });
 
   test("同じ本のページ並べ替えへもう一度移っても、格子とサムネイルが出る", async ({
@@ -1207,24 +1186,24 @@ test.describe("整理後の受け渡し", () => {
     await openOrganize(page, output);
     await organizeAll(page, "同じ本へ戻る作品", "同じ本へ戻る著者", paths);
     const expected = producedNames(output);
-    const shortcut = madeRow(page, expected[1]).getByTestId("plan-to-reorder");
+    const shortcut = madeRow(page, expected[1]).getByTestId("plan-to-edit");
     await shortcut.click();
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
     await page.getByTestId("mode-organize").click();
 
     // Act - 同じ本の並べ替えへもう一度移る（#145）
     await shortcut.click();
 
     // Assert - 以前は一覧を捨てたまま読み直さず、空の画面が残った
-    await expect(page.getByTestId("mode-reorder")).toHaveAttribute(
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
     await expect
       .poll(() =>
         page
-          .getByTestId("page-card")
+          .getByTestId("editable-page")
           .first()
           .locator("img")
           .evaluate((image: HTMLImageElement) => image.naturalWidth),
@@ -1243,10 +1222,8 @@ test.describe("整理後の受け渡し", () => {
     await organizeAll(page, "立て続けの作品", "立て続けの著者", paths);
     const expected = producedNames(output);
     let delayed = false;
-    await page.route(/\/api\/pages\?/, async (route) => {
-      const archive = new URL(route.request().url()).searchParams.get(
-        "archive",
-      );
+    await page.route(/\/api\/jobs\/split-scan/, async (route) => {
+      const archive = route.request().postDataJSON().archive as string;
       if (archive?.endsWith(expected[0])) {
         delayed = true;
         await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -1254,19 +1231,19 @@ test.describe("整理後の受け渡し", () => {
       await route.continue();
     });
     const shortcut = (name: string) =>
-      madeRow(page, name).getByTestId("plan-to-reorder");
+      madeRow(page, name).getByTestId("plan-to-edit");
 
     // Act - 1 件目へ移り、返事を待たずに戻って 2 件目（3 ページ）へ移る
     await shortcut(expected[0]).click();
     await expect.poll(() => delayed).toBe(true);
     await page.getByTestId("mode-organize").click();
     await shortcut(expected[1]).click();
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
 
     // Assert - 遅れた 1 件目の返事が届いた後も、2 件目の 3 ページのまま（#145）
     await page.waitForTimeout(2_000);
     await expect(page.getByTestId("archive-name")).toHaveText(expected[1]);
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
   });
 
   test("整理する前は、どの行にも出来た本の印が付かない", async ({ page }) => {
@@ -1345,7 +1322,7 @@ test.describe("整理後の受け渡し", () => {
     await expect(madeRows(page)).toHaveCount(3);
   });
 
-  test("サムネイル作成とページ並べ替えは、直接開いても単独で使える", async ({
+  test("旧い編集画面のリンクでも共通のページ一覧から編集できる", async ({
     page,
   }) => {
     // Arrange - 整理を通さずに用意した 1 冊
@@ -1366,6 +1343,8 @@ test.describe("整理後の受け渡し", () => {
     // Act / Assert - 単独で最後まで使える
     await chooseArchiveViaBrowser(page, archive);
     await expect(page.getByTestId("archive-name")).toHaveText("単独利用.zip");
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
+    await openCoverTools(page);
     await expect(page.getByTestId("cover-name")).toHaveText("001.jpg");
 
     // Act - ページ並べ替えを直接開く
@@ -1379,7 +1358,7 @@ test.describe("整理後の受け渡し", () => {
     // Act / Assert
     await chooseArchiveViaBrowser(page, archive);
     await expect(page.getByTestId("archive-name")).toHaveText("単独利用.zip");
-    await expect(page.getByTestId("page-card")).toHaveCount(3);
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
   });
 });
 

@@ -1038,6 +1038,7 @@ export function selectedBooks(
   off: ReadonlySet<string>,
   volumes: ReadonlyMap<string, number | null> = new Map(),
   names: ReadonlyMap<string, string> = new Map(),
+  customNames: ReadonlyMap<string, string> = new Map(),
 ): {
   source: string;
   entry: string;
@@ -1045,6 +1046,7 @@ export function selectedBooks(
   author: string | null;
   volume?: { number: number | null };
   suffix?: number;
+  filename?: string;
 }[] {
   return keptLeafRows(rows, off).map((row) => {
     if (row.kind !== "book")
@@ -1057,6 +1059,8 @@ export function selectedBooks(
     };
     // 整理済みの本は自分の名前のまま置き直すので、番号も訂正も載せない
     if (row.organized) return book;
+    if (customNames.has(row.id))
+      return { ...book, filename: names.get(row.id) };
     // 一覧に予告した _1 などの番号（#166）。載せないと、サイドカーは処理した順に
     // 番号を付け、選んだ順とも一覧の予告とも違う名前になる
     const suffix = nameSuffix(names.get(row.id));
@@ -1116,6 +1120,7 @@ export function outputNames(
   off: ReadonlySet<string> = new Set(),
   decisions: Decisions = new Map(),
   taken: Iterable<string> = [],
+  customNames: ReadonlyMap<string, string> = new Map(),
 ): Map<string, string> {
   // 利用者が入れた本は、台帳に入れた順の位置で並べる。既定で入っている本は先頭
   const order = new Map(
@@ -1130,7 +1135,9 @@ export function outputNames(
   const used = new Set<string>(taken);
   const names = new Map<string, string>();
   for (const row of kept) {
-    const base = baseNameOf(row, author, title);
+    const base =
+      customNames.get(row.id)?.replace(/\.zip$/i, "") ??
+      baseNameOf(row, author, title);
     let name = `${base}.zip`;
     for (let counter = 1; used.has(name); counter += 1) {
       name = `${base}_${counter}.zip`;
@@ -1140,7 +1147,10 @@ export function outputNames(
   }
   for (const row of books) {
     if (!names.has(row.id))
-      names.set(row.id, `${baseNameOf(row, author, title)}.zip`);
+      names.set(
+        row.id,
+        customNames.get(row.id) ?? `${baseNameOf(row, author, title)}.zip`,
+      );
   }
   return names;
 }

@@ -14,13 +14,14 @@
 """
 
 import logging
+import re
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from manga_api.analysis_job import file_size
 from manga_api.jobs import ProgressReporter
@@ -114,6 +115,29 @@ class BookRef(BaseModel):
             "決める。省くと、出力先で空いている名前を前から使う"
         ),
     )
+
+    filename: str | None = Field(
+        default=None, description="手動で指定した出力 ZIP ファイル名"
+    )
+
+    @field_validator("filename")
+    @classmethod
+    def _valid_filename(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if (
+            not value.lower().endswith(".zip")
+            or not value[:-4].strip()
+            or re.search(r'[<>:"/\\|?*\x00-\x1f]', value)
+            or value[:-4].endswith((".", " "))
+            or re.fullmatch(
+                r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", value[:-4], re.I
+            )
+        ):
+            raise ValueError(
+                "出力名にはフォルダを含まない、有効な ZIP ファイル名を指定してください"
+            )
+        return value
 
     def own_series(self) -> SeriesName | None:
         """この本自身の名前。持っていなければ ``None``"""
@@ -242,6 +266,7 @@ class _Wanted:
     volumes: Mapping[str, int | None]
     # 位置（``entry``） -> 名前に足す番号（#166）。番号の無い本は載せない
     suffixes: Mapping[str, int]
+    filenames: Mapping[str, str] = field(default_factory=dict)
 
 
 def wanted_books(books: list[BookRef] | None) -> dict[Hashable, _Wanted] | None:
@@ -262,6 +287,7 @@ def wanted_books(books: list[BookRef] | None) -> dict[Hashable, _Wanted] | None:
     series: dict[Hashable, SeriesName] = {}
     volumes: dict[Hashable, dict[str, int | None]] = {}
     suffixes: dict[Hashable, dict[str, int]] = {}
+    filenames: dict[Hashable, dict[str, str]] = {}
     for book in books:
         key = source_key(book.source)
         entries.setdefault(key, set()).add(book.entry)
@@ -272,6 +298,8 @@ def wanted_books(books: list[BookRef] | None) -> dict[Hashable, _Wanted] | None:
             # 同じ本に違う巻数が 2 つ載った依頼は ``OrganizeRequest`` が既に
             # 断っている。ここへ来る重複は同じ値なので、上書きしても変わらない
             volumes.setdefault(key, {})[book.entry] = book.volume.number
+        if book.filename is not None:
+            filenames.setdefault(key, {})[book.entry] = book.filename
         if book.suffix is not None:
             suffixes.setdefault(key, {})[book.entry] = book.suffix
     return {
@@ -280,6 +308,7 @@ def wanted_books(books: list[BookRef] | None) -> dict[Hashable, _Wanted] | None:
             series=series.get(key),
             volumes=MappingProxyType(volumes.get(key, {})),
             suffixes=MappingProxyType(suffixes.get(key, {})),
+            filenames=MappingProxyType(filenames.get(key, {})),
         )
         for key, found in entries.items()
     }
@@ -371,6 +400,13 @@ def organize_work(
                 plan.volumes,
                 made_in(archive, plan),
                 suffixes=plan.suffixes,
+                filenames={
+                    location: wanted[source_key(archive)].filenames[entry]
+                    for location, entry in plan.entries.items()
+                    if wanted
+                    and source_key(archive) in wanted
+                    and entry in wanted[source_key(archive)].filenames
+                },
             ):
                 if result.success and result.output_path:
                     produced.append(str(result.output_path))
