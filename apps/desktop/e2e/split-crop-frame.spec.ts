@@ -1,6 +1,7 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { derivedRecordsOf, runPython } from "./archive";
 import { startSidecar, type Sidecar } from "./sidecar";
+import { openCoverTools } from "./cover-tools";
 
 /**
  * 見開きを割った本を開き直したとき、枠が「割った位置」に出ることを確かめる（#58）。
@@ -86,6 +87,7 @@ async function openCover(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=thumbnail&archive=${encodeURIComponent(archive)}`,
   );
+  await openCoverTools(page);
   await expect(page.getByTestId("crop-frame")).toBeVisible();
 }
 

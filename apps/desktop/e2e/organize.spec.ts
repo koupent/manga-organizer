@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
+import { openCoverTools } from "./cover-tools";
 
 const CORE_DIR = fileURLToPath(
   new URL("../../../services/core", import.meta.url),
@@ -784,16 +785,17 @@ test.describe("整理画面", () => {
 });
 
 test.describe("タブ", () => {
-  test("タブは ファイル整理 / サムネイル作成 / ページ並べ替え の 3 つで、辞書は無い", async ({
+  test("タブは ディレクトリ整理 / ファイル編集 の 2 つで、辞書は整理画面から開く", async ({
     page,
   }) => {
     // Arrange
     await openOrganize(page, join(sidecar.workDir, "out-tabs"));
 
     // Assert - 機能を表す名前が並ぶ
-    await expect(page.getByTestId("mode-organize")).toHaveText("ファイル整理");
-    await expect(page.getByTestId("mode-edit")).toHaveText("サムネイル作成");
-    await expect(page.getByTestId("mode-edit")).toHaveText("ページ並べ替え");
+    await expect(page.locator('[data-testid^="mode-"]')).toHaveText([
+      "ディレクトリ整理",
+      "ファイル編集",
+    ]);
 
     // Assert - 辞書はタブから外れ、ファイル整理の中のボタンから開く
     await expect(page.getByTestId("mode-library")).toHaveCount(0);
@@ -1320,7 +1322,7 @@ test.describe("整理後の受け渡し", () => {
     await expect(madeRows(page)).toHaveCount(3);
   });
 
-  test("サムネイル作成とページ並べ替えは、直接開いても単独で使える", async ({
+  test("旧い編集画面のリンクでも共通のページ一覧から編集できる", async ({
     page,
   }) => {
     // Arrange - 整理を通さずに用意した 1 冊
@@ -1341,6 +1343,8 @@ test.describe("整理後の受け渡し", () => {
     // Act / Assert - 単独で最後まで使える
     await chooseArchiveViaBrowser(page, archive);
     await expect(page.getByTestId("archive-name")).toHaveText("単独利用.zip");
+    await expect(page.getByTestId("editable-page")).toHaveCount(3);
+    await openCoverTools(page);
     await expect(page.getByTestId("cover-name")).toHaveText("001.jpg");
 
     // Act - ページ並べ替えを直接開く
