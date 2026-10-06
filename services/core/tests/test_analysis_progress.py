@@ -76,6 +76,7 @@ BOOK_KEYS = {
     "organized_reason",
     "organized_detail",
     "size",
+    "image_count",
 }
 
 # 1 つの ZIP に 2 冊分が入っている状態。アーカイブの件数（2）と冊数（3）を
@@ -202,6 +203,7 @@ class AnalysisJobTestBase(unittest.TestCase):
                 "title": book.title,
                 "organized_reason": book.organized_reason,
                 "organized_detail": book.organized_detail,
+                "image_count": book.image_count,
                 # 画面へ渡すときに足す。アーカイブ全体が 1 冊の本だけが持つ（#163）
                 "size": book.source.stat().st_size if book.entry == "" else None,
             }
