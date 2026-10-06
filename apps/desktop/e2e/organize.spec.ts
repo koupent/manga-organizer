@@ -647,7 +647,9 @@ test.describe("整理画面", () => {
     await fillMangaInfo(page, "実行中の作品", "実行中の著者");
     await selectArchives(page, paths);
 
-    const firstRow = droppedRows(page).first();
+    const firstRow = page
+      .locator('[data-testid="plan-row"][data-kind="book"]')
+      .first();
     const firstCheck = firstRow.getByTestId("plan-check");
     await expect(firstCheck).toHaveAttribute("aria-checked", "true");
 
