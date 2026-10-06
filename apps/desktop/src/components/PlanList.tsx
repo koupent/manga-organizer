@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type CSSProperties,
 } from "react";
 import type { FinishedBook } from "../lib/analysis";
 import {
@@ -106,8 +107,16 @@ function reasonTip(row: PlanRow): string {
   return row.organizedDetail ? `${tip}\n${row.organizedDetail}` : tip;
 }
 
-/** 本の行の元パスの幅。矢印を全部の行で揃える。 */
-const ORIGIN_WIDTH_PX = 260;
+/** 見出しと行で共有する列幅。 */
+const COLUMNS = [
+  { key: "source", label: "元のパス", width: 240, min: 120 },
+  { key: "name", label: "変換後のファイル名", width: 260, min: 150 },
+  { key: "count", label: "画像枚数", width: 64, min: 64 },
+  { key: "status", label: "状態", width: 80, min: 76 },
+  { key: "actions", label: "操作", width: 104, min: 104 },
+] as const;
+const GRID =
+  "40px var(--plan-source) 12px var(--plan-name) var(--plan-count) var(--plan-status) var(--plan-actions)";
 
 /**
  * 外した行で薄める側に回る子の装飾（#73 段階 4c）。
@@ -193,6 +202,18 @@ export function PlanList({
   onCorrect,
   onFill,
 }: PlanListProps) {
+  const [widths, setWidths] = useState<number[]>(
+    COLUMNS.map((column) => column.width),
+  );
+  const resize = useRef<{ index: number; start: number; width: number } | null>(
+    null,
+  );
+  const columnStyle = Object.fromEntries(
+    COLUMNS.map((column, index) => [
+      `--plan-${column.key}`,
+      `${widths[index]}px`,
+    ]),
+  ) as CSSProperties;
   const visibleRows = useMemo(() => {
     const displayedName = (row: PlanRow) => {
       const path = made.get(row.id)?.path;
@@ -273,9 +294,86 @@ export function PlanList({
 
   return (
     <ul
-      className="min-h-0 flex-1 divide-y divide-line/60 overflow-y-auto p-1"
+      className="min-h-0 flex-1 divide-y divide-line/60 overflow-auto p-1"
+      style={columnStyle}
+      role="table"
+      aria-label="出来上がる本"
       data-testid="plan-list"
     >
+      <li
+        role="row"
+        data-testid="plan-table-header"
+        className="sticky top-0 z-10 grid min-h-8 w-max min-w-full items-center gap-2 border-b border-line bg-surface px-2 text-[11px] font-medium text-ink-muted"
+        style={{ gridTemplateColumns: GRID }}
+      >
+        <span role="columnheader">選択</span>
+        {COLUMNS.map((column, index) => (
+          <span
+            key={column.key}
+            role="columnheader"
+            aria-label={column.label}
+            className="relative min-w-0 truncate pr-3"
+            style={{ gridColumn: index === 0 ? 2 : index + 3 }}
+          >
+            {column.label}
+            <span
+              tabIndex={0}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={`${column.label}の列幅`}
+              aria-valuenow={widths[index]}
+              aria-valuemin={column.min}
+              data-testid={`resize-${column.key}`}
+              title="ドラッグ、または左右キーで列幅を変更"
+              className="absolute inset-y-0 right-0 w-2 cursor-col-resize border-r border-line-strong hover:bg-brand/30 focus-visible:bg-brand/30"
+              onPointerDown={(event) => {
+                resize.current = {
+                  index,
+                  start: event.clientX,
+                  width: widths[index]!,
+                };
+                event.currentTarget.setPointerCapture(event.pointerId);
+                event.preventDefault();
+              }}
+              onPointerMove={(event) => {
+                const moving = resize.current;
+                if (!moving || moving.index !== index) return;
+                setWidths((current) =>
+                  current.map((width, at) =>
+                    at === index
+                      ? Math.max(
+                          column.min,
+                          moving.width + event.clientX - moving.start,
+                        )
+                      : width,
+                  ),
+                );
+              }}
+              onPointerUp={() => {
+                resize.current = null;
+              }}
+              onPointerCancel={() => {
+                resize.current = null;
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+                  return;
+                event.preventDefault();
+                setWidths((current) =>
+                  current.map((width, at) =>
+                    at === index
+                      ? Math.max(
+                          column.min,
+                          width + (event.key === "ArrowRight" ? 20 : -20),
+                        )
+                      : width,
+                  ),
+                );
+              }}
+            />
+          </span>
+        ))}
+      </li>
       {visibleRows.map((row) => {
         const madePath = made.get(row.id)?.path;
         return (
@@ -370,7 +468,7 @@ const PlanListRow = memo(function PlanListRow({
   const finished =
     row.kind === "book" && (row.organized || madePath !== undefined);
   const showsDestination = finished && state === true;
-  // その本がいまディスク上の 1 つのファイルなら、大きさを出し、消せるように
+  // その本がいまディスク上の 1 つのファイルなら、ごみ箱へ移せるように
   // する（#163 #164）。整理して出来た本は出来たファイル、アーカイブ全体が
   // 1 冊の本はそのアーカイブ。1 つのアーカイブから出る本は、その本だけを
   // 消せないので出さない
@@ -402,46 +500,49 @@ const PlanListRow = memo(function PlanListRow({
       // 整理済みの行には説明を付けない（印そのものが説明を持っている）
       title={finished ? undefined : reasonTip(row) || undefined}
       tabIndex={0}
-      style={{ paddingLeft: 8 }}
+      role="row"
+      style={{ paddingLeft: 8, gridTemplateColumns: GRID }}
       className={cn(
         // 1 行 28px。中身の背丈（印・近道）で行ごとに高さが揺れないよう
         // 下限で揃える
-        "group flex min-h-7 items-center gap-2 rounded-control pr-2 py-0.5 outline-none",
+        "group grid min-h-7 w-max min-w-full items-center gap-2 rounded-control pr-2 py-0.5 outline-none",
         "hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2",
         "focus-visible:ring-brand/40",
       )}
     >
-      {done ? (
-        // チェックの幅だけ空けて、名前の位置をほかの行とそろえる
-        <span aria-hidden className="size-4 shrink-0" />
-      ) : (
-        <Checkbox
-          data-testid="plan-check"
-          checked={state}
-          disabled={locked}
-          aria-label={row.kind === "book" ? name : row.path}
-          title="Shift を押しながら押すと、前に押した行からここまでをまとめて切り替えます"
-          // Shift で押すと、文字の選択が前に押した所まで伸びてしまう。押し下げで止める
-          onMouseDown={(event) => {
-            if (event.shiftKey) event.preventDefault();
-          }}
-          // Shift を読むために onClick で受ける。Space で押しても click が来る
-          onClick={(event) =>
-            handlers.toggle(row, state !== true, event.shiftKey)
-          }
-        />
-      )}
-      <RowIcon kind={row.kind} dim={dim} />
+      <span role="cell" className="flex items-center gap-2">
+        {done ? (
+          // チェックの幅だけ空けて、名前の位置をほかの行とそろえる
+          <span aria-hidden className="size-4 shrink-0" />
+        ) : (
+          <Checkbox
+            data-testid="plan-check"
+            checked={state}
+            disabled={locked}
+            aria-label={row.kind === "book" ? name : row.path}
+            title="Shift を押しながら押すと、前に押した行からここまでをまとめて切り替えます"
+            // Shift で押すと、文字の選択が前に押した所まで伸びてしまう。押し下げで止める
+            onMouseDown={(event) => {
+              if (event.shiftKey) event.preventDefault();
+            }}
+            // Shift を読むために onClick で受ける。Space で押しても click が来る
+            onClick={(event) =>
+              handlers.toggle(row, state !== true, event.shiftKey)
+            }
+          />
+        )}
+        <RowIcon kind={row.kind} dim={dim} />
+      </span>
       {correctable ? (
         <>
           <span
+            role="cell"
             data-testid="plan-row-path"
             data-dim
             className={cn(
               "shrink-0 truncate text-[11.5px] text-ink-muted",
               dim,
             )}
-            style={{ width: ORIGIN_WIDTH_PX }}
             title={row.existing ? undefined : sourcePath(row)}
           >
             {/* 出力先に既にある本は、元の名前を持たない（#178） */}
@@ -452,6 +553,8 @@ const PlanListRow = memo(function PlanListRow({
             className="size-3 shrink-0 text-ink-faint"
           />
           <span
+            role="cell"
+            title={name}
             data-testid="plan-row-name"
             data-dim
             className={cn(
@@ -472,42 +575,42 @@ const PlanListRow = memo(function PlanListRow({
         </>
       ) : (
         <>
-          {/* 名前と場所は一組の情報。名前の幅は中身で決め、余った幅は場所へ渡す */}
           <span
-            data-testid="plan-row-name"
-            data-dim
-            className={cn("min-w-0 truncate text-[12.5px] font-medium", dim)}
-          >
-            {row.kind === "book" ? name : shortPath(row.path)}
-          </span>
-          <span
+            role="cell"
             data-testid="plan-row-path"
-            data-dim
-            className={cn(
-              "min-w-0 flex-1 truncate text-[11px]",
-              // 行き先は元の場所より 1 段濃くする。これから起きることなので、
-              // 済んだ場所より先に読ませたい
-              showsDestination ? "text-ink-muted" : "text-ink-faint",
-              dim,
-            )}
+            className={cn("min-w-0 truncate text-[11px] text-ink-muted", dim)}
             title={row.kind === "book" ? sourcePath(row) : row.path}
           >
-            {where(row, showsDestination, outputDirectory)}
+            {row.existing
+              ? "出力先の本"
+              : row.kind === "book"
+                ? where(row, showsDestination, outputDirectory)
+                : row.path}
+          </span>
+          <ArrowRight className="size-3 text-ink-faint" />
+          <span
+            role="cell"
+            data-testid="plan-row-name"
+            title={name}
+            className={cn("min-w-0 truncate text-[12.5px]", dim)}
+          >
+            {row.kind === "book" ? name : "解析中 / 目次を読めません"}
           </span>
         </>
       )}
       <span
         data-testid="plan-row-image-count"
-        className="tabular w-14 shrink-0 text-right text-[11px] text-ink-muted"
+        role="cell"
+        className="tabular min-w-0 text-right pr-2 text-[11px] text-ink-muted"
         title="ZIP化対象の画像枚数"
       >
         {row.imageCount !== null ? `${row.imageCount}枚` : ""}
       </span>
       {/*
-        右側は列の幅をそろえる（#172）。状態 → 大きさ → ごみ箱 → 近道。無い
+        右側は列の幅をそろえる（#172）。状態 → ごみ箱 → 近道。無い
         項目も幅だけ空けておき、行ごとに位置がずれないようにする
       */}
-      <span className="flex w-[4.75rem] shrink-0 items-center">
+      <span role="cell" className="flex min-w-0 items-center">
         <RowStatus
           row={row}
           finished={finished}
@@ -518,40 +621,36 @@ const PlanListRow = memo(function PlanListRow({
           dim={dim}
         />
       </span>
-      <span
-        data-testid="plan-row-size"
-        className="tabular w-14 shrink-0 text-right text-[11px] text-ink-faint"
-      >
-        {file?.size != null ? sizeLabel(file.size) : ""}
-      </span>
-      <span className="flex w-6 shrink-0 justify-center">
-        {file && !locked ? (
-          // 常に出す。乗せないと出ないと、消せることに気づけない（#172）
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-ink-faint hover:text-danger"
-            data-testid="plan-trash"
-            title={`${name} のファイルをごみ箱へ移す`}
-            aria-label={`${name} のファイルをごみ箱へ移す`}
-            onClick={() => handlers.trash({ ...file, name })}
-          >
-            <Trash2 />
-          </Button>
-        ) : null}
-      </span>
-      <span className="flex w-[4.5rem] shrink-0">
-        {finished ? (
-          <EditShortcuts
-            name={name}
-            // 渡すのは今ディスク上に在るファイル。これから作られる行き先では
-            // まだ開けない。整理して出来た本なら、出来たファイル
-            path={madePath ?? row.source}
-            edited={edited}
-            testIdPrefix="plan"
-            onOpen={handlers.openArchive}
-          />
-        ) : null}
+      <span role="cell" className="flex items-center gap-2">
+        <span className="flex w-6 shrink-0 justify-center">
+          {file && !locked ? (
+            // 常に出す。乗せないと出ないと、消せることに気づけない（#172）
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-ink-faint hover:text-danger"
+              data-testid="plan-trash"
+              title={`${name} のファイルをごみ箱へ移す`}
+              aria-label={`${name} のファイルをごみ箱へ移す`}
+              onClick={() => handlers.trash({ ...file, name })}
+            >
+              <Trash2 />
+            </Button>
+          ) : null}
+        </span>
+        <span className="flex w-[4.5rem] shrink-0">
+          {finished ? (
+            <EditShortcuts
+              name={name}
+              // 渡すのは今ディスク上に在るファイル。これから作られる行き先では
+              // まだ開けない。整理して出来た本なら、出来たファイル
+              path={madePath ?? row.source}
+              edited={edited}
+              testIdPrefix="plan"
+              onOpen={handlers.openArchive}
+            />
+          ) : null}
+        </span>
       </span>
     </li>
   );

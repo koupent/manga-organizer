@@ -38,6 +38,8 @@ import {
   needsSeriesName,
   organizedSkippedCount,
   oneEachState,
+  mostImagesState,
+  selectMostImages,
   outputNames,
   reuseRows,
   sameVolumeCounts,
@@ -765,6 +767,36 @@ export function OrganizePanel({
     setDecisions((current) => setOneEach(rows, current, one, made));
   };
 
+  const belowMinimumRows = rows.filter(
+    (row) =>
+      row.kind === "book" &&
+      row.imageCount !== null &&
+      row.imageCount < minimumImageCount &&
+      !made.has(row.id),
+  );
+  const minimumOnly =
+    minimumImageCount > 0 && belowMinimumRows.every((row) => off.has(row.id));
+  const toggleMinimum = (only: boolean) => {
+    setDecisions((current) =>
+      toggleLeaves(
+        current,
+        belowMinimumRows.map((row) => row.id),
+        !only,
+      ),
+    );
+  };
+  const toggleMostImages = (one: boolean) => {
+    setDecisions((current) =>
+      selectMostImages(
+        rows,
+        current,
+        one,
+        made,
+        minimumOnly ? minimumImageCount : 0,
+      ),
+    );
+  };
+
   /**
    * 巻数を直す。自動で読んだ値と同じにしたら、直していないことに戻す。
    * 戻す手を別に置かなくても、元の数字を打ち直せば戻る。
@@ -1238,6 +1270,12 @@ export function OrganizePanel({
             onToggleAll={toggleAll}
             oneEach={oneEachState(rows, off, made)}
             onToggleOneEach={toggleOneEach}
+            mostImages={mostImagesState(rows, off, made)}
+            onToggleMostImages={toggleMostImages}
+            minimumOnly={minimumOnly}
+            minimumImageCount={minimumImageCount}
+            onToggleMinimum={toggleMinimum}
+            onOpenSettings={onOpenSettings}
             onRun={run}
             onCancel={cancel}
           />

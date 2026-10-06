@@ -996,7 +996,7 @@ test.describe("整理後の受け渡し", () => {
     // Assert - 出来た本はもう処理の対象ではないので、チェックが無い（#172）
     await expect(madeRows(page).getByTestId("plan-check")).toHaveCount(0);
 
-    // Assert - 右側は 状態 → 大きさ → ごみ箱 → 近道（サムネイル作成 →
+    // Assert - 右側は 状態 → ごみ箱 → 近道（サムネイル作成 →
     // ページ分割・結合 → ページ並べ替え）の順に並ぶ（#172 #173）。
     // ごみ箱は、行に指を載せなくても見えている
     const row = madeRow(page, expected[0]);
@@ -1005,7 +1005,6 @@ test.describe("整理後の受け渡し", () => {
     const lefts: number[] = [];
     for (const id of [
       "plan-row-state",
-      "plan-row-size",
       "plan-trash",
       "plan-to-thumbnail",
       "plan-to-split",

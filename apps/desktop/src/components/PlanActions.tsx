@@ -46,6 +46,12 @@ type PlanActionsProps = {
   oneEach: boolean | null;
   /** 同じ巻を 1 冊ずつに絞る（true）/ 全部入れる（false） */
   onToggleOneEach: (one: boolean) => void;
+  mostImages: boolean | null;
+  onToggleMostImages: (only: boolean) => void;
+  minimumOnly: boolean;
+  minimumImageCount: number;
+  onToggleMinimum: (only: boolean) => void;
+  onOpenSettings: () => void;
   onRun: () => void;
   onCancel: () => void;
 };
@@ -72,6 +78,12 @@ export function PlanActions({
   onToggleAll,
   oneEach,
   onToggleOneEach,
+  mostImages,
+  onToggleMostImages,
+  minimumOnly,
+  minimumImageCount,
+  onToggleMinimum,
+  onOpenSettings,
   onRun,
   onCancel,
 }: PlanActionsProps) {
@@ -84,36 +96,6 @@ export function PlanActions({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
-        {/* 言葉を添える。チェックだけだと状態の文の飾りに見え、まとめて
-            外せることに気づかれない */}
-        <label
-          className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted"
-          title="全部の対象をまとめて選ぶ・外す"
-        >
-          <Checkbox
-            data-testid="plan-master-check"
-            checked={master}
-            disabled={running || rows.length === 0}
-            aria-label="全部の対象を選ぶ"
-            onCheckedChange={() => onToggleAll(master !== true)}
-          />
-          すべて
-        </label>
-        {/* 同じ巻を 1 冊だけ残す既定（#166）を、まとめて掛け直す・外す（#169） */}
-        <label
-          className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted"
-          title="入れると、同じ巻の本を 1 冊（入っている中で一番大きい本）だけ残します。外すと、同じ巻の本を全部入れます"
-        >
-          <Checkbox
-            data-testid="plan-one-each"
-            checked={oneEach === true}
-            disabled={running || oneEach === null}
-            aria-label="同じ巻は 1 冊だけ残す"
-            onCheckedChange={() => onToggleOneEach(oneEach !== true)}
-          />
-          同じ巻は 1 冊
-        </label>
-        <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
         <span
           className={cn(
             "flex min-w-0 items-center gap-1 text-[12px]",
@@ -167,6 +149,76 @@ export function PlanActions({
           <Play />
           この内容で整理する
         </Button>
+      </div>
+      <div
+        data-testid="plan-selection-rules"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-control bg-surface/70 px-2 py-1.5"
+      >
+        <span className="text-[11px] text-ink-faint">選択ルール</span>
+        {/* 言葉を添える。チェックだけだと状態の文の飾りに見え、まとめて
+            外せることに気づかれない */}
+        <label
+          className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted"
+          title="全部の対象をまとめて選ぶ・外す"
+        >
+          <Checkbox
+            data-testid="plan-master-check"
+            checked={master}
+            disabled={running || rows.length === 0}
+            aria-label="全部の対象を選ぶ"
+            onCheckedChange={() => onToggleAll(master !== true)}
+          />
+          すべて
+        </label>
+        {/* 同じ巻を 1 冊だけ残す既定（#166）を、まとめて掛け直す・外す（#169） */}
+        <label
+          className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted"
+          title="選択中の候補を同じ巻で1冊に絞ります。画像枚数最多を残し、同数なら容量で決めます。外すと全候補を選びます。"
+        >
+          <Checkbox
+            data-testid="plan-one-each"
+            checked={oneEach === true}
+            disabled={running || oneEach === null}
+            aria-label="同じ巻は 1 冊だけ残す"
+            onCheckedChange={() => onToggleOneEach(oneEach !== true)}
+          />
+          同じ巻は 1 冊
+        </label>
+        <label
+          className="flex cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted"
+          title="同じ巻の全候補から画像枚数が最も多い1冊を選び直します。外すと、その巻の候補をすべて選びます。"
+        >
+          <Checkbox
+            data-testid="plan-most-images"
+            checked={mostImages === true}
+            disabled={running || mostImages === null}
+            onCheckedChange={() => onToggleMostImages(mostImages !== true)}
+          />
+          同じ巻で画像枚数最多
+        </label>
+        <label
+          className="flex cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted"
+          title="設定した下限未満の本を除外します。枚数が不明な本は除外しません。"
+        >
+          <Checkbox
+            data-testid="plan-minimum-only"
+            checked={minimumOnly}
+            disabled={running || minimumImageCount === 0}
+            onCheckedChange={() => onToggleMinimum(!minimumOnly)}
+          />
+          下限以上のみ
+          {minimumImageCount > 0
+            ? `（${minimumImageCount}枚）`
+            : "（制限なし）"}
+        </label>
+        <button
+          type="button"
+          data-testid="plan-image-settings"
+          className="text-[11px] text-brand underline underline-offset-2"
+          onClick={onOpenSettings}
+        >
+          画像枚数の下限は設定で変更
+        </button>
       </div>
       <Progress data-testid="progress" value={percent} />
     </div>
