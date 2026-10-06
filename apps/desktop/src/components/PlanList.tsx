@@ -209,8 +209,13 @@ export function PlanList({
         const second = displayedName(b);
         if (!first || !second)
           return first ? -1 : second ? 1 : a.id.localeCompare(b.id);
-        // 拡張子を外すと、番号なし → _1 → _2 の自然な順になる。
+        // 同じ巻では出力先の先着を先に出し、番号なし → _1 → _2 と並べる。
         return (
+          byName(
+            first.replace(/(?:_\d+)?\.zip$/i, ""),
+            second.replace(/(?:_\d+)?\.zip$/i, ""),
+          ) ||
+          Number(b.existing) - Number(a.existing) ||
           byName(first.replace(/\.zip$/i, ""), second.replace(/\.zip$/i, "")) ||
           a.id.localeCompare(b.id)
         );
