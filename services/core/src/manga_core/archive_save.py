@@ -1,10 +1,14 @@
 """同期対象のフォルダで作成途中のZIPを公開せず、安全に置き換える。"""
 
+import ctypes
 import errno
+import logging
 import os
 import shutil
 import tempfile
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def create_archive_temp() -> Path:
@@ -18,22 +22,44 @@ def replace_archive(prepared: Path, destination: Path) -> None:
     """検証済みZIPを保存する。別ドライブでも元を直接上書きしない。"""
     try:
         os.replace(prepared, destination)
-        return
     except OSError as error:
         if error.errno != errno.EXDEV:
             raise
 
-    # 別ドライブからはrenameできない。完成したZIPだけを同じフォルダへ
-    # 転送し、最後に原子的に置き換える。圧縮・検証中の一時ZIPは同期しない。
-    handle, name = tempfile.mkstemp(
-        dir=destination.parent, prefix=".manga-organizer-save-", suffix=".tmp"
-    )
-    pending = Path(name)
+        # 別ドライブからはrenameできない。完成したZIPだけを同じフォルダへ
+        # 転送し、最後に原子的に置き換える。圧縮・検証中の一時ZIPは同期しない。
+        handle, name = tempfile.mkstemp(
+            dir=destination.parent, prefix=".manga-organizer-save-", suffix=".tmp"
+        )
+        pending = Path(name)
+        try:
+            with os.fdopen(handle, "wb") as output, prepared.open("rb") as source:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(pending, destination)
+        finally:
+            pending.unlink(missing_ok=True)
+
+    _refresh_folder(destination.parent)
+
+
+def _refresh_folder(folder: Path) -> None:
+    """保存済みフォルダの古い同期アイコンをExplorerに読み直させる。"""
+    if os.name != "nt":
+        return
     try:
-        with os.fdopen(handle, "wb") as output, prepared.open("rb") as source:
-            shutil.copyfileobj(source, output, length=1024 * 1024)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(pending, destination)
-    finally:
-        pending.unlink(missing_ok=True)
+        notify = ctypes.WinDLL("shell32").SHChangeNotify
+        notify.argtypes = [
+            ctypes.c_long,
+            ctypes.c_uint,
+            ctypes.c_wchar_p,
+            ctypes.c_void_p,
+        ]
+        notify.restype = None
+        # SHCNE_UPDATEDIR / SHCNF_PATHW | SHCNF_FLUSHNOWAIT。
+        # 表示更新の処理を待って保存の完了を遅らせない。
+        notify(0x1000, 0x2005, str(folder), None)
+    except (AttributeError, OSError):
+        # データの保存は完了している。表示だけの失敗で保存失敗とはしない。
+        logger.warning("フォルダ表示の更新通知に失敗しました: %s", folder)
