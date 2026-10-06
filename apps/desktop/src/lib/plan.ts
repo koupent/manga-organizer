@@ -41,6 +41,7 @@ export type PlannedBook = {
    * 中の 1 冊なら null。古いサイドカーや台本の応答には無いことがある
    */
   size?: number | null;
+  image_count?: number;
 };
 
 /**
@@ -125,6 +126,7 @@ export type PlanRow = {
   author: string;
   /** 本のファイルの大きさ（バイト）。分からない本と入れ物の行では null（#163） */
   size: number | null;
+  imageCount: number | null;
   /**
    * この行の上にある入れ物の鍵。外側から順に並ぶ。
    *
@@ -210,6 +212,7 @@ function containerRow(
     title: "",
     author: "",
     size: null,
+    imageCount: null,
     ancestors,
     leaves: leaves.length > 0 ? leaves : [path],
     existing: false,
@@ -245,6 +248,7 @@ function bookRow(
     title: book.title ?? "",
     author: book.author ?? "",
     size: book.size ?? null,
+    imageCount: book.image_count ?? null,
     ancestors,
     leaves: [id],
     existing: false,
@@ -458,6 +462,7 @@ function outputRow(
     title: "",
     author: "",
     size: book.size,
+    imageCount: null,
     ancestors,
     leaves: [id],
     existing: true,
@@ -599,13 +604,17 @@ export function defaultsOn(row: PlanRow): boolean {
   return !(row.kind === "book" && row.organized);
 }
 
+function belowImageMinimum(row: PlanRow, minimum: number): boolean {
+  return row.imageCount !== null && row.imageCount < minimum;
+}
+
 /** それ以上分かれない行。チェックの状態を持つのはこれだけ */
 function isLeaf(row: PlanRow): boolean {
   return row.leaves.length === 1 && row.leaves[0] === row.id;
 }
 
 /** その行が入っているか。自分の決定 → 一番内側の先祖 → 既定 の順で決まる */
-function isOn(row: PlanRow, decisions: Decisions): boolean {
+function isOn(row: PlanRow, decisions: Decisions, minimum = 0): boolean {
   const own = decisions.get(row.id);
   if (own !== undefined) return own;
   // ancestors は外側から順に並ぶので、後ろから見れば内側が先になる
@@ -613,7 +622,7 @@ function isOn(row: PlanRow, decisions: Decisions): boolean {
     const decided = decisions.get(row.ancestors[index]!);
     if (decided !== undefined) return decided;
   }
-  return defaultsOn(row);
+  return defaultsOn(row) && !belowImageMinimum(row, minimum);
 }
 
 /**
@@ -636,11 +645,12 @@ export function effectiveOff(
   rows: PlanRow[],
   decisions: Decisions,
   done: Done = NOTHING_DONE,
+  minimum = 0,
 ): ReadonlySet<string> {
-  const { passed } = duplicatePicks(rows, decisions, done);
+  const { passed } = duplicatePicks(rows, decisions, done, minimum);
   const off = new Set<string>(passed);
   for (const row of rows) {
-    if (isLeaf(row) && !isOn(row, decisions)) off.add(row.id);
+    if (isLeaf(row) && !isOn(row, decisions, minimum)) off.add(row.id);
   }
   return off;
 }
@@ -694,12 +704,16 @@ function duplicatePicks(
   rows: PlanRow[],
   decisions: Decisions,
   done: Done = NOTHING_DONE,
+  minimum = 0,
 ): { picked: ReadonlySet<string>; passed: ReadonlySet<string> } {
   const picked = new Set<string>();
   const passed = new Set<string>();
   for (const members of volumeGroups(rows)) {
     const open = members.filter(
-      (row) => !done.has(row.id) && undecided(row, decisions),
+      (row) =>
+        !done.has(row.id) &&
+        undecided(row, decisions) &&
+        !belowImageMinimum(row, minimum),
     );
     const chosen = members.some(
       (row) =>
@@ -736,8 +750,9 @@ export function keepPicked(
   decisions: Decisions,
   leaves: string[],
   done: Done = NOTHING_DONE,
+  minimum = 0,
 ): Decisions {
-  const { picked } = duplicatePicks(rows, decisions, done);
+  const { picked } = duplicatePicks(rows, decisions, done, minimum);
   const touched = new Set(leaves);
   const next = new Map(decisions);
   for (const members of volumeGroups(rows)) {

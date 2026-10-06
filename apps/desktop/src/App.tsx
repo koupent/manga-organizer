@@ -16,7 +16,7 @@ import {
   resolveConnection,
 } from "./connection";
 import { SettingsDialog } from "./components/SettingsDialog";
-import { useStoredString } from "./lib/setting";
+import { useStoredString, useStoredNumber } from "./lib/setting";
 import { findUpdate, UpdateNotice } from "./components/UpdateNotice";
 import { Alert } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
@@ -157,6 +157,10 @@ export function App() {
   );
   const restoredOutputDirectory = useRef(defaultOutputDirectory);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [minimumImageCount, setMinimumImageCount] = useStoredNumber(
+    "minimum-image-count",
+    0,
+  );
   const [outputDirectory, setOutputDirectory] = useState(
     () => startupParams().get("output") ?? defaultOutputDirectory,
   );
@@ -440,6 +444,8 @@ export function App() {
           onOpenChange={setSettingsOpen}
           defaultOutputDirectory={defaultOutputDirectory}
           onDefaultOutputDirectoryChange={changeDefaultOutputDirectory}
+          minimumImageCount={minimumImageCount}
+          onMinimumImageCountChange={setMinimumImageCount}
         />
       </header>
 
@@ -496,6 +502,7 @@ export function App() {
               active={mode === "organize"}
               client={client}
               sources={sources}
+              minimumImageCount={minimumImageCount}
               onSourcesChange={changeSources}
               outputDirectory={outputDirectory}
               onOpenSettings={() => setSettingsOpen(true)}

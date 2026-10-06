@@ -454,7 +454,10 @@ const PlanListRow = memo(function PlanListRow({
           <span
             data-testid="plan-row-name"
             data-dim
-            className={cn("min-w-0 flex-1 truncate text-[12.5px]", dim)}
+            className={cn(
+              "flex min-w-0 flex-1 items-center text-[12.5px]",
+              dim,
+            )}
           >
             <ResultName
               name={name}
@@ -493,6 +496,13 @@ const PlanListRow = memo(function PlanListRow({
           </span>
         </>
       )}
+      <span
+        data-testid="plan-row-image-count"
+        className="tabular w-14 shrink-0 text-right text-[11px] text-ink-muted"
+        title="ZIP化対象の画像枚数"
+      >
+        {row.imageCount !== null ? `${row.imageCount}枚` : ""}
+      </span>
       {/*
         右側は列の幅をそろえる（#172）。状態 → 大きさ → ごみ箱 → 近道。無い
         項目も幅だけ空けておき、行ごとに位置がずれないようにする
@@ -780,7 +790,7 @@ function ResultName({
   const suffix = at >= 0 ? name.slice(at + label.length) : name;
   return (
     <>
-      <span className="text-ink-faint">{prefix}</span>
+      <span className="min-w-0 truncate text-ink-faint">{prefix}</span>
       <VolumeChip
         label={label}
         value={row.volume}
@@ -789,7 +799,7 @@ function ResultName({
         onCommit={(volume) => onCorrect(row, volume)}
         onFill={(volume) => onFill(row, volume)}
       />
-      <span className={suffix.startsWith("_") ? "text-warn" : undefined}>
+      <span className={cn("shrink-0", suffix.startsWith("_") && "text-warn")}>
         {suffix}
       </span>
     </>
@@ -868,7 +878,7 @@ function VolumeChip({
 
   if (editing) {
     return (
-      <span className="inline-flex items-center gap-0.5 rounded-control border border-brand bg-canvas px-1 text-brand">
+      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-control border border-brand bg-canvas px-1 text-brand">
         第
         <input
           data-testid="volume-input"
@@ -896,7 +906,7 @@ function VolumeChip({
       disabled={locked}
       title="押すと巻数を直せます（Enter 決める / Esc やめる / ↑↓ 隣の本 / Ctrl+Enter 下の本に続き番号 / 空にすると Unknown）"
       className={cn(
-        "rounded-control border px-1 font-medium",
+        "shrink-0 rounded-control border px-1 font-medium",
         corrected
           ? "border-brand/60 bg-brand/15 text-brand"
           : "border-line text-ink hover:border-line-strong",

@@ -1664,6 +1664,7 @@ test.describe("整理の失敗", () => {
     await page.getByTestId("clear-selection").click();
     await expect(page.getByTestId("selected-count")).toHaveText("0 件");
     await selectArchives(page, broken);
+    await fillMangaInfo(page, "一覧が消える作品", "一覧が消える著者");
     const job = await organizeAndReadJob(page);
 
     // Assert - 出来たものは増えていない

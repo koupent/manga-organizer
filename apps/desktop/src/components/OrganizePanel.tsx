@@ -88,6 +88,7 @@ type OrganizePanelProps = {
   /** いま見えている画面かどうか。隠れている間はジョブの監視を止める */
   active?: boolean;
   sources: string[];
+  minimumImageCount: number;
   onSourcesChange: (paths: string[]) => void;
   outputDirectory: string;
   onOutputDirectoryChange: (path: string) => void;
@@ -143,6 +144,7 @@ export function OrganizePanel({
   client,
   active = true,
   sources,
+  minimumImageCount,
   onSourcesChange,
   outputDirectory,
   onOutputDirectoryChange,
@@ -279,6 +281,7 @@ export function OrganizePanel({
     const before = analyzedSources.current;
     analyzedSources.current = sources;
     if (sources.length === 0) {
+      if (before.length > 0) changeTitle("");
       setAnalysis(IDLE_ANALYSIS);
       return;
     }
@@ -584,10 +587,10 @@ export function OrganizePanel({
   // 出来た本は、もう処理の対象ではない（#172）。チェックを出さず、外れている
   // 側に入れる。入れたままだと、もう一度押したときに _1 の写しが出来る
   const off = useMemo(() => {
-    const decided = effectiveOff(rows, decisions, made);
+    const decided = effectiveOff(rows, decisions, made, minimumImageCount);
     if (made.size === 0) return decided;
     return new Set([...decided, ...made.keys()]);
-  }, [rows, decisions, made]);
+  }, [rows, decisions, made, minimumImageCount]);
   // 出来ている本の名前は先着として埋まっている（#178）
   const names = useMemo(
     () =>
@@ -745,7 +748,9 @@ export function OrganizePanel({
     const leaves = targets.flatMap(toggleTargets);
     setDecisions((current) =>
       toggleLeaves(
-        keep ? keepPicked(rows, current, leaves, made) : current,
+        keep
+          ? keepPicked(rows, current, leaves, made, minimumImageCount)
+          : current,
         leaves,
         keep,
       ),

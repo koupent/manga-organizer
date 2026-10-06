@@ -66,6 +66,7 @@ class PlannedBookView(BaseModel):
     """
 
     source: str
+    image_count: int = Field(default=0, ge=0, description="この本に含まれる画像枚数")
     entry: str
     output_name: str
     volume: int | None = None
@@ -291,6 +292,7 @@ def _book_view(book: PlannedBook) -> dict[str, Any]:
         title=book.title,
         organized_reason=book.organized_reason,
         organized_detail=book.organized_detail,
+        image_count=book.image_count,
         # 同じ巻が複数あるとき、大きい方（画質の良い方）を残す判断に使う（#163）
         size=file_size(book.source) if book.entry == "" else None,
     ).model_dump()

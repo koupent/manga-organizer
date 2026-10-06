@@ -35,12 +35,16 @@ export function SettingsDialog({
   onOpenChange,
   defaultOutputDirectory,
   onDefaultOutputDirectoryChange,
+  minimumImageCount,
+  onMinimumImageCountChange,
 }: {
   client: SidecarClient | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultOutputDirectory: string;
   onDefaultOutputDirectoryChange: (path: string) => void;
+  minimumImageCount: number;
+  onMinimumImageCountChange: (count: number) => void;
 }) {
   const [check, setCheck] = useState<Check>({ state: "idle" });
   const desktop = isTauri();
@@ -102,7 +106,7 @@ export function SettingsDialog({
           </DialogClose>
         </div>
         <DialogDescription className="sr-only">
-          デフォルトの出力先とアプリの更新を設定できます。
+          デフォルトの出力先、画像枚数の下限、アプリの更新を設定できます。
         </DialogDescription>
 
         {client ? (
@@ -118,6 +122,27 @@ export function SettingsDialog({
             </p>
           </section>
         ) : null}
+        <section className="flex flex-col gap-2 rounded-card border border-line bg-surface p-3">
+          <label className="flex items-center gap-3 text-[12px]">
+            画像枚数の下限
+            <input
+              data-testid="minimum-image-count"
+              type="number"
+              min={0}
+              step={1}
+              value={minimumImageCount}
+              className="w-20 rounded-control border border-line bg-canvas px-2 py-1"
+              onChange={(event) => {
+                const count = Number(event.target.value);
+                if (Number.isInteger(count) && count >= 0)
+                  onMinimumImageCountChange(count);
+              }}
+            />
+          </label>
+          <p className="text-[12px] text-ink-muted">
+            下限未満の本は自動でチェックを外します。0は除外なし。手動で選び直せます。設定は自動で保存します。
+          </p>
+        </section>
         <section className="flex flex-col gap-2 rounded-card border border-line bg-surface p-3">
           <div className="flex items-center gap-2">
             <span className="text-[12px] text-ink-faint">アプリの版</span>
