@@ -291,14 +291,14 @@ async function addFolder(page: Page, folderName: string) {
 /** アーカイブの行 */
 function archiveRow(page: Page, path: string): Locator {
   return page.locator(
-    `[data-testid="plan-row"][data-kind="archive"][data-path="${path}"]`,
+    `[data-testid="plan-row"][data-kind="archive"][data-path=${JSON.stringify(path)}]`,
   );
 }
 
 /** ある入れ物から生えた本の行。名前は作品名で変わるので元のパスで指す */
 function bookRowsOf(page: Page, source: string): Locator {
   return page.locator(
-    `[data-testid="plan-row"][data-kind="book"][data-source="${source}"]`,
+    `[data-testid="plan-row"][data-kind="book"][data-source=${JSON.stringify(source)}]`,
   );
 }
 

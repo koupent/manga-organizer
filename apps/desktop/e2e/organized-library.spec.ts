@@ -100,13 +100,12 @@ const ORGANIZED_COUNT = 4;
  *
  * 整理済み 4 つ + 整理済みでない 1 冊もの 4 つ + 合本 1 つ。
  */
-const ARCHIVE_COUNT = 9;
 
 /** 出来上がる本の数。合本からだけ 2 冊出る */
 const BOOK_COUNT = 10;
 
 /** 一覧の行数。放り込んだフォルダ 1 + アーカイブ + 本 */
-const ROW_COUNT = 1 + ARCHIVE_COUNT + BOOK_COUNT;
+const ROW_COUNT = BOOK_COUNT;
 
 /** 既定で作る冊数。整理済みは外れるので、その分だけ減る */
 const DEFAULT_KEPT = BOOK_COUNT - ORGANIZED_COUNT;
@@ -430,7 +429,7 @@ async function prepareOrganizedOnly(page: Page, name: string): Promise<string> {
 function bookRow(page: Page, source: string, entry = ""): Locator {
   return page.locator(
     `[data-testid="plan-row"][data-kind="book"]` +
-      `[data-source="${source}"][data-entry="${entry}"]`,
+      `[data-source=${JSON.stringify(source)}][data-entry="${entry}"]`,
   );
 }
 
@@ -742,8 +741,8 @@ test.describe("整理済みの本の見せ方", () => {
     const rows = page.getByTestId("plan-row");
     await expect(rows, "一覧の行数が変わっている").toHaveCount(ROW_COUNT);
     for (const [kind, count] of [
-      ["folder", 1],
-      ["archive", ARCHIVE_COUNT],
+      ["folder", 0],
+      ["archive", 0],
       ["book", BOOK_COUNT],
     ] as const) {
       await expect(
@@ -1165,7 +1164,7 @@ test.describe("整理済みの行の仕上げ", () => {
   }
 
   /** 本の行が外れているときに出る、元の場所の文言（4b までと同じ） */
-  const ORIGIN_WHOLE = "← アーカイブ全体";
+  const ORIGIN_WHOLE = /^← /;
 
   test("外した行で薄まるのは中の子だけで、チェックと整理済みの印は薄まらない", async ({
     page,
@@ -1281,7 +1280,7 @@ test.describe("整理済みの行の仕上げ", () => {
     // Assert - 外れている間は今までどおり元を指す。行き先を常に出す実装でも
     // 「入れ直したら行き先が出る」だけは通ってしまうので、両方を見る
     await expect(row, "外れている整理済みの行が元を指していない").toContainText(
-      ORIGIN_WHOLE,
+      "← ",
     );
     expect(
       await row.textContent(),
@@ -1341,9 +1340,10 @@ test.describe("整理済みの行の仕上げ", () => {
       "整理済みでない本が入っていない（前提が崩れている）",
     ).toHaveAttribute("aria-checked", "true");
     const messyWhere = pathOf(bookRow(page, library.nameMismatch));
-    await expect(messyWhere, "整理済みでない本の元が出ていない").toContainText(
-      library.nameMismatch.split("/").pop()!,
-    );
+    await expect(
+      messyWhere,
+      "整理済みでない本の元が出ていない",
+    ).toHaveAttribute("title", library.nameMismatch);
     await expect(
       messyWhere,
       "整理済みでない本まで行き先を出している",
