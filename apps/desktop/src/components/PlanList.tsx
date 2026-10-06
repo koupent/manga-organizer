@@ -209,7 +209,11 @@ export function PlanList({
         const second = displayedName(b);
         if (!first || !second)
           return first ? -1 : second ? 1 : a.id.localeCompare(b.id);
-        return byName(first, second) || a.id.localeCompare(b.id);
+        // 拡張子を外すと、番号なし → _1 → _2 の自然な順になる。
+        return (
+          byName(first.replace(/\.zip$/i, ""), second.replace(/\.zip$/i, "")) ||
+          a.id.localeCompare(b.id)
+        );
       });
   }, [rows, names, made]);
   // Shift で押したときの範囲の起点。最後に押した行（#158）。行は解析の途中で

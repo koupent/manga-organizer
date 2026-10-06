@@ -414,8 +414,8 @@ test.describe("ワークベンチ: ファイル整理", () => {
 
     // Assert - 測る対象が見つからないまま通らないようにする
     expect(region, "一覧の領域が見つからない").not.toBeNull();
-    // 落としたもの MANY 件と、そこから出来る本 MANY 冊
-    expect(region!.rows).toBe(MANY * 2);
+    // 投入したものから出来る本 MANY 冊だけが並ぶ。
+    expect(region!.rows).toBe(MANY);
     expect(region!.holdsRows, "測った領域が行を含んでいない").toBe(true);
     expect(region!.holdsPrimary, "画面全体を一覧として測っている").toBe(false);
 

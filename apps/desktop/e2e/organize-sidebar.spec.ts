@@ -561,7 +561,7 @@ test.describe("ファイル整理: 投入は左、出来上がりは右", () => 
       ),
     );
     expect(left).toHaveLength(3);
-    expect(right.length).toBeGreaterThanOrEqual(6);
+    expect(right).toHaveLength(3);
     for (const height of left) {
       expect(Math.abs(height - SOURCE_ROW_HEIGHT)).toBeLessThanOrEqual(SLACK);
     }

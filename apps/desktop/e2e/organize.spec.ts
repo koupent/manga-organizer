@@ -1068,7 +1068,11 @@ test.describe("整理後の受け渡し", () => {
     const row = madeRows(page);
     await expect(row).toHaveAttribute("data-source", source);
     await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
-    await expect(books.nth(1).getByTestId("plan-to-thumbnail")).toHaveCount(0);
+    await expect(
+      page
+        .locator('[data-testid="plan-row"][data-kind="book"]:not([data-made])')
+        .getByTestId("plan-to-thumbnail"),
+    ).toHaveCount(0);
 
     // Act - 整理が終わるのを待たずに、出来た本のサムネイル作成へ移る
     await row.getByTestId("plan-to-thumbnail").click();
