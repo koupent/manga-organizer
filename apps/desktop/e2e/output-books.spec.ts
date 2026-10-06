@@ -136,7 +136,7 @@ test("出力先にある同じ巻を先着として一覧に出し、次の番�
 
   // Assert - 出力先に同じ巻があるので、今回の本は既定で外れている
   const added = page.locator(
-    `[data-testid="plan-row"][data-source="${source}"]`,
+    `[data-testid="plan-row"][data-source=${JSON.stringify(source)}]`,
   );
   await expect(added.getByTestId("plan-check")).not.toBeChecked();
 
