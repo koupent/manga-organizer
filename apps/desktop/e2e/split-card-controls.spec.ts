@@ -276,9 +276,7 @@ test.describe("ページ分割: 操作の読み上げ名", () => {
 
     const grid = page.getByTestId("split-grid");
     await expect(grid.getByRole("checkbox")).toHaveCount(5);
-    await expect(
-      grid.getByTestId("split-card").getByRole("button"),
-    ).toHaveCount(5);
+    await expect(grid.getByTestId("zoom")).toHaveCount(5);
 
     // Assert - どの番号についても、その番号を名乗る操作は 1 つだけで、
     // それがそのページのカードの中にある。
@@ -300,12 +298,14 @@ test.describe("ページ分割: 操作の読み上げ名", () => {
       );
 
       await expect(
-        grid.getByRole("button", { name: pattern }),
+        grid
+          .getByTestId("zoom")
+          .and(grid.getByRole("button", { name: pattern })),
         `${label} ページの拡大を、読み上げの一覧で選び出せない`,
       ).toHaveCount(1);
-      await expect(card.getByTestId("split-zoom")).toHaveAccessibleName(
-        pattern,
-      );
+      await expect(
+        page.getByTestId("editable-page").nth(index).getByTestId("zoom"),
+      ).toHaveAccessibleName(pattern);
     }
 
     // Assert - 名乗るのは番号であって、ファイル名ではない。名前で見分けさせると、
@@ -321,7 +321,7 @@ test.describe("ページ分割: 操作の読み上げ名", () => {
         "チェックの読み上げ名がファイル名を名乗っている",
       ).not.toHaveAccessibleName(filename);
       await expect(
-        card.getByTestId("split-zoom"),
+        page.getByTestId("editable-page").nth(index).getByTestId("zoom"),
         "拡大の読み上げ名がファイル名を名乗っている",
       ).not.toHaveAccessibleName(filename);
     }

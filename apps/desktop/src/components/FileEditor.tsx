@@ -620,7 +620,12 @@ export function FileEditor({
         disabled={busy}
         selected={selection.includes(row.names[unit.part ?? 0])}
         onSelect={(event) => select(row.names[unit.part ?? 0], event)}
-        onZoom={() => setZoomed(row.names[unit.part ?? 0])}
+        onZoom={() =>
+          step === "split" && !row.deleted
+            ? setOverlay(index)
+            : setZoomed(row.names[unit.part ?? 0])
+        }
+        zoomLabel={`${label} ページを大きく表示`}
         canCover={!row.deleted && !isPending(row) && !isAbsorbed(rows, index)}
         onCover={() => chooseCover(row.names[unit.part ?? 0])}
         onAdjust={() => setAdjusting(row.names[unit.part ?? 0])}

@@ -2,6 +2,7 @@ import { Link2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { PagePicture, type Picture } from "./PagePicture";
+import { PageCard } from "./PageCard";
 
 /**
  * 「結合…」で相手を選んでいる間の、このカードの立場（#154）。
@@ -87,148 +88,133 @@ export function MergeCard({
         : null;
 
   return (
-    <div
-      // 送りボタンで指したカードへフォーカスを移し、キーで結合できるようにする
-      tabIndex={-1}
+    <PageCard
+      mode="merge"
+      index={index}
+      part={part}
+      label={label}
+      pending={pending}
+      focused={focused}
+      span={span}
+      boxHeight={boxHeight}
       className={cn(
-        "group flex flex-col overflow-hidden rounded-card border border-line outline-none",
-        "bg-surface transition-[border-color,opacity] hover:border-line-strong",
-        span && "col-span-2",
-        focused && "border-brand ring-2 ring-brand/40",
         pick === "self" && "border-brand ring-2 ring-brand",
         pick === "partner" && "border-warn ring-2 ring-warn",
         pick === "dimmed" && "pointer-events-none opacity-40",
       )}
-      data-testid="merge-card"
-      data-index={index}
-      data-part={part}
       data-kind={kind}
-      data-focused={focused}
       data-pick={pick}
-    >
-      <div
-        className="relative flex flex-none items-center justify-center bg-canvas"
-        style={{ height: boxHeight }}
-      >
-        <PagePicture
-          label={label}
-          page={page}
-          partner={partner}
-          boxWidth={boxWidth}
-          boxHeight={boxHeight}
-          draft={candidate}
-          imageTestId="merge-image"
-          partnerTestId="merge-partner-image"
-        >
-          {(display) =>
-            candidate && (partner || seamX !== undefined) ? (
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-warn"
-                style={{
-                  left:
-                    (partner
-                      ? display.seam
-                      : (seamX! / page.width) * display.width) - 1,
-                }}
-              />
-            ) : null
-          }
-        </PagePicture>
-        {/* 絵の上に載るので、半透明の地では読めない。地を塗りつぶす */}
-        {badge ? (
-          <Badge
-            data-testid="merge-badge"
-            className={cn(
-              "pointer-events-none absolute top-2 left-2 font-semibold shadow",
-              badge.className,
-            )}
-          >
-            {badge.text}
-          </Badge>
-        ) : null}
-        {pick === "partner" ? (
-          <button
-            type="button"
-            data-testid="merge-partner"
-            className="absolute inset-0 flex items-center justify-center bg-warn/15 text-[12px] font-semibold"
-            onClick={onChoose}
-          >
-            <span className="rounded bg-warn px-2 py-1 text-canvas shadow">
-              ここと結合
-            </span>
-          </button>
-        ) : null}
-      </div>
-
-      <div className="flex items-center gap-1.5 border-t border-line px-2 py-1.5">
-        <span
-          data-testid="merge-number"
-          data-pending={pending}
-          className={cn(
-            "tabular min-w-6 rounded px-1.5 py-0.5 text-center text-[11px] font-semibold",
-            pending ? "bg-brand text-brand-ink" : "bg-surface-2 text-ink-muted",
-          )}
-        >
-          {label}
-        </span>
-        {kind === "spread" ? (
+      status={
+        kind === "spread" ? (
           <Badge data-testid="merge-spread">見開き</Badge>
-        ) : null}
-        <div className="flex-1" />
-        {pick === "self" ? (
-          <>
-            <span className="text-[11px] whitespace-nowrap text-ink-muted">
-              相手を押す
-            </span>
+        ) : null
+      }
+      actions={
+        <>
+          {pick === "self" ? (
+            <>
+              <span className="text-[11px] whitespace-nowrap text-ink-muted">
+                相手を押す
+              </span>
+              <button
+                type="button"
+                data-testid="merge-pick-cancel"
+                title="結合する相手を選ぶのをやめる（Esc）"
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap text-ink-muted hover:bg-surface-2 hover:text-ink"
+                onClick={onCancelPick}
+              >
+                やめる
+              </button>
+            </>
+          ) : null}
+          {pick !== "self" && onMerge ? (
             <button
               type="button"
-              data-testid="merge-pick-cancel"
-              title="結合する相手を選ぶのをやめる（Esc）"
-              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap text-ink-muted hover:bg-surface-2 hover:text-ink"
-              onClick={onCancelPick}
+              data-testid="merge-accept"
+              title={`${label} ページを 1 枚の見開きに結合する（Enter）`}
+              className="flex shrink-0 items-center gap-1 rounded bg-brand px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap text-brand-ink hover:bg-brand/85"
+              onClick={onMerge}
             >
-              やめる
+              <Link2 className="size-3.5" />
+              結合
             </button>
-          </>
-        ) : null}
-        {pick !== "self" && onMerge ? (
-          <button
-            type="button"
-            data-testid="merge-accept"
-            title={`${label} ページを 1 枚の見開きに結合する（Enter）`}
-            className="flex shrink-0 items-center gap-1 rounded bg-brand px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap text-brand-ink hover:bg-brand/85"
-            onClick={onMerge}
-          >
-            <Link2 className="size-3.5" />
-            結合
-          </button>
-        ) : null}
-        {pick !== "self" && onCancelMerge ? (
-          <button
-            type="button"
-            data-testid="merge-undo"
-            title={`${label} ページの未保存の結合を取り消す`}
-            className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap text-ink-muted hover:bg-surface-2 hover:text-ink"
-            onClick={onCancelMerge}
-          >
-            結合を取り消す
-          </button>
-        ) : null}
-        {pick === "none" && onPick ? (
-          <button
-            type="button"
-            data-testid="merge-pick"
-            title={`${label} ページと結合する相手を選ぶ`}
-            // 単ページの数だけ並ぶので、普段は隠して指したカードにだけ出す
-            className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[11px] whitespace-nowrap text-ink-faint opacity-0 transition-colors group-hover:opacity-100 hover:bg-surface-2 hover:text-ink focus-visible:opacity-100"
-            onClick={onPick}
-          >
-            <Link2 className="size-3.5" />
-            結合…
-          </button>
-        ) : null}
-      </div>
-    </div>
+          ) : null}
+          {pick !== "self" && onCancelMerge ? (
+            <button
+              type="button"
+              data-testid="merge-undo"
+              title={`${label} ページの未保存の結合を取り消す`}
+              className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap text-ink-muted hover:bg-surface-2 hover:text-ink"
+              onClick={onCancelMerge}
+            >
+              結合を取り消す
+            </button>
+          ) : null}
+          {pick === "none" && onPick ? (
+            <button
+              type="button"
+              data-testid="merge-pick"
+              title={`${label} ページと結合する相手を選ぶ`}
+              // 単ページの数だけ並ぶので、普段は隠して指したカードにだけ出す
+              className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[11px] whitespace-nowrap text-ink-faint opacity-0 transition-colors group-hover:opacity-100 hover:bg-surface-2 hover:text-ink focus-visible:opacity-100"
+              onClick={onPick}
+            >
+              <Link2 className="size-3.5" />
+              結合…
+            </button>
+          ) : null}
+        </>
+      }
+    >
+      <PagePicture
+        label={label}
+        page={page}
+        partner={partner}
+        boxWidth={boxWidth}
+        boxHeight={boxHeight}
+        draft={candidate}
+        imageTestId="merge-image"
+        partnerTestId="merge-partner-image"
+      >
+        {(display) =>
+          candidate && (partner || seamX !== undefined) ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-warn"
+              style={{
+                left:
+                  (partner
+                    ? display.seam
+                    : (seamX! / page.width) * display.width) - 1,
+              }}
+            />
+          ) : null
+        }
+      </PagePicture>
+      {/* 絵の上に載るので、半透明の地では読めない。地を塗りつぶす */}
+      {badge ? (
+        <Badge
+          data-testid="merge-badge"
+          className={cn(
+            "pointer-events-none absolute top-2 left-2 font-semibold shadow",
+            badge.className,
+          )}
+        >
+          {badge.text}
+        </Badge>
+      ) : null}
+      {pick === "partner" ? (
+        <button
+          type="button"
+          data-testid="merge-partner"
+          className="absolute inset-0 flex items-center justify-center bg-warn/15 text-[12px] font-semibold"
+          onClick={onChoose}
+        >
+          <span className="rounded bg-warn px-2 py-1 text-canvas shadow">
+            ここと結合
+          </span>
+        </button>
+      ) : null}
+    </PageCard>
   );
 }
