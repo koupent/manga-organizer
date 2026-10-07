@@ -162,14 +162,44 @@ jobs:
           uv run --no-project python scripts/smoke_saves.py "$RUNNER_TEMP/manga-organizer/resources/sidecar/manga-api.exe"
 
       # 同梱の場所の取り違えや終了時の後始末は、アプリ本体を通さないと分からない
-      - name: 入れたアプリがサイドカーを起こし、閉じると止めるか確かめる
+      - name: 入れたアプリの起動・終了と、ウィンドウサイズの保持を確かめる
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $dir = Join-Path $env:RUNNER_TEMP 'manga-organizer'
           $log = Join-Path $env:APPDATA 'dev.koupent.manga-organizer\sidecar.log'
           $app = Get-ChildItem $dir -Filter '*.exe' | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
-          $proc = Start-Process -FilePath $app.FullName -PassThru
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class WindowCheck {
+            [StructLayout(LayoutKind.Sequential)]
+            public struct Rect { public int Left, Top, Right, Bottom; }
+            [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out Rect r);
+            [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int height, bool repaint);
+            [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
+            [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+            public static string Size(IntPtr h) {
+              Rect r;
+              if (!GetClientRect(h, out r)) throw new Exception("ウィンドウサイズを読めません");
+              return (r.Right - r.Left) + "x" + (r.Bottom - r.Top);
+            }
+          }
+          '@
+          function Wait-Window($process) {
+            for ($i = 0; $i -lt 30; $i++) {
+              $process.Refresh()
+              if ($process.MainWindowHandle -ne 0) { return $process.MainWindowHandle }
+              if ($process.HasExited) { throw 'アプリが起動直後に終了しました' }
+              Start-Sleep -Seconds 1
+            }
+            throw 'ウィンドウが開きませんでした'
+          }
+          function Close-App($process) {
+            if (-not $process.CloseMainWindow()) { throw 'ウィンドウを閉じられませんでした' }
+            if (-not $process.WaitForExit(30000)) { throw 'ウィンドウを閉じてもアプリが終わりませんでした' }
+          }
+          $proc = Start-Process -FilePath $app.FullName -PassThru -WindowStyle Hidden
           try {
             $sidecar = $null
             for ($i = 0; $i -lt 120 -and -not $sidecar; $i++) {
@@ -183,14 +213,30 @@ jobs:
             }
             Write-Host "サイドカーが起動しました: $($sidecar.Path)"
 
-            for ($i = 0; $i -lt 30 -and $proc.MainWindowHandle -eq 0; $i++) {
-              Start-Sleep -Seconds 1
-              $proc.Refresh()
-            }
-            if (-not $proc.CloseMainWindow()) { throw 'ウィンドウを閉じられませんでした' }
-            if (-not $proc.WaitForExit(30000)) { throw 'ウィンドウを閉じてもアプリが終わりませんでした' }
+            $handle = Wait-Window $proc
+            if (-not [WindowCheck]::MoveWindow($handle, 50, 50, 1050, 740, $true)) { throw 'サイズを変更できませんでした' }
+            Start-Sleep -Seconds 1
+            $size = [WindowCheck]::Size($handle)
+            Close-App $proc
             if (-not $sidecar.WaitForExit(10000)) { throw 'アプリを閉じてもサイドカーが残りました' }
             Write-Host 'アプリを閉じるとサイドカーも止まりました'
+
+            $proc = Start-Process -FilePath $app.FullName -PassThru -WindowStyle Hidden
+            $handle = Wait-Window $proc
+            for ($i = 0; $i -lt 30 -and [WindowCheck]::Size($handle) -ne $size; $i++) { Start-Sleep -Seconds 1 }
+            if ([WindowCheck]::Size($handle) -ne $size) { throw "再起動後にサイズ $size が復元されませんでした" }
+            Write-Host "再起動後のサイズが復元されました: $size"
+            [WindowCheck]::ShowWindow($handle, 3) | Out-Null
+            Start-Sleep -Seconds 1
+            if (-not [WindowCheck]::IsZoomed($handle)) { throw '最大化できませんでした' }
+            Close-App $proc
+
+            $proc = Start-Process -FilePath $app.FullName -PassThru -WindowStyle Hidden
+            $handle = Wait-Window $proc
+            for ($i = 0; $i -lt 30 -and -not [WindowCheck]::IsZoomed($handle); $i++) { Start-Sleep -Seconds 1 }
+            if (-not [WindowCheck]::IsZoomed($handle)) { throw '再起動後に最大化が復元されませんでした' }
+            Write-Host '再起動後の最大化が復元されました'
+            Close-App $proc
           } finally {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
             Get-Process manga-api -ErrorAction SilentlyContinue | Stop-Process -Force

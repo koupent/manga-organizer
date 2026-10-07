@@ -9,7 +9,7 @@ import {
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { EditablePage } from "./EditablePage";
 import { CoverEditor } from "./CoverEditor";
-import { useStoredString } from "../lib/setting";
+import { useStoredNumber, useStoredString } from "../lib/setting";
 import {
   ChevronLeft,
   ChevronRight,
@@ -42,7 +42,6 @@ import { EditorLayout } from "./EditorLayout";
 import { MergeCard, type PickRole } from "./MergeCard";
 import { SplitCard } from "./SplitCard";
 import { SplitDialog } from "./SplitDialog";
-import { useStoredNumber } from "../lib/setting";
 import { useSplitJob } from "../lib/split-job";
 import { useBoxSize } from "../lib/stage";
 import { cn } from "../lib/utils";
@@ -140,7 +139,9 @@ export function FileEditor({
   // 利用者が選んだステップ。選ぶまでは、開いた本の中身から決める（firstStep）
   const [chosen, setChosen] = useState<Step | null>(null);
   const [splitSource, setSplitSource] = useState<SplitSource>("original");
-  const [showDeleted, setShowDeleted] = useState(false);
+  const [deletedVisibility, setDeletedVisibility] =
+    useStoredString("editor.showDeleted");
+  const showDeleted = deletedVisibility === "true";
   // 表示方向はページ順を変えず、画面の並びだけに適用する
   const [direction, setDirection] = useStoredString("editor.direction");
   const [adjusting, setAdjusting] = useState<string | null>(null);
@@ -898,7 +899,9 @@ export function FileEditor({
               type="checkbox"
               data-testid="show-deleted-pages"
               checked={showDeleted}
-              onChange={(event) => setShowDeleted(event.target.checked)}
+              onChange={(event) =>
+                setDeletedVisibility(String(event.target.checked))
+              }
             />
             削除したページも表示
           </label>

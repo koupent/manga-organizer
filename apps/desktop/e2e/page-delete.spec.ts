@@ -62,6 +62,25 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await expect(page.getByTestId("show-deleted-pages")).not.toBeChecked();
   await page.getByTestId("show-deleted-pages").check();
   await expect(hidden).toHaveCount(1);
+  // 表示の好みは再起動相当の読み直しと、別の本への切り替えでも保持する。
+  await page.reload();
+  await expect(page.getByTestId("show-deleted-pages")).toBeChecked();
+  await expect(hidden).toHaveCount(1);
+  const currentUrl = page.url();
+  const otherUrl = new URL(currentUrl);
+  const otherArchive = join(sidecar.workDir, "other-book.zip");
+  runPython(
+    `import shutil, sys; shutil.copyfile(sys.argv[1], sys.argv[2])`,
+    archive,
+    otherArchive,
+  );
+  otherUrl.searchParams.set("archive", otherArchive);
+  await page.goto(otherUrl.toString());
+  await expect(page.getByTestId("show-deleted-pages")).toBeChecked();
+  await expect(hidden).toHaveCount(1);
+  await page.goto(currentUrl);
+  await expect(page.getByTestId("show-deleted-pages")).toBeChecked();
+  await expect(hidden).toHaveCount(1);
   await expect
     .poll(() =>
       hidden
