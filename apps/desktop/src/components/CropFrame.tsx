@@ -1,4 +1,8 @@
-import { useRef, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 /** viewer が表紙を描く枠の縦横比 */
 export const TARGET_RATIO = 2 / 3;
@@ -286,30 +290,29 @@ function movedCrop(start: CropRect, dx: number, dy: number, image: ImageSize) {
   );
 }
 
-/**
- * 右下の角を掴んで大きさを変える。縦横比は固定しない（#146）。
- *
- * 2:3 に足りない分は、切り取った後にサイドカーが余白で足す。比率を固定すると、
- * 画像の端まで取りたいのに反対の辺が余計に入るか削れるかのどちらかになる。
- * 左上の角は動かさず、画像の右端・下端までに収める。
- */
+type ResizeHandle = "n" | "s" | "w" | "e" | "nw" | "ne" | "sw" | "se";
+
+/** 掴んだ辺・角だけを動かし、反対側を固定する。縦横比は自由で、画像の内側に収める */
 function resizedCrop(
   start: CropRect,
   dx: number,
   dy: number,
   image: ImageSize,
+  handle: ResizeHandle,
 ) {
-  const width = clamp(
-    start.width + dx,
-    image.width * MIN_FRACTION,
-    image.width - start.x,
-  );
-  const height = clamp(
-    start.height + dy,
-    image.height * MIN_FRACTION,
-    image.height - start.y,
-  );
-  return placedCrop(start.x, start.y, width, height, image);
+  let left = start.x;
+  let top = start.y;
+  let right = start.x + start.width;
+  let bottom = start.y + start.height;
+  const minWidth = Math.min(start.width, image.width * MIN_FRACTION);
+  const minHeight = Math.min(start.height, image.height * MIN_FRACTION);
+  if (handle.includes("w")) left = clamp(left + dx, 0, right - minWidth);
+  if (handle.includes("e"))
+    right = clamp(right + dx, left + minWidth, image.width);
+  if (handle.includes("n")) top = clamp(top + dy, 0, bottom - minHeight);
+  if (handle.includes("s"))
+    bottom = clamp(bottom + dy, top + minHeight, image.height);
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 /**
@@ -345,20 +348,69 @@ export function toCropBox(
 
 type CropFrameProps = {
   image: ImageSize;
+  src: string;
+  angle: QuarterTurn;
   crop: CropRect;
   onChange: (crop: CropRect) => void;
 };
 
-/**
- * 表示中の画像に重ねる切り抜き枠。縦横比は固定しない（#146）。
- *
- * 枠は元画像の画素で持ち、描画だけを割合に直す。表示は縮小されているので、
- * 画面上の座標のまま持つと、そのまま送ったときに意図しない範囲が切られる。
- */
-export function CropFrame({ image, crop, onChange }: CropFrameProps) {
+const HANDLES: { edge: ResizeHandle; position: string; cursor: string }[] = [
+  {
+    edge: "n",
+    position: "top-0 right-4 left-4 h-3",
+    cursor: "cursor-ns-resize",
+  },
+  {
+    edge: "s",
+    position: "bottom-0 right-4 left-4 h-3",
+    cursor: "cursor-ns-resize",
+  },
+  {
+    edge: "w",
+    position: "left-0 top-4 bottom-4 w-3",
+    cursor: "cursor-ew-resize",
+  },
+  {
+    edge: "e",
+    position: "right-0 top-4 bottom-4 w-3",
+    cursor: "cursor-ew-resize",
+  },
+  { edge: "nw", position: "top-0 left-0 size-4", cursor: "cursor-nwse-resize" },
+  {
+    edge: "ne",
+    position: "top-0 right-0 size-4",
+    cursor: "cursor-nesw-resize",
+  },
+  {
+    edge: "sw",
+    position: "bottom-0 left-0 size-4",
+    cursor: "cursor-nesw-resize",
+  },
+  {
+    edge: "se",
+    position: "bottom-0 right-0 size-4",
+    cursor: "cursor-nwse-resize",
+  },
+];
+const LOUPE_SIZE = 144;
+
+/** 枠は元画像の画素で持ち、描画だけを割合に直す。拡大表示も同じ座標・回転を使う */
+export function CropFrame({
+  image,
+  src,
+  angle,
+  crop,
+  onChange,
+}: CropFrameProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const [focus, setFocus] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const dragRef = useRef<{
-    resize: boolean;
+    handle: ResizeHandle | "move";
     originX: number;
     originY: number;
     start: CropRect;
@@ -374,60 +426,141 @@ export function CropFrame({ image, crop, onChange }: CropFrameProps) {
     };
   };
 
-  const beginDrag = (event: ReactPointerEvent, resize: boolean) => {
+  const magnify = (event: ReactPointerEvent) => {
+    const box = rootRef.current!.getBoundingClientRect();
+    setFocus({
+      x: clamp(event.clientX - box.left, 0, box.width),
+      y: clamp(event.clientY - box.top, 0, box.height),
+      width: box.width,
+      height: box.height,
+    });
+  };
+
+  const beginDrag = (
+    event: ReactPointerEvent,
+    handle: ResizeHandle | "move",
+  ) => {
     event.preventDefault();
     event.stopPropagation();
     // 掴んだ要素へ以後の動きを寄せる。枠の外へ出ても追随させたい
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
-      resize,
+      handle,
       originX: event.clientX,
       originY: event.clientY,
       start: crop,
     };
+    if (handle !== "move") magnify(event);
   };
 
   const continueDrag = (event: ReactPointerEvent) => {
     const drag = dragRef.current;
+    const edge = (event.target as HTMLElement).closest("[data-crop-handle]");
+    if (drag?.handle === "move" || (!drag && !edge)) setFocus(null);
+    else magnify(event);
     if (!drag) return;
     const moved = toImagePixels(
       event.clientX - drag.originX,
       event.clientY - drag.originY,
     );
-    const apply = drag.resize ? resizedCrop : movedCrop;
-    onChange(apply(drag.start, moved.dx, moved.dy, image));
+    onChange(
+      drag.handle === "move"
+        ? movedCrop(drag.start, moved.dx, moved.dy, image)
+        : resizedCrop(drag.start, moved.dx, moved.dy, image, drag.handle),
+    );
   };
 
   const endDrag = () => {
     dragRef.current = null;
+    setFocus(null);
   };
 
   const percent = (value: number, total: number) => `${(value / total) * 100}%`;
+  const upright = focus && rotatedSize(focus, angle);
 
   return (
-    <div ref={rootRef} className="pointer-events-none absolute inset-0">
+    <div
+      ref={rootRef}
+      className="pointer-events-none absolute inset-0"
+      onPointerLeave={() => {
+        if (!dragRef.current) setFocus(null);
+      }}
+    >
       <div
         data-testid="crop-frame"
-        className="pointer-events-auto absolute cursor-move border-2 border-brand bg-brand/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+        className="pointer-events-auto absolute touch-none cursor-move border-2 border-brand bg-brand/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
         style={{
           left: percent(crop.x, image.width),
           top: percent(crop.y, image.height),
           width: percent(crop.width, image.width),
           height: percent(crop.height, image.height),
         }}
-        onPointerDown={(event) => beginDrag(event, false)}
+        onPointerDown={(event) => beginDrag(event, "move")}
         onPointerMove={continueDrag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
       >
         {/* 掴む所は枠の内側に置く。はみ出させると画像の縁で切り取られ、掴めなくなる */}
-        <span
-          data-testid="crop-handle"
-          aria-hidden
-          className="absolute right-0 bottom-0 size-4 cursor-nwse-resize rounded-full border border-white bg-brand"
-          onPointerDown={(event) => beginDrag(event, true)}
-        />
+        {HANDLES.map(({ edge, position, cursor }) => (
+          <span
+            key={edge}
+            data-testid={edge === "se" ? "crop-handle" : `crop-handle-${edge}`}
+            data-crop-handle={edge}
+            aria-hidden
+            className={`absolute flex items-center justify-center ${position} ${cursor}`}
+            onPointerDown={(event) => beginDrag(event, edge)}
+          >
+            <span className="size-2.5 rounded-full border border-white bg-brand" />
+          </span>
+        ))}
       </div>
+      {focus && upright ? (
+        <div
+          data-testid="crop-loupe"
+          className="absolute overflow-hidden rounded border-2 border-white bg-canvas shadow-lg"
+          style={{
+            width: LOUPE_SIZE + 4,
+            height: LOUPE_SIZE + 4,
+            left: focus.x > focus.width / 2 ? 8 : undefined,
+            right: focus.x <= focus.width / 2 ? 8 : undefined,
+            top: focus.y > focus.height / 2 ? 8 : undefined,
+            bottom: focus.y <= focus.height / 2 ? 8 : undefined,
+          }}
+        >
+          <svg
+            role="img"
+            aria-label="調整箇所を2倍で表示"
+            className="h-full w-full"
+            viewBox={`${focus.x - LOUPE_SIZE / 4} ${focus.y - LOUPE_SIZE / 4} ${LOUPE_SIZE / 2} ${LOUPE_SIZE / 2}`}
+          >
+            <image
+              href={src}
+              x={(focus.width - upright.width) / 2}
+              y={(focus.height - upright.height) / 2}
+              width={upright.width}
+              height={upright.height}
+              transform={`rotate(${angle} ${focus.width / 2} ${focus.height / 2})`}
+            />
+            <rect
+              x={(crop.x / image.width) * focus.width}
+              y={(crop.y / image.height) * focus.height}
+              width={(crop.width / image.width) * focus.width}
+              height={(crop.height / image.height) * focus.height}
+              className="fill-none stroke-brand"
+              strokeWidth="1"
+            />
+            <path
+              d={`M ${focus.x - 4} ${focus.y} h 8 M ${focus.x} ${focus.y - 4} v 8`}
+              stroke="white"
+              strokeWidth="0.5"
+            />
+          </svg>
+          <span className="absolute right-1 bottom-1 rounded bg-canvas/80 px-1 text-[11px] text-ink">
+            2×
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

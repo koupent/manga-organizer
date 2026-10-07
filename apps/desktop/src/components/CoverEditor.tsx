@@ -269,8 +269,7 @@ export function CoverEditor({
           {/* 枠は掴めると分かって初めて使われる。説明は枠のある作業面の
             すぐ上に出す。枠が退いている間は言っても指す先が無い */}
           <span className="shrink-0 text-[12px] text-ink-faint">
-            枠を掴んで動かし、右下の角で大きさを変えます（足りない所は縁の色で塗って
-            2:3 にします）
+            枠の中を掴んで移動、辺・角でサイズ調整（操作箇所を2倍表示）。足りない所は縁の色で塗って2:3にします
           </span>
           <div className="flex-1" />
           <span
@@ -321,7 +320,13 @@ export function CoverEditor({
                 src={imageUrl}
                 alt={cover.name}
               />
-              <CropFrame image={shown} crop={frame} onChange={setCrop} />
+              <CropFrame
+                image={shown}
+                src={imageUrl}
+                angle={angle}
+                crop={frame}
+                onChange={setCrop}
+              />
             </div>
           </div>
         </div>
