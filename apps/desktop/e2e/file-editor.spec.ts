@@ -22,11 +22,14 @@ async function save(page: Page) {
     "data-state",
     "done",
   );
+  await expect(page.getByTestId("page-drag-handle").first()).toBeEnabled();
   await expect(page.getByTestId("split-confirm")).toBeDisabled();
 }
 async function drag(page: Page, from: number, to: number) {
   const cards = page.getByTestId("editable-page");
-  await cards.nth(from).getByTestId("page-drag-handle").hover();
+  const handle = cards.nth(from).getByTestId("page-drag-handle");
+  await expect(handle).toBeEnabled();
+  await handle.hover();
   await page.mouse.down();
   const box = await cards.nth(to).boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2, {
@@ -222,6 +225,10 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await page.getByTestId("split-step-merge").click();
   await expect(page.getByTestId("editable-page")).toHaveCount(4);
   await drag(page, 1, 3);
+  await expect(page.getByTestId("editable-page").last()).toHaveAttribute(
+    "data-name",
+    "002.png",
+  );
   await save(page);
   expect(pageEntriesOf(archive)).toHaveLength(4);
 });
