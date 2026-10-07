@@ -301,7 +301,11 @@ test.describe("ページ並べ替え: 保存した後の見え方", () => {
       .getByRole("menuitem", { name: "サムネイルにする", exact: true })
       .click();
     await page.getByTestId("split-confirm").click();
-    await expect(page.getByTestId("split-confirm")).toBeEnabled();
+    await expect(page.getByTestId("split-status")).toHaveAttribute(
+      "data-state",
+      "done",
+    );
+    await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
     // Assert - 並べ替えの画面は作り直される。世代を数え直して作り直す前と
     // 同じ URL になると、ブラウザが覚えている保存後の古い絵が出る

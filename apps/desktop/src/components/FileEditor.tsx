@@ -137,6 +137,7 @@ export function FileEditor({
   const [direction, setDirection] = useStoredString("editor.direction");
   const [adjusting, setAdjusting] = useState<string | null>(null);
   const [coverDraft, setCoverDraft] = useState<CoverRequest | undefined>();
+  const [reviewed, setReviewed] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   const lastClicked = useRef<string | null>(null);
   const [history, setHistory] = useState<
@@ -324,7 +325,10 @@ export function FileEditor({
     setPicking(null);
   };
   const save = async () => {
-    if ((await confirm(coverDraft)) && step === "split") setChosen("merge");
+    if (await confirm(coverDraft)) {
+      setReviewed(true);
+      if (step === "split") setChosen("merge");
+    }
   };
 
   // 分割済みの対を個別に動かすときだけ、保存済みの 2 ページとして扱う。
@@ -828,7 +832,7 @@ export function FileEditor({
             size="lg"
             className="shrink-0"
             data-testid="split-confirm"
-            disabled={busy}
+            disabled={busy || (reviewed && !pending)}
             onClick={() => void save()}
           >
             <Save />

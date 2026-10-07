@@ -167,7 +167,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await expect(card(page, 1).getByTestId("merge-spread")).toHaveText(
       "見開き",
     );
-    await expect(page.getByTestId("split-confirm")).toBeEnabled();
+    await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
     // Assert - 保存した見開きは ✂ で解ける（#154）。やめれば元のまま
     await card(page, 1).getByTestId("merge-undo").click();
@@ -177,8 +177,9 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await expect(page.getByTestId("split-status")).toHaveText(
       "1 枚を 2 ページに分けます → 全 4 ページ",
     );
-    await card(page, 1).getByTestId("merge-undo").click();
     await expect(page.getByTestId("split-confirm")).toBeEnabled();
+    await card(page, 1).getByTestId("merge-undo").click();
+    await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
     // Assert - 結合した見開きは①の対象にしない（#151 #153）。対象にすると、
     // ①の「すべて分割」が②で結合したものを壊す。分けたければ手で選べる

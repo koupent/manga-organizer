@@ -242,7 +242,7 @@ test.describe("ページ分割の確定と、ページ並べ替えの画面", ()
       page.getByTestId("split-confirm"),
       "保存が通ったのに未保存の印が消えない",
     ).toHaveText("確認済みにする");
-    await expect(page.getByTestId("split-confirm")).toBeEnabled();
+    await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
     // Assert - 書き込みで連番は振り直される。画面が抱える名前もその新しい
     // 連番でなければならない。ここが古いままだと、次に保存したとき

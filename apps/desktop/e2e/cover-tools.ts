@@ -19,7 +19,7 @@ export async function saveCoverTools(page: Page) {
     "data-state",
     "done",
   );
-  await expect(page.getByTestId("split-confirm")).toBeEnabled();
+  await expect(page.getByTestId("split-confirm")).toBeDisabled();
   await openCoverTools(page);
   await expect(page.getByTestId("crop-frame")).toBeVisible();
 }
