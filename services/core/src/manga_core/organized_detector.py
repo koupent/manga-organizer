@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from manga_core.original_store import MANIFEST_ENTRY, ORIGINALS_PREFIX
-from manga_core.viewer_contract import is_page_source, sequential_name
+from manga_core.viewer_contract import deleted_position, is_page_source, sequential_name
 from manga_core.volume_detector import format_series_dir, format_volume_name
 
 # 整理済みでない理由。画面がそのまま読む文字列なので、値そのものが公開契約
@@ -213,4 +213,9 @@ def _is_bundled(name: str) -> bool:
     許すのは ``.manga-organizer/`` 配下だけで、「ドットで始まる物は見逃す」には
     しない。``.thumbnails/`` を抱えた本は、この道具が作った物ではない。
     """
-    return name == MANIFEST_ENTRY or name.startswith(ORIGINALS_PREFIX)
+    return (
+        name == MANIFEST_ENTRY
+        or name.startswith(ORIGINALS_PREFIX)
+        # 復元用の退避ページは、編集画面と同じ規約で識別する。
+        or deleted_position(name) is not None
+    )

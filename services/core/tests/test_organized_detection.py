@@ -49,6 +49,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -64,7 +65,9 @@ from manga_api.analysis_job import analysis_work  # noqa: E402
 from manga_core import toc_analyzer  # noqa: E402
 from manga_core.file_organizer import FileOrganizer, ProcessResult  # noqa: E402
 from manga_core.input_expander import expand_inputs  # noqa: E402
+from manga_core.organized_detector import judge_organized  # noqa: E402
 from manga_core.original_store import MANIFEST_ENTRY, ORIGINALS_PREFIX  # noqa: E402
+from manga_core.page_splitter import apply_rows, scan_rows  # noqa: E402
 
 # 蔵書に入っている本の著者・作品名・巻数
 AUTHOR = "著者"
@@ -401,6 +404,48 @@ class OrganizedEntryWhitelistTest(OrganizedTestBase):
         self.assert_not_organized(found, EXTRA_ENTRIES)
         # どのファイルが余計なのかを名前で言う（#126）
         self.assertEqual(".thumbnails/001.jpg", found.organized_detail)
+
+    def test_deleting_and_restoring_pages_keeps_the_book_organized(self):
+        library = self.work_dir / "蔵書"
+        built = self.build_organized(library)
+        apply_rows(
+            built,
+            [replace(row, deleted=i == 1) for i, row in enumerate(scan_rows(built))],
+        )
+        found = self.only_book(self.analyze(library), built)
+        self.assert_organized(found)
+        self.assertEqual((AUTHOR, TITLE), (found.author, found.title))
+        self.assertEqual(built.name, found.output_name)
+        self.assertEqual(PAGE_COUNT - 1, found.image_count)
+        # 再整理で退避画像や編集記録を失わず、元の本をそのまま残す。
+        before = built.read_bytes()
+        organizer = FileOrganizer(output_directory=library, keep_originals=True)
+        organizer.set_manga_info(author=AUTHOR, title=TITLE)
+        results = organizer.process_single_archive(built)
+        self.assertEqual([], results)
+        self.assertEqual(before, built.read_bytes())
+
+        apply_rows(built, [replace(row, deleted=False) for row in scan_rows(built)])
+        restored = self.only_book(self.analyze(library), built)
+        self.assert_organized(restored)
+        self.assertEqual(PAGE_COUNT, restored.image_count)
+
+    def test_unrecognized_deleted_entries_are_not_allowed(self):
+        for entry in (
+            ".manga-organizer/deleted/002/page.jpg",
+            ".manga-organizer/deleted/000/.page.jpg",
+            ".manga-organizer/deleted/002/.page.txt",
+        ):
+            with self.subTest(entry=entry):
+                # 同じ本に足し続けず、各ケースの理由を個別に検証する。
+                verdict = judge_organized(
+                    Path(SERIES_DIR) / ORGANIZED_NAME,
+                    "",
+                    1,
+                    ["001.jpg", entry],
+                )
+                self.assertFalse(verdict.organized)
+                self.assertEqual(EXTRA_ENTRIES, verdict.reason)
 
 
 class OrganizedPageSequenceTest(OrganizedTestBase):

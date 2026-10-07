@@ -525,6 +525,56 @@ function producedTree(root: string): Record<string, string[]> {
 }
 
 test.describe("整理済みの本の見せ方", () => {
+  test("ページを削除した本も再投入で名前と整理・編集済みの状態を保つ", async ({
+    page,
+  }) => {
+    const folderName = "削除後の蔵書";
+    const archive = join(
+      sidecar.workDir,
+      folderName,
+      library.shelfSeries,
+      library.organized.split(/[\\/]/).pop()!,
+    );
+    execFileSync(
+      "uv",
+      [
+        "run",
+        "python",
+        "-c",
+        `
+import shutil, sys
+from pathlib import Path
+from dataclasses import replace
+from manga_core.page_splitter import apply_rows, scan_rows
+target = Path(sys.argv[2])
+target.parent.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(sys.argv[1], target)
+apply_rows(target, [replace(row, deleted=i == 1) for i, row in enumerate(scan_rows(target))], reviewed=True)
+`,
+        library.organized,
+        archive,
+      ],
+      { cwd: CORE_DIR },
+    );
+    await openPlan(page, "削除後の再投入");
+    await addFolder(page, folderName);
+    await waitForBooks(page, 1);
+    const row = bookRow(page, archive);
+    await expect(row).toHaveAttribute("data-organized", "true");
+    await expect(row).toHaveAttribute(
+      "data-output-name",
+      archive.split(/[\\/]/).pop()!,
+    );
+    await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
+    await expect(checkOf(row)).toHaveAttribute("aria-checked", "false");
+    await expect(row.getByTestId("plan-to-edit")).toHaveAttribute(
+      "data-edited",
+      "true",
+    );
+    await expect(page.getByTestId("organize-title")).toHaveValue("");
+    await expect(page.getByTestId("organize-author")).toHaveValue("");
+  });
+
   test("整理済みの本にだけ、整理済みと読める印が付く", async ({ page }) => {
     // Arrange / Act
     await preparePlan(page, "整理済みの印");
