@@ -65,8 +65,9 @@ async function resize(page: Page, edge: string, dx: number, dy: number) {
         }
       : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   await page.mouse.move(point.x, point.y);
-  await expect(page.getByTestId("crop-loupe")).toBeVisible();
+  await expect(page.getByTestId("crop-loupe")).toBeHidden();
   await page.mouse.down();
+  await expect(page.getByTestId("crop-loupe")).toBeVisible();
   await page.mouse.move(point.x + dx, point.y + dy, { steps: 5 });
   await page.mouse.up();
   await expect(page.getByTestId("crop-loupe")).toBeHidden();
@@ -105,7 +106,7 @@ test("4辺・4角を独立して調整でき、反対の辺と枠の移動は変
     start.x + start.width / 2 + 12,
     start.y + start.height / 2 + 12,
   );
-  await expect(page.getByTestId("crop-loupe")).toBeHidden();
+  await expect(page.getByTestId("crop-loupe")).toBeVisible();
   await page.mouse.up();
   const end = await frameOf(page);
   expect(end.width).toBeCloseTo(start.width, 0);
@@ -125,6 +126,8 @@ test("拡大表示はカーソル位置を2倍で映し、回転後も向きが�
     if (angle) await page.getByTestId("rotate").click();
     await handleOf(page, "w").hover();
     const loupe = page.getByTestId("crop-loupe");
+    await expect(loupe).toBeHidden();
+    await page.mouse.down();
     await expect(loupe).toBeVisible();
     await expect
       .poll(() =>
@@ -139,13 +142,78 @@ test("拡大表示はカーソル位置を2倍で映し、回転後も向きが�
     );
     const handle = (await handleOf(page, "w").boundingBox())!;
     const lens = (await loupe.boundingBox())!;
-    expect(handle.x < lens.x || handle.x > lens.x + lens.width).toBe(true);
-    await page
-      .getByTestId("cover-canvas")
-      .screenshot({ path: resolve(`.sandbox/crop-loupe-${angle}.png`) });
+    expect(lens.x + lens.width / 2).toBeCloseTo(handle.x + handle.width / 2, 0);
+    expect(lens.y + lens.height / 2).toBeCloseTo(
+      handle.y + handle.height / 2,
+      0,
+    );
+    await page.screenshot({
+      path: resolve(`.sandbox/crop-loupe-${angle}.png`),
+    });
+    await page.mouse.up();
     await page.mouse.move(5, 5);
     await expect(loupe).toBeHidden();
   }
+});
+
+test("Shiftで辺・角・枠を1/10ずつ動かせ、ドラッグ途中の切り替えでも飛ばない", async ({
+  page,
+}) => {
+  await open(page, "ドラッグ中の微調整");
+  for (const edge of ["w", "nw", "move"]) {
+    await page.getByTestId("crop-reset").click();
+    // 上下にも動かせる余地を作る。
+    await resize(page, "s", 0, -100);
+    const start = await frameOf(page);
+    const box =
+      edge === "move" ? start : (await handleOf(page, edge).boundingBox())!;
+    const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.down();
+    const boundaryOffset = () =>
+      page
+        .getByTestId("crop-loupe")
+        .locator("svg")
+        .evaluate((svg: SVGSVGElement) => {
+          const rect = svg.querySelector("rect")!;
+          return Number(rect.getAttribute("x")) - svg.viewBox.baseVal.x;
+        });
+    const offset = await boundaryOffset();
+    let travelled = 0;
+    let expected = 0;
+    for (const fine of [false, true, false]) {
+      if (fine) await page.keyboard.down("Shift");
+      travelled += 30;
+      expected += fine ? 3 : 30;
+      await page.mouse.move(point.x + travelled, point.y + travelled, {
+        steps: 3,
+      });
+      const frame = await frameOf(page);
+      expect(frame.x - start.x).toBeCloseTo(expected, 0);
+      if (edge !== "w") expect(frame.y - start.y).toBeCloseTo(expected, 0);
+      // 微調整で実カーソルが枠を追い越しても、拡大鏡は調整中の辺を追う。
+      expect(await boundaryOffset()).toBeCloseTo(offset, 0);
+      const lens = (await page.getByTestId("crop-loupe").boundingBox())!;
+      expect(lens.x + lens.width / 2).toBeCloseTo(point.x + travelled, 0);
+      if (fine) await page.keyboard.up("Shift");
+    }
+    await page.mouse.up();
+    await expect(page.getByTestId("crop-loupe")).toBeHidden();
+  }
+});
+
+test("画像と画面の端でも拡大鏡が切れず、ドラッグ終了で消える", async ({
+  page,
+}) => {
+  await open(page, "端での拡大表示");
+  await handleOf(page, "nw").hover();
+  await page.mouse.down();
+  await page.mouse.move(2, 2, { steps: 5 });
+  const lens = (await page.getByTestId("crop-loupe").boundingBox())!;
+  expect(lens).toEqual({ x: 8, y: 8, width: 148, height: 148 });
+  await expect(page.getByTestId("crop-loupe")).toBeVisible();
+  await page.mouse.up();
+  await expect(page.getByTestId("crop-loupe")).toBeHidden();
 });
 
 test("左辺・上辺から調整した範囲を保存し、開き直して復元する", async ({

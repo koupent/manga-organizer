@@ -269,7 +269,7 @@ export function CoverEditor({
           {/* 枠は掴めると分かって初めて使われる。説明は枠のある作業面の
             すぐ上に出す。枠が退いている間は言っても指す先が無い */}
           <span className="shrink-0 text-[12px] text-ink-faint">
-            枠の中を掴んで移動、辺・角でサイズ調整（操作箇所を2倍表示）。足りない所は縁の色で塗って2:3にします
+            枠内で移動、辺・角でサイズ調整。ドラッグ中は2倍表示、Shiftで微調整（移動量1/10）。余白は縁の色で補います
           </span>
           <div className="flex-1" />
           <span
