@@ -3,6 +3,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 
 /** viewer が表紙を描く枠の縦横比 */
 export const TARGET_RATIO = 2 / 3;
@@ -410,13 +411,19 @@ export function CropFrame({
   const [focus, setFocus] = useState<{
     x: number;
     y: number;
+    clientX: number;
+    clientY: number;
     width: number;
     height: number;
   } | null>(null);
   const dragRef = useRef<{
     handle: ResizeHandle | "move";
-    originX: number;
-    originY: number;
+    lastX: number;
+    lastY: number;
+    pointX: number;
+    pointY: number;
+    dx: number;
+    dy: number;
     start: CropRect;
   } | null>(null);
 
@@ -430,11 +437,13 @@ export function CropFrame({
     };
   };
 
-  const magnify = (event: ReactPointerEvent) => {
+  const magnify = (event: ReactPointerEvent, x: number, y: number) => {
     const box = rootRef.current!.getBoundingClientRect();
     setFocus({
-      x: clamp(event.clientX - box.left, 0, box.width),
-      y: clamp(event.clientY - box.top, 0, box.height),
+      x: clamp((x / image.width) * box.width, 0, box.width),
+      y: clamp((y / image.height) * box.height, 0, box.height),
+      clientX: event.clientX,
+      clientY: event.clientY,
       width: box.width,
       height: box.height,
     });
@@ -448,30 +457,56 @@ export function CropFrame({
     event.stopPropagation();
     // 掴んだ要素へ以後の動きを寄せる。枠の外へ出ても追随させたい
     event.currentTarget.setPointerCapture(event.pointerId);
+    const box = rootRef.current!.getBoundingClientRect();
+    const point = toImagePixels(
+      event.clientX - box.left,
+      event.clientY - box.top,
+    );
     dragRef.current = {
       handle,
-      originX: event.clientX,
-      originY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      pointX: point.dx,
+      pointY: point.dy,
+      dx: 0,
+      dy: 0,
       start: crop,
     };
-    if (handle !== "move") magnify(event);
+    magnify(event, point.dx, point.dy);
   };
 
   const continueDrag = (event: ReactPointerEvent) => {
     const drag = dragRef.current;
-    const edge = (event.target as HTMLElement).closest("[data-crop-handle]");
-    if (drag?.handle === "move" || (!drag && !edge)) setFocus(null);
-    else magnify(event);
     if (!drag) return;
+    // 移動ごとに速度を適用する。途中で Shift を押す・離す場合も枠が飛ばない。
+    const speed = event.shiftKey ? 0.1 : 1;
     const moved = toImagePixels(
-      event.clientX - drag.originX,
-      event.clientY - drag.originY,
+      (event.clientX - drag.lastX) * speed,
+      (event.clientY - drag.lastY) * speed,
     );
-    onChange(
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+    drag.dx += moved.dx;
+    drag.dy += moved.dy;
+    const next =
       drag.handle === "move"
-        ? movedCrop(drag.start, moved.dx, moved.dy, image)
-        : resizedCrop(drag.start, moved.dx, moved.dy, image, drag.handle),
-    );
+        ? movedCrop(drag.start, drag.dx, drag.dy, image)
+        : resizedCrop(drag.start, drag.dx, drag.dy, image, drag.handle);
+    onChange(next);
+    // 微調整中も、カーソルの下の拡大鏡には実際に動かした辺を映す。
+    const dx =
+      drag.handle === "move" || drag.handle.includes("w")
+        ? next.x - drag.start.x
+        : drag.handle.includes("e")
+          ? next.x + next.width - drag.start.x - drag.start.width
+          : drag.dx;
+    const dy =
+      drag.handle === "move" || drag.handle.includes("n")
+        ? next.y - drag.start.y
+        : drag.handle.includes("s")
+          ? next.y + next.height - drag.start.y - drag.start.height
+          : drag.dy;
+    magnify(event, drag.pointX + dx, drag.pointY + dy);
   };
 
   const endDrag = () => {
@@ -483,13 +518,7 @@ export function CropFrame({
   const upright = focus && rotatedSize(focus, angle);
 
   return (
-    <div
-      ref={rootRef}
-      className="pointer-events-none absolute inset-0"
-      onPointerLeave={() => {
-        if (!dragRef.current) setFocus(null);
-      }}
-    >
+    <div ref={rootRef} className="pointer-events-none absolute inset-0">
       <div
         data-testid="crop-frame"
         className="pointer-events-auto absolute touch-none cursor-move border-2 border-brand bg-brand/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
@@ -519,52 +548,63 @@ export function CropFrame({
           </span>
         ))}
       </div>
-      {focus && upright ? (
-        <div
-          data-testid="crop-loupe"
-          className="absolute overflow-hidden rounded border-2 border-white bg-canvas shadow-lg"
-          style={{
-            width: LOUPE_SIZE + 4,
-            height: LOUPE_SIZE + 4,
-            left: focus.x > focus.width / 2 ? 8 : undefined,
-            right: focus.x <= focus.width / 2 ? 8 : undefined,
-            top: focus.y > focus.height / 2 ? 8 : undefined,
-            bottom: focus.y <= focus.height / 2 ? 8 : undefined,
-          }}
-        >
-          <svg
-            role="img"
-            aria-label="調整箇所を2倍で表示"
-            className="h-full w-full"
-            viewBox={`${focus.x - LOUPE_SIZE / 4} ${focus.y - LOUPE_SIZE / 4} ${LOUPE_SIZE / 2} ${LOUPE_SIZE / 2}`}
-          >
-            <image
-              href={src}
-              x={(focus.width - upright.width) / 2}
-              y={(focus.height - upright.height) / 2}
-              width={upright.width}
-              height={upright.height}
-              transform={`rotate(${angle} ${focus.width / 2} ${focus.height / 2})`}
-            />
-            <rect
-              x={(crop.x / image.width) * focus.width}
-              y={(crop.y / image.height) * focus.height}
-              width={(crop.width / image.width) * focus.width}
-              height={(crop.height / image.height) * focus.height}
-              className="fill-none stroke-brand"
-              strokeWidth="1"
-            />
-            <path
-              d={`M ${focus.x - 4} ${focus.y} h 8 M ${focus.x} ${focus.y - 4} v 8`}
-              stroke="white"
-              strokeWidth="0.5"
-            />
-          </svg>
-          <span className="absolute right-1 bottom-1 rounded bg-canvas/80 px-1 text-[11px] text-ink">
-            2×
-          </span>
-        </div>
-      ) : null}
+      {/* 画像の端でも切れないよう、ダイアログの外に描画する。入力は枠へ通す。 */}
+      {focus && upright
+        ? createPortal(
+            <div
+              data-testid="crop-loupe"
+              aria-hidden
+              className="pointer-events-none fixed z-[60] overflow-hidden rounded border-2 border-white bg-canvas shadow-lg"
+              style={{
+                width: LOUPE_SIZE + 4,
+                height: LOUPE_SIZE + 4,
+                left: clamp(
+                  focus.clientX - (LOUPE_SIZE + 4) / 2,
+                  8,
+                  window.innerWidth - LOUPE_SIZE - 12,
+                ),
+                top: clamp(
+                  focus.clientY - (LOUPE_SIZE + 4) / 2,
+                  8,
+                  window.innerHeight - LOUPE_SIZE - 12,
+                ),
+              }}
+            >
+              <svg
+                role="img"
+                aria-label="調整箇所を2倍で表示"
+                className="h-full w-full"
+                viewBox={`${focus.x - LOUPE_SIZE / 4} ${focus.y - LOUPE_SIZE / 4} ${LOUPE_SIZE / 2} ${LOUPE_SIZE / 2}`}
+              >
+                <image
+                  href={src}
+                  x={(focus.width - upright.width) / 2}
+                  y={(focus.height - upright.height) / 2}
+                  width={upright.width}
+                  height={upright.height}
+                  transform={`rotate(${angle} ${focus.width / 2} ${focus.height / 2})`}
+                />
+                <rect
+                  x={(crop.x / image.width) * focus.width}
+                  y={(crop.y / image.height) * focus.height}
+                  width={(crop.width / image.width) * focus.width}
+                  height={(crop.height / image.height) * focus.height}
+                  className="fill-none stroke-brand"
+                  strokeWidth="1"
+                />
+                <path
+                  d={`M ${focus.x - 4} ${focus.y} h 8 M ${focus.x} ${focus.y - 4} v 8`}
+                  stroke="white"
+                  strokeWidth="0.5"
+                />
+              </svg>
+              <span className="absolute right-1 bottom-1 rounded bg-canvas/80 px-1 text-[11px] text-ink">
+                2×
+              </span>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
