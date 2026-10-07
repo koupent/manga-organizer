@@ -45,14 +45,29 @@ const frameOf = async (page: Page) =>
   (await page.getByTestId("crop-frame").boundingBox())!;
 async function resize(page: Page, edge: string, dx: number, dy: number) {
   const box = (await handleOf(page, edge).boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const frame = await frameOf(page);
+  // 辺は中央の目印を避け、枠線そのものを掴む。角は目印を掴む。
+  const point =
+    edge.length === 1
+      ? {
+          x:
+            edge === "w"
+              ? frame.x + 1
+              : edge === "e"
+                ? frame.x + frame.width - 1
+                : frame.x + frame.width * 0.3,
+          y:
+            edge === "n"
+              ? frame.y + 1
+              : edge === "s"
+                ? frame.y + frame.height - 1
+                : frame.y + frame.height * 0.3,
+        }
+      : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(point.x, point.y);
   await expect(page.getByTestId("crop-loupe")).toBeVisible();
   await page.mouse.down();
-  await page.mouse.move(
-    box.x + box.width / 2 + dx,
-    box.y + box.height / 2 + dy,
-    { steps: 5 },
-  );
+  await page.mouse.move(point.x + dx, point.y + dy, { steps: 5 });
   await page.mouse.up();
   await expect(page.getByTestId("crop-loupe")).toBeHidden();
 }

@@ -357,38 +357,42 @@ type CropFrameProps = {
 const HANDLES: { edge: ResizeHandle; position: string; cursor: string }[] = [
   {
     edge: "n",
-    position: "top-0 right-4 left-4 h-3",
+    position: "-top-0.5 right-3.5 left-3.5 h-3",
     cursor: "cursor-ns-resize",
   },
   {
     edge: "s",
-    position: "bottom-0 right-4 left-4 h-3",
+    position: "-bottom-0.5 right-3.5 left-3.5 h-3",
     cursor: "cursor-ns-resize",
   },
   {
     edge: "w",
-    position: "left-0 top-4 bottom-4 w-3",
+    position: "-left-0.5 top-3.5 bottom-3.5 w-3",
     cursor: "cursor-ew-resize",
   },
   {
     edge: "e",
-    position: "right-0 top-4 bottom-4 w-3",
+    position: "-right-0.5 top-3.5 bottom-3.5 w-3",
     cursor: "cursor-ew-resize",
   },
-  { edge: "nw", position: "top-0 left-0 size-4", cursor: "cursor-nwse-resize" },
+  {
+    edge: "nw",
+    position: "-top-0.5 -left-0.5 size-4",
+    cursor: "cursor-nwse-resize",
+  },
   {
     edge: "ne",
-    position: "top-0 right-0 size-4",
+    position: "-top-0.5 -right-0.5 size-4",
     cursor: "cursor-nesw-resize",
   },
   {
     edge: "sw",
-    position: "bottom-0 left-0 size-4",
+    position: "-bottom-0.5 -left-0.5 size-4",
     cursor: "cursor-nesw-resize",
   },
   {
     edge: "se",
-    position: "bottom-0 right-0 size-4",
+    position: "-bottom-0.5 -right-0.5 size-4",
     cursor: "cursor-nwse-resize",
   },
 ];
