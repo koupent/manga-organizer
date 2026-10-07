@@ -20,9 +20,9 @@ type SplitCardProps = {
   /** 前後の送りボタンで、いま指している行か（#131） */
   focused: boolean;
   checked: boolean;
-  /** ①で分ける対象（まだ割っていない横長）か（#153） */
+  /** 選んだ種類の分割対象か */
   target: boolean;
-  /** 見開きのまま残すと決めた横長（②で作った見開き）か */
+  /** 結合・復元して 1 枚にした画像か */
   keptWhole: boolean;
   /** 2 列ぶんを占める横長か */
   wide: boolean;
@@ -42,7 +42,7 @@ type SplitCardProps = {
 };
 
 /**
- * ①「単ページにする」の 1 行ぶんのカード（#153）。
+ * 「ページを分割」の 1 行ぶんのカード。
  *
  * **ファイル名は受け取らないし、出さない。** 割った対は 2 つの名前を持ち、
  * まだ割っていない見開きは 1 つしか持たない。どちらを出しても「元画像」と
@@ -179,9 +179,9 @@ export function SplitCard({
         {keptWhole && !checked ? (
           <Badge
             data-testid="split-kept-whole"
-            title="②で作った見開きです。「すべて分割」では分けません"
+            title="結合・復元した画像です。分割対象で選ぶと一括分割できます"
           >
-            見開き
+            結合・復元済み
           </Badge>
         ) : null}
         <div className="flex-1" />

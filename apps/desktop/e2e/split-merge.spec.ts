@@ -122,7 +122,9 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     // Assert - 3 枚目は 2 枚目のカードに吸い込まれ、2 列ぶんの見開きになる
     await expect(page.locator('[data-testid="merge-card"]')).toHaveCount(4);
     await expect(card(page, 1)).toHaveAttribute("data-kind", "joined");
-    await expect(card(page, 1).getByTestId("merge-undo")).toHaveText("解く");
+    await expect(card(page, 1).getByTestId("merge-undo")).toHaveText(
+      "結合を取り消す",
+    );
     await expect(page.getByTestId("split-status")).toHaveText(
       "1 組を 1 ページに結合します → 全 4 ページ",
     );
@@ -169,17 +171,9 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     );
     await expect(page.getByTestId("split-confirm")).toBeDisabled();
 
-    // Assert - 保存した見開きは ✂ で解ける（#154）。やめれば元のまま
-    await card(page, 1).getByTestId("merge-undo").click();
-    await expect(card(page, 1).getByTestId("merge-badge")).toHaveText(
-      "分けます",
-    );
-    await expect(page.getByTestId("split-status")).toHaveText(
-      "1 枚を 2 ページに分けます → 全 4 ページ",
-    );
-    await expect(page.getByTestId("split-confirm")).toBeEnabled();
-    await card(page, 1).getByTestId("merge-undo").click();
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    // 保存済みの画像の分割は、分割側で行う。
+    await expect(card(page, 1).getByTestId("merge-undo")).toHaveCount(0);
+    await expect(page.getByTestId("unmerge-all")).toHaveCount(0);
 
     // Assert - 結合した見開きは①の対象にしない（#151 #153）。対象にすると、
     // ①の「すべて分割」が②で結合したものを壊す。分けたければ手で選べる
@@ -189,7 +183,9 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await page.getByTestId("split-step-split").click();
     const spread = page.locator('[data-testid="split-card"][data-index="1"]');
     await expect(spread).toHaveAttribute("data-target", "false");
-    await expect(spread.getByTestId("split-kept-whole")).toHaveText("見開き");
+    await expect(spread.getByTestId("split-kept-whole")).toHaveText(
+      "結合・復元済み",
+    );
     await expect(page.getByTestId("split-all")).toBeDisabled();
     await spread.getByTestId("split-check").click();
     await expect(spread).toHaveAttribute("data-checked", "true");
@@ -475,13 +471,20 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     ).trim();
     expect(after, "戻したページが割る前の 1 枚と違う").toBe(before);
 
-    // Assert - 戻した見開きは②で解ける。すべて解くも同じ
+    // 復元した見開きも、分割側で対象を選べば一括分割できる。
     await expect(card(page, 0)).toHaveAttribute("data-kind", "spread");
-    await page.getByTestId("unmerge-all").click();
-    await expect(card(page, 0).getByTestId("merge-badge")).toHaveText(
-      "分けます",
+    await expect(page.getByTestId("unmerge-all")).toHaveCount(0);
+    await page.getByTestId("split-step-split").click();
+    await page.getByTestId("split-source").click();
+    await page
+      .getByRole("option", { name: "結合・復元した画像", exact: true })
+      .click();
+    await page.getByTestId("split-all").click();
+    await expect(page.getByTestId("split-card").first()).toHaveAttribute(
+      "data-checked",
+      "true",
     );
-    await expect(page.getByTestId("unmerge-all")).toBeDisabled();
+    await expect(page.getByTestId("split-all")).toBeDisabled();
   });
 
   test("余白を挟んだ 2 枚は単ページとして並び、相手はもう半分だけ", async ({

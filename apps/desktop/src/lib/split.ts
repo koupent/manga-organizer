@@ -42,7 +42,7 @@ export type SplitScanRow = {
   displaced: boolean;
   /**
    * 見開きのまま残すと決めたページか。割ってから戻した（#138）・2 ページを
-   * 結合した（#139）ページ。①の「すべて分割」から外す（#151 #153）
+   * 結合した（#139）ページ。「結合・復元した画像」として分割対象を選べる
    */
   kept_whole: boolean;
   /** 次の行と継ぎ目の色がつながっていて、2 枚で 1 枚の見開きらしいか（#149） */
@@ -83,7 +83,7 @@ export type SplitRow = {
   source: string;
   /** 見開き（横長）と判定した行 */
   detected: boolean;
-  /** 見開きのまま残すと決めた行（kept_whole）。①の「すべて分割」から外す */
+  /** 結合・復元して 1 枚にした行（kept_whole） */
   keptWhole: boolean;
   checked: boolean;
   /** 割る位置。元画像の画素で持ち、描画のときだけ割合に直す */
@@ -210,8 +210,7 @@ export function clampSplit(x: number, width: number): number {
  * 割れる。既に割ってある行は比が閾値の下でもチェックを入れる。外れていたら、
  * 開き直しただけで「割る前へ戻します」になってしまう。
  *
- * 割ってから戻した・結合した見開き（kept_whole）は、見開きとして扱うが
- * ①の「すべて分割」からは外す（#151 #153）。
+ * 割ってから戻した・結合した画像（kept_whole）は、元から横長の画像と分けて扱う。
  */
 export function rowsFrom(result: SplitScanResult): SplitRow[] {
   return result.rows.map((row) => {
@@ -281,18 +280,22 @@ export function canMergeNext(rows: SplitRow[], index: number): boolean {
   );
 }
 
-/** 画面のステップ（#153）。①単ページにする・②見開きにする */
+/** 画面のモード。ページを分割・ページを結合 */
 export type Step = "split" | "merge";
+export type SplitSource = "original" | "edited" | "all";
 
 /**
- * ①で分ける対象（#153）。まだ割っていない横長のページ。
- *
- * ②で作った見開き（結合した・分割を戻した、kept_whole）は除く。縦横比だけでは
- * 「まだ分けていない横長」と見分けが付かず、混ぜると①の「すべて分割」が②の
- * 結果を壊す。
+ * 選んだ種類で、まだ分割していない画像。既定では元から横長の画像だけを対象にする。
+ * 結合・復元した画像は記録で区別し、縦横比にかかわらず対象にできる。
  */
-export function isSplitTarget(row: SplitRow): boolean {
-  return row.detected && !row.keptWhole && !row.stored.checked;
+export function isSplitTarget(
+  row: SplitRow,
+  source: SplitSource = "original",
+): boolean {
+  if (row.stored.checked || row.mergeNext) return false;
+  return row.keptWhole
+    ? source !== "original"
+    : row.detected && source !== "edited";
 }
 
 /**
@@ -330,10 +333,13 @@ export function firstStep(rows: SplitRow[]): Step {
     : "merge";
 }
 
-/** ①の対象をすべて分ける（中央で） */
-export function splitAll(rows: SplitRow[]): SplitRow[] {
+/** 選んだ種類の対象をすべて分ける */
+export function splitAll(
+  rows: SplitRow[],
+  source: SplitSource = "original",
+): SplitRow[] {
   return rows.map((row) =>
-    isSplitTarget(row) ? { ...row, checked: true } : row,
+    isSplitTarget(row, source) ? { ...row, checked: true } : row,
   );
 }
 
@@ -350,30 +356,6 @@ export function mergeAll(rows: SplitRow[]): SplitRow[] {
   return next;
 }
 
-/** ②で解ける見開きがあるか。すべて解くを押せるかを決める */
-export function canUnmerge(row: SplitRow): boolean {
-  return (
-    row.mergeNext ||
-    (row.names.length === 2 && !row.checked) ||
-    (row.names.length === 1 && isWide(row) && !row.checked)
-  );
-}
-
-/**
- * ②の見開きをすべて解く（#154）。結合すると決めた 2 枚はやめ、割る前へ戻すと
- * 決めた対は割ったままにし、横長のページは中央で分ける。解く対象は縦横比
- * （横長かどうか）だけで決める
- */
-export function unmergeAll(rows: SplitRow[]): SplitRow[] {
-  return rows.map((row) =>
-    !canUnmerge(row)
-      ? row
-      : row.mergeNext
-        ? { ...row, mergeNext: false }
-        : { ...row, checked: true },
-  );
-}
-
 /**
  * ②で格子に並べる 1 枚ぶん（#154）。
  *
@@ -387,7 +369,7 @@ export type MergeUnit = {
    * - page: 1 ページ
    * - candidate: 結合の候補。結合した後の姿で出す
    * - joined: 結合すると決めた 2 枚
-   * - spread: 横長のページ（見開き）。✂ で解ける
+   * - spread: 保存済みの横長のページ（見開き）
    */
   kind: "page" | "candidate" | "joined" | "spread";
   /** 先頭の行 */
@@ -475,8 +457,11 @@ export function joinedRows(
 }
 
 /** 分割の対象になりうる行。判定に漏れても、手で入れれば対象になる */
-export function isCandidate(row: SplitRow): boolean {
-  return row.detected || row.checked;
+export function isCandidate(
+  row: SplitRow,
+  source: SplitSource = "original",
+): boolean {
+  return isSplitTarget(row, source) || row.checked;
 }
 
 /** 保留を全部捨て、開いたときの姿へ戻す */

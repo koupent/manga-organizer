@@ -1,8 +1,7 @@
-import { Link2, Scissors } from "lucide-react";
+import { Link2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { fitInside } from "../lib/stage";
 import { Badge } from "./ui/badge";
-import { SplitLine } from "./SplitLine";
 
 type Picture = { imageUrl: string; width: number; height: number };
 
@@ -42,13 +41,11 @@ type MergeCardProps = {
   partner?: Picture;
   /** 割った対を戻す候補で、継ぎ目を点線で示す位置（page の座標） */
   seamX?: number;
-  /** 見開きを中央などで分けると決めたとき、その位置と動かし方 */
-  cut?: { x: number; onMove: (x: number) => void };
   pick: PickRole;
   /** 候補を結合する */
   onMerge?: () => void;
-  /** 結合をやめる・見開きを解く・解くのをやめる */
-  onUnmerge?: () => void;
+  /** 未保存の結合を取り消す */
+  onCancelMerge?: () => void;
   /** 「結合…」で相手を選び始める */
   onPick?: () => void;
   /** 相手に選ぶ */
@@ -76,10 +73,9 @@ export function MergeCard({
   page,
   partner,
   seamX,
-  cut,
   pick,
   onMerge,
-  onUnmerge,
+  onCancelMerge,
   onPick,
   onChoose,
   onCancelPick,
@@ -112,9 +108,7 @@ export function MergeCard({
       ? { text: "結合候補", className: "bg-warn text-canvas" }
       : kind === "joined"
         ? { text: "結合する", className: "bg-brand text-brand-ink" }
-        : cut
-          ? { text: "分けます", className: "bg-brand text-brand-ink" }
-          : null;
+        : null;
 
   return (
     <div
@@ -175,15 +169,6 @@ export function MergeCard({
               style={{ left: seam - 1 }}
             />
           ) : null}
-          {cut ? (
-            <SplitLine
-              label={label}
-              x={cut.x}
-              width={page.width}
-              displayWidth={display.width}
-              onChange={cut.onMove}
-            />
-          ) : null}
         </div>
         {/* 絵の上に載るので、半透明の地では読めない。地を塗りつぶす */}
         {badge ? (
@@ -222,7 +207,7 @@ export function MergeCard({
         >
           {label}
         </span>
-        {kind === "spread" && !cut ? (
+        {kind === "spread" ? (
           <Badge data-testid="merge-spread">見開き</Badge>
         ) : null}
         <div className="flex-1" />
@@ -254,20 +239,15 @@ export function MergeCard({
             結合
           </button>
         ) : null}
-        {pick !== "self" && onUnmerge ? (
+        {pick !== "self" && onCancelMerge ? (
           <button
             type="button"
             data-testid="merge-undo"
-            title={
-              cut
-                ? `${label} ページを分けるのをやめる`
-                : `${label} ページの見開きを解く`
-            }
+            title={`${label} ページの未保存の結合を取り消す`}
             className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap text-ink-muted hover:bg-surface-2 hover:text-ink"
-            onClick={onUnmerge}
+            onClick={onCancelMerge}
           >
-            {cut ? null : <Scissors className="size-3.5" />}
-            {cut ? "やめる" : "解く"}
+            結合を取り消す
           </button>
         ) : null}
         {pick === "none" && onPick ? (
