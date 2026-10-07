@@ -9,7 +9,8 @@ import threading
 
 from PIL import Image, ImageOps
 
-WIDTHS = (160, 240, 360, 520)
+# 高密度画面で 2 列分に広がる見開きも、表示幅に足りる解像度で取得できるようにする。
+WIDTHS = (160, 240, 360, 520, 800, 1600, 3200)
 QUALITY = 82
 CACHE_LIMIT = 800
 

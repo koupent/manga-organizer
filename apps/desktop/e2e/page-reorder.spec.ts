@@ -35,9 +35,15 @@ test.describe("ページ並べ替え", () => {
     await expect(cards).toHaveCount(3);
     await expect(cards.first()).toHaveAttribute("data-name", "001.jpg");
     const firstThumb = cards.first().locator("img");
-    // サイドカーは要求幅を (160, 240, 360, 520) の段に丸める。
-    // 既定の表示サイズ 160px はその最初の段に載る
-    await expect(firstThumb).toHaveJSProperty("naturalWidth", 160);
+    await expect
+      .poll(() =>
+        firstThumb.evaluate(
+          (image: HTMLImageElement) =>
+            image.naturalWidth >= image.getBoundingClientRect().width &&
+            image.naturalWidth > 0,
+        ),
+      )
+      .toBe(true);
 
     // Act - 1 枚目を 3 枚目の位置へドラッグする
     const source = cards.nth(0);
@@ -98,11 +104,21 @@ test.describe("ページ並べ替え", () => {
         `&archive=${encodeURIComponent(archive)}`,
     );
     const thumb = page.getByTestId("editable-page").first().locator("img");
-    // 既定の表示サイズ 160px は、サイドカーの段 (160, 240, 360, 520) の最初に載る
-    await expect(thumb).toHaveJSProperty("naturalWidth", 160);
+    await expect
+      .poll(() =>
+        thumb.evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
+      .toBeGreaterThan(0);
+    const initialWidth = await thumb.evaluate(
+      (image: HTMLImageElement) => image.naturalWidth,
+    );
 
     await page.getByTestId("split-card-width").fill("520");
-    await expect(thumb).toHaveJSProperty("naturalWidth", 520);
+    await expect
+      .poll(() =>
+        thumb.evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
+      .toBeGreaterThan(initialWidth);
   });
 });
 

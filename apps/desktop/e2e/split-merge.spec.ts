@@ -247,6 +247,82 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
 }
 
 test.describe("ページ分割・結合: 結合の候補（#149 #153）", () => {
+  for (const before of [false, true]) {
+    test(`自動候補の${before ? "前" : "後"}のページから別の相手を選び、候補より手動結合を優先する`, async ({
+      page,
+    }) => {
+      const archive = writeSeamBook(`候補の相手を変更-${before}.zip`);
+      if (before) {
+        runPython(
+          `import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+ pages = [z.read(name) for name in ('003.png', '001.png', '002.png')]
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+ for index, data in enumerate(pages, 1):
+  z.writestr(f'{index:03d}.png', data)`,
+          archive,
+        );
+      }
+      const source = before ? 0 : 2;
+      const partner = 1;
+      const candidate = before ? 1 : 0;
+      await open(page, archive, 2);
+      await page.getByTestId("page-direction").setChecked(before);
+      await expect(card(page, candidate)).toHaveAttribute(
+        "data-kind",
+        "candidate",
+      );
+
+      await startPick(page, source);
+      await expect(page.getByTestId("merge-card")).toHaveCount(3);
+      await expect(card(page, partner)).toHaveAttribute("data-pick", "partner");
+      await expect(card(page, before ? 2 : 0)).toHaveAttribute(
+        "data-pick",
+        "dimmed",
+      );
+      await expect(page.getByTestId("split-status")).toHaveText(
+        "変更はありません",
+      );
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("merge-card")).toHaveCount(2);
+      await expect(card(page, candidate)).toHaveAttribute(
+        "data-kind",
+        "candidate",
+      );
+
+      await startPick(page, source);
+      await card(page, partner).getByTestId("merge-partner").click();
+      await expect(card(page, before ? 0 : 1)).toHaveAttribute(
+        "data-kind",
+        "joined",
+      );
+      await expect(page.getByTestId("split-step-merge")).toHaveText(
+        "ページを結合1",
+      );
+      await expect(page.getByTestId("merge-all")).toBeDisabled();
+      await page.getByTestId("undo").click();
+      await expect(card(page, candidate)).toHaveAttribute(
+        "data-kind",
+        "candidate",
+      );
+      await startPick(page, source);
+      await card(page, partner).getByTestId("merge-partner").click();
+      await page.getByTestId("split-confirm").click();
+      await expect(page.getByTestId("split-page-count")).toHaveText("2 ページ");
+      expect(Object.values(pageSizesOf(archive))).toEqual(
+        before
+          ? [
+              [1200, 900],
+              [600, 900],
+            ]
+          : [
+              [600, 900],
+              [1200, 900],
+            ],
+      );
+    });
+  }
+
   test("結合候補も最後から最初へ、最初から最後へ循環する", async ({ page }) => {
     const archive = writeSeamBook("結合候補の循環.zip");
     runPython(

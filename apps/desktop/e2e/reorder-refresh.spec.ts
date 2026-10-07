@@ -93,9 +93,10 @@ async function paintedColoursOf(page: Page): Promise<string[]> {
  * 一度読んで決め付けると、正しい実装を「まだ届いていない」瞬間で落とす。
  */
 async function expectPainted(page: Page, expected: string[], message: string) {
-  await expect
-    .poll(() => paintedColoursOf(page), { message, timeout: 20_000 })
-    .toEqual(expected);
+  // 読み直し中は画像要素の表示も入れ替わるので、撮影から再試行する。
+  await expect(async () => {
+    expect(await paintedColoursOf(page), message).toEqual(expected);
+  }).toPass({ timeout: 20_000 });
 }
 
 /** ページ並べ替えを対象付きで開く */

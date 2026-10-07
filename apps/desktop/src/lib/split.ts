@@ -413,15 +413,19 @@ export type PageUnit = {
   via?: "merge" | "rejoin";
 };
 
-/** 行から共通の並びを組み立てる */
-export function pageUnits(rows: SplitRow[]): PageUnit[] {
+/** 行から共通の並びを組み立てる。手動で相手を選ぶ間は未確定の候補を個別に出す */
+export function pageUnits(
+  rows: SplitRow[],
+  groupCandidates = true,
+): PageUnit[] {
   const units: PageUnit[] = [];
   rows.forEach((row, index) => {
     const previous = index - 1;
     // 結合する・結合の候補の 2 枚目は、1 枚目のカードに一緒に描く
     if (
       previous >= 0 &&
-      (rows[previous].mergeNext || isMergeCandidate(rows, previous))
+      (rows[previous].mergeNext ||
+        (groupCandidates && isMergeCandidate(rows, previous)))
     ) {
       return;
     }
@@ -429,7 +433,7 @@ export function pageUnits(rows: SplitRow[]): PageUnit[] {
     if (row.names.length === 2) {
       if (!row.checked) {
         units.push({ key, kind: "joined", row: index, via: "rejoin" });
-      } else if (isRejoinCandidate(row)) {
+      } else if (groupCandidates && isRejoinCandidate(row)) {
         units.push({ key, kind: "candidate", row: index, via: "rejoin" });
       } else {
         units.push({ key: `${key}:0`, kind: "page", row: index, part: 0 });
@@ -439,7 +443,7 @@ export function pageUnits(rows: SplitRow[]): PageUnit[] {
       units.push({ key, kind: "spread", row: index });
     } else if (row.mergeNext) {
       units.push({ key, kind: "joined", row: index, via: "merge" });
-    } else if (isMergeCandidate(rows, index)) {
+    } else if (groupCandidates && isMergeCandidate(rows, index)) {
       units.push({ key, kind: "candidate", row: index, via: "merge" });
     } else {
       units.push({ key, kind: "page", row: index });

@@ -43,7 +43,7 @@ import { MergeCard, type PickRole } from "./MergeCard";
 import { SplitCard } from "./SplitCard";
 import { SplitDialog } from "./SplitDialog";
 import { useSplitJob } from "../lib/split-job";
-import { useBoxSize } from "../lib/stage";
+import { fitInside, useBoxSize } from "../lib/stage";
 import { cn } from "../lib/utils";
 import {
   firstStep,
@@ -507,11 +507,18 @@ export function FileEditor({
         : client.imageUrl(archive, row.names[0])
     }&v=${reloadKey}`;
 
-  const pictureOf = (row: SplitRow) => ({
+  const pictureOf = (row: SplitRow, boxWidth = columnWidth) => ({
     imageUrl:
       row.source === "original"
         ? imageUrlOf(row)
-        : `${client.thumbnailUrl(archive, row.names[0], cardWidth)}&v=${reloadKey}`,
+        : `${client.thumbnailUrl(
+            archive,
+            row.names[0],
+            Math.ceil(
+              fitInside(row, { width: boxWidth, height: pictureHeight }).width *
+                window.devicePixelRatio,
+            ),
+          )}&v=${reloadKey}`,
     width: row.width,
     height: row.height,
   });
@@ -521,13 +528,14 @@ export function FileEditor({
    * x から右、後の左半分は x まで）
    */
   const halfOf = (row: SplitRow, part: 0 | 1) => ({
-    imageUrl: `${client.thumbnailUrl(archive, row.names[part], cardWidth)}&v=${reloadKey}`,
+    imageUrl: `${client.thumbnailUrl(archive, row.names[part], Math.ceil(columnWidth * window.devicePixelRatio))}&v=${reloadKey}`,
     width: part === 0 ? row.width - row.x : row.x,
     height: row.height,
   });
 
   // 同じページの配列から両モードを描く。操作だけを切り替える
-  const units = pageUnits(rows).filter(
+  const manualUnits = pageUnits(rows, false);
+  const units = (picking === null ? pageUnits(rows) : manualUnits).filter(
     (unit) => showDeleted || !rows[unit.row].deleted,
   );
   const pageGroups = units.map((unit) => {
@@ -566,6 +574,13 @@ export function FileEditor({
     const wide =
       unit.kind === "spread" || partner !== null || unit.via === "rejoin";
     const span = wide && columns >= 2;
+    const boxWidth = span ? columnWidth * 2 + GRID_GAP : columnWidth;
+    // 保存後の見開きも、描画する幅に合う解像度で取得する。
+    const pagePicture =
+      unit.part !== undefined
+        ? halfOf(row, unit.part)
+        : pictureOf(row, partner ? columnWidth : boxWidth);
+    const partnerPicture = partner ? pictureOf(partner) : undefined;
     const label = row.deleted
       ? "削除済み"
       : unit.part !== undefined
@@ -657,14 +672,10 @@ export function FileEditor({
               keptWhole={row.keptWhole}
               wide={wide}
               span={span}
-              boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
+              boxWidth={boxWidth}
               boxHeight={pictureHeight}
-              page={
-                unit.part !== undefined
-                  ? halfOf(row, unit.part)
-                  : pictureOf(row)
-              }
-              partner={partner ? pictureOf(partner) : undefined}
+              page={pagePicture}
+              partner={partnerPicture}
               joined={row.mergeNext || (row.stored.checked && !row.checked)}
               candidate={unit.kind === "candidate" && merging}
               x={row.x}
@@ -682,14 +693,10 @@ export function FileEditor({
               focused={focus === index && unit.part === undefined}
               kind={unit.kind}
               span={span}
-              boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
+              boxWidth={boxWidth}
               boxHeight={pictureHeight}
-              page={
-                unit.part !== undefined
-                  ? halfOf(row, unit.part)
-                  : pictureOf(row)
-              }
-              partner={partner ? pictureOf(partner) : undefined}
+              page={pagePicture}
+              partner={partnerPicture}
               seamX={unit.via === "rejoin" ? row.x : undefined}
               pick={role}
               onMerge={
@@ -705,7 +712,7 @@ export function FileEditor({
                     : undefined
               }
               onPick={
-                partnersOf(rows, units, unit).length > 0
+                partnersOf(rows, manualUnits, unit).length > 0
                   ? () => setPicking(unit.key)
                   : undefined
               }
