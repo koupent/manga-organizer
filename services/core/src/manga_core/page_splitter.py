@@ -23,6 +23,7 @@ import io
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from math import sqrt
 from pathlib import Path
 
 from PIL import Image
@@ -52,7 +53,11 @@ from manga_core.page_reorder import (
     ProgressCallback,
     ZipPageEditor,
 )
-from manga_core.viewer_contract import VIEWER_IMAGE_EXTENSIONS, output_suffix
+from manga_core.viewer_contract import (
+    VIEWER_IMAGE_EXTENSIONS,
+    deleted_position,
+    output_suffix,
+)
 
 # 割った半分を書き戻す形式。鍵は viewer が読める拡張子の全部で、値は Pillow が
 # その拡張子に対して名乗る形式名。ここに無い拡張子は PNG へ移すので、抜けが
@@ -87,12 +92,14 @@ _CHANGE_JOINED = "joined"
 
 # 結合の候補を探す継ぎ目の比べ方（#149）。端を縦に _SEAM_POINTS 点へ縮め、
 # 色の差がどのチャンネルも _SEAM_TOLERANCE 以内の点を「つながっている」と
-# みなす。その割合が _SEAM_MATCH 以上なら候補にする。候補は示すだけで保留には
+# みなす。その割合か、平均を引いた正規化相関が閾値以上なら候補にする。
+# 候補は示すだけで保留には
 # しないので、取りこぼすより拾いすぎる側へ寄せてある
 _SEAM_POINTS = 64
-# 読み取り時の小さな上下ズレ（高さの約 3%）は、端の比較位置を合わせて拾う。
+# 読み取り時の上下ズレ（高さの約 6%）は、端の比較位置を合わせて拾う。
 # 候補の判定だけに使い、保存する画像の位置は動かさない。
-_SEAM_SHIFT = 2
+_SEAM_SHIFT = 4
+_SEAM_CORRELATION = 0.93
 _SEAM_TOLERANCE = 32
 _SEAM_MATCH = 0.8
 # 端の点のうちこの割合以上が一色なら、無地の端（余白・塗りつぶし）として
@@ -156,6 +163,7 @@ class SplitRow:
     kept_whole: bool = False
     merge_suggested: bool = False
     rejoin_suggested: bool = False
+    deleted: bool = False
 
 
 @dataclass(frozen=True)
@@ -175,6 +183,7 @@ class SplitIntent:
 
     names: tuple[str, ...]
     split: SplitPosition | None
+    deleted: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,6 +196,7 @@ class MergeIntent:
     """
 
     names: tuple[str, str]
+    deleted: bool = False
 
 
 @dataclass(frozen=True)
@@ -232,7 +242,7 @@ def scan_rows(
     """ページ順に行を組み立てる。割った対は 1 行へ畳む"""
     path = Path(archive_path)
     try:
-        editor = ZipPageEditor(path)
+        editor = ZipPageEditor(path, include_deleted=True)
     except PageReorderError as error:
         raise PageSplitError(str(error)) from error
     try:
@@ -269,7 +279,7 @@ def apply_rows(
     """
     path = Path(archive_path)
     try:
-        editor = ZipPageEditor(path)
+        editor = ZipPageEditor(path, include_deleted=True)
     except PageReorderError as error:
         raise PageSplitError(str(error)) from error
     try:
@@ -279,7 +289,9 @@ def apply_rows(
         changes: Counter[str] = Counter()
         for row in rows:
             planned = _apply_row(editor, path, row, extras, allow_reorder)
-            outputs.extend(planned.outputs)
+            outputs.extend(
+                replace(output, deleted=row.deleted) for output in planned.outputs
+            )
             dropped.extend(planned.dropped)
             extras = planned.extras
             changes[planned.change] += 1
@@ -287,24 +299,32 @@ def apply_rows(
             # 分割・結合したこと（#143）を記録に残す。何も変わらない確定では
             # 残さない。書き足すものがあると、それだけで書き直しになる
             extras = plan_edit(path, "split", planned=extras)
+        visible_count = sum(not output.deleted for output in outputs)
+        existing_deleted = {page.name: page.deleted for page in editor.pages}
+        visibility_changed = any(
+            output.deleted != existing_deleted.get(output.source) for output in outputs
+        )
         moved = [name for row in rows for name in row.names] != [
             page.name for page in editor.pages
         ]
         if (
             reviewed
             and not moved
-            and not _tally(len(outputs), changes).changed
+            and not visibility_changed
+            and not _tally(visible_count, changes).changed
             and cover is None
         ):
             editor.close()
             record_review(path)
-            return _tally(len(outputs), changes)
+            return _tally(visible_count, changes)
         if allow_reorder and moved:
             extras = plan_edit(path, "reorder", planned=extras)
         if cover is not None:
             name, transform, from_original = cover
             targets = [
-                index for index, output in enumerate(outputs) if output.source == name
+                index
+                for index, output in enumerate(outputs)
+                if output.source == name and not output.deleted
             ]
             if len(targets) != 1 or outputs[targets[0]].content is not None:
                 raise PageSplitError(
@@ -326,9 +346,13 @@ def apply_rows(
         raise PageSplitError(str(error)) from error
     finally:
         editor.close()
-    result = _tally(len(outputs), changes)
+    result = _tally(visible_count, changes)
     return replace(
-        result, changed=result.changed or (allow_reorder and moved) or cover is not None
+        result,
+        changed=result.changed
+        or visibility_changed
+        or (allow_reorder and moved)
+        or cover is not None,
     )
 
 
@@ -370,6 +394,7 @@ class _PageFacts:
     ref: OriginalRef | None
     side: str | None
     x: int | None
+    deleted: bool = False
 
 
 def _page_facts(path: Path, name: str, data: bytes) -> _PageFacts:
@@ -389,6 +414,7 @@ def _page_facts(path: Path, name: str, data: bytes) -> _PageFacts:
         ref=ref,
         side=side,
         x=x,
+        deleted=deleted_position(name) is not None,
     )
 
 
@@ -474,12 +500,12 @@ def _matched_halves(facts: Sequence[_PageFacts]) -> list[tuple[int, int]]:
     1 枚目は相手が来るまで待たせておき、相手が来たら組にする。どの 2 枚が
     組になるかは記録（元画像と割った位置）で決まり、並びでは決まらない。
     """
-    waiting: dict[tuple[str, int], int] = {}
+    waiting: dict[tuple[str, int, bool], int] = {}
     pairs: list[tuple[int, int]] = []
     for index, fact in enumerate(facts):
         if fact.ref is None or fact.side is None or fact.x is None:
             continue
-        key = (fact.ref.hash, fact.x)
+        key = (fact.ref.hash, fact.x, fact.deleted)
         earlier = waiting.get(key)
         if earlier is None:
             waiting[key] = index
@@ -516,6 +542,7 @@ def _folded_row(
         is_spread=is_spread(width, height),
         split=SplitPosition(x=pair.x),
         displaced=displaced,
+        deleted=first.deleted,
     )
 
 
@@ -556,7 +583,7 @@ def _split_pair(first: _PageFacts, second: _PageFacts) -> _SplitPair | None:
     記録の形は変えない。derived を 1 つのハッシュに複数件持てる形へ広げると、
     #66 と共有している manifest の形式が変わる。
     """
-    if first.ref is None or second.ref is None:
+    if first.deleted != second.deleted or first.ref is None or second.ref is None:
         return None
     if first.ref.hash != second.ref.hash:
         return None
@@ -583,6 +610,7 @@ def _plain_row(fact: _PageFacts, kept_whole: bool) -> SplitRow:
         is_spread=is_spread(fact.width, fact.height),
         split=None,
         kept_whole=kept_whole,
+        deleted=fact.deleted,
     )
 
 
@@ -599,7 +627,8 @@ def _suggest_merges(
     """
     marked = [
         replace(row, rejoin_suggested=True)
-        if len(row.names) == 2
+        if not row.deleted
+        and len(row.names) == 2
         and not row.displaced
         and _seam_continues(row.names[0], row.names[1], edges)
         else row
@@ -623,7 +652,12 @@ def _looks_joined(
 
     割った対（名前が 2 つ）と横長のページ（端を取っていない）は比べない。
     """
-    if len(earlier.names) != 1 or len(later.names) != 1:
+    if (
+        earlier.deleted
+        or later.deleted
+        or len(earlier.names) != 1
+        or len(later.names) != 1
+    ):
         return False
     return _seam_continues(earlier.names[0], later.names[0], edges)
 
@@ -651,9 +685,32 @@ def _seam_continues(
             max(0, -offset) : min(_SEAM_POINTS, _SEAM_POINTS - offset)
         ]
         close = sum(_near(a, b) for a, b in zip(left, right, strict=True))
-        if close >= _SEAM_MATCH * len(left):
+        if (
+            close >= _SEAM_MATCH * len(left)
+            or _correlation(left, right) >= _SEAM_CORRELATION
+        ):
             return True
     return False
+
+
+def _correlation(left: _Edge, right: _Edge) -> float:
+    """平均を引いた RGB の正規化相関。明るさ・コントラストの差を許容する。
+
+    RGB 全体の平均を使い、色の違いも比較に残す。一色の端は呼び出し側で除外する。
+    """
+    a = [channel for colour in left for channel in colour]
+    b = [channel for colour in right for channel in colour]
+    mean_a, mean_b = sum(a) / len(a), sum(b) / len(b)
+    centered_a = [value - mean_a for value in a]
+    centered_b = [value - mean_b for value in b]
+    variance = sum(value * value for value in centered_a) * sum(
+        value * value for value in centered_b
+    )
+    if variance == 0:
+        return 0.0
+    return sum(x * y for x, y in zip(centered_a, centered_b, strict=True)) / sqrt(
+        variance
+    )
 
 
 def _edge_colours(data: bytes) -> tuple[_Edge, _Edge] | None:

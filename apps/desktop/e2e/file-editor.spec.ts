@@ -213,8 +213,14 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   expect(pageEntriesOf(archive)).toHaveLength(4);
   const splitColours = Object.values(coloursOf(archive));
   await page.getByTestId("split-step-split").click();
-  await expect(page.getByTestId("editable-page")).toHaveCount(3);
-  await drag(page, 1, 2);
+  await expect(page.getByTestId("editable-page")).toHaveCount(4);
+  await page
+    .getByRole("button", { name: "002.png を選択", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "003.png を選択", exact: true })
+    .click({ modifiers: ["Control"] });
+  await drag(page, 1, 3);
   await save(page);
   expect(Object.values(coloursOf(archive))).toEqual([
     splitColours[0],

@@ -43,7 +43,6 @@ const SPREAD = [2400, 1800];
 const STORED_X = 1300;
 
 /** 番号の区切り。見取り図と同じ EN DASH（U+2013） */
-const RANGE = "–";
 
 /**
  * 3 枚目が見開きの本を作り、段階 1 のコアでその見開きを STORED_X で割る。
@@ -134,7 +133,9 @@ async function showSplitStep(page: Page) {
 }
 
 function cardAt(page: Page, index: number) {
-  return page.locator(`[data-testid="split-card"][data-index="${index}"]`);
+  return page
+    .locator(`[data-testid="split-card"][data-index="${index}"]`)
+    .first();
 }
 
 async function boxOf(page: Page, locator: ReturnType<Page["locator"]>) {
@@ -144,10 +145,9 @@ async function boxOf(page: Page, locator: ReturnType<Page["locator"]>) {
 }
 
 /** 画像の幅に対する、線の位置の割合。窓の大きさに左右されずに比べられる */
-async function splitFraction(page: Page, index: number): Promise<number> {
-  const card = cardAt(page, index);
-  const image = await boxOf(page, card.getByTestId("split-image"));
-  const handle = await boxOf(page, card.getByTestId("split-handle"));
+async function splitFraction(page: Page): Promise<number> {
+  const image = await boxOf(page, page.getByTestId("split-dialog-image"));
+  const handle = await boxOf(page, page.getByTestId("split-dialog-handle"));
   return (handle.x + handle.width / 2 - image.x) / image.width;
 }
 
@@ -215,7 +215,7 @@ async function confirmSplit(page: Page) {
 }
 
 test.describe("ページ分割: 割った本を開き直す", () => {
-  test("割った対は 1 枚の見開きとして、保存された位置の線とともに出る", async ({
+  test("割った対も共通のページ一覧に出て、拡大すると保存された位置の線を編集できる", async ({
     browser,
   }) => {
     // Arrange - 3 枚目の見開きを 1300 で割った本。ZIP には 5 枚並んでいる
@@ -224,30 +224,28 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     expect(entries).toHaveLength(5);
 
     // Act - まっさらな窓で開く
-    const page = await reopen(browser, archive, entries.length - 1);
+    const page = await reopen(browser, archive, entries.length);
 
-    // Assert - 行はページより 1 つ少ない。割った 2 枚が 1 行に畳まれている。
-    // ここが 5 なら、利用者は自分が割った半分を 2 枚の裸のページとして
-    // 見せられている
-    await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4);
+    await expect(page.locator('[data-testid="split-card"]')).toHaveCount(5);
 
-    // Assert - 畳んだ行は 2 列ぶんを占める。割った後だけ形が変わるなら、
-    // 「割る前の見開き」と「割った後」が見分けられてしまう
+    // 共通一覧には保存済みの単ページを出す。線の編集は元画像の拡大表示で行う
     const folded = await boxOf(page, cardAt(page, 2));
     const plain = await boxOf(page, cardAt(page, 0));
     expect(
       folded.width,
       `畳んだ行の幅が ${Math.round(folded.width)}px、縦長は ${Math.round(plain.width)}px`,
-    ).toBeGreaterThan(plain.width * 1.9);
+    ).toBeCloseTo(plain.width, 0);
+
+    await cardAt(page, 2).getByTestId("split-zoom").click();
 
     // Assert - 線は保存された位置に出る。読み取りの値と、実際に描かれて
     // いる位置の両方を見る。片方だけだと、値は正しいのに絵の上では
     // 中央に描かれている実装を見逃す
-    await expect(cardAt(page, 2).getByTestId("split-handle")).toHaveAttribute(
+    await expect(page.getByTestId("split-dialog-handle")).toHaveAttribute(
       "aria-valuenow",
       String(STORED_X),
     );
-    const fraction = await splitFraction(page, 2);
+    const fraction = await splitFraction(page);
     expect(
       Math.abs(fraction - STORED_X / SPREAD[0]),
       `線が画像の ${fraction.toFixed(3)} の所にある（保存されているのは ${(STORED_X / SPREAD[0]).toFixed(3)}）`,
@@ -259,7 +257,8 @@ test.describe("ページ分割: 割った本を開き直す", () => {
 
     // Assert - 番号は畳んだ結果から数える。3 行目が 2 ページ分になる
     const chip = cardAt(page, 2).getByTestId("split-number");
-    await expect(chip).toHaveText(`3${RANGE}4`);
+    await page.getByTestId("split-dialog-close").click();
+    await expect(chip).toHaveText("3");
 
     // Assert - 開いただけでは何も保留していない。青い（書き込む前と違う）
     // ままだと、利用者は毎回「何か変えてしまった」と思わされる
@@ -285,12 +284,14 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     // Arrange
     const archive = writeSplitArchive("名前を出さない.zip");
     const entries = pageEntriesOf(archive);
-    const page = await reopen(browser, archive, entries.length - 1);
+    const page = await reopen(browser, archive, entries.length);
 
     // Assert - 先にカードが並んでいることを確かめる。何も描かれていない
     // 画面でも「名前が出ていない」は成り立ってしまう
-    await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4);
-    expect(await cardAt(page, 2).getByTestId("split-handle").count()).toBe(1);
+    await expect(page.locator('[data-testid="split-card"]')).toHaveCount(5);
+    await expect(cardAt(page, 2).getByTestId("split-applied")).toHaveText(
+      "分割済み",
+    );
 
     // Assert - 畳んだ行の 2 つの名前も、畳まない行の 1 つの名前も出ない。
     // 畳んだ行だけを見る検証は、縦長ページに名前を出す実装でも通る。
@@ -314,7 +315,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     // 「元画像」と「割った半分」があることを、そこで知ってしまう
     for (const [index, chip] of [
       [0, "1"],
-      [2, `3${RANGE}4`],
+      [2, "3"],
     ] as const) {
       const readable = await readableStringsOf(cardAt(page, index));
 
@@ -349,7 +350,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
   }) => {
     // Arrange
     const archive = writeSplitArchive("位置を直す.zip");
-    const page = await reopen(browser, archive, 4);
+    const page = await reopen(browser, archive, 5);
 
     // Act - 画像を押して拡大表示にし、線に焦点を当てて Shift+→ で 10px ずつ
     // 動かす。掴んで運ぶより、意図した値ぴったりに置ける。
@@ -416,7 +417,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
   }) => {
     // Arrange
     const archive = writeSplitArchive("割る前へ戻す.zip");
-    const page = await reopen(browser, archive, 4);
+    const page = await reopen(browser, archive, 5);
 
     // Act - 畳んだ行のチェックを外す
     await cardAt(page, 2).getByTestId("split-check").click();

@@ -1,6 +1,6 @@
 import { ZoomIn } from "lucide-react";
 import { cn } from "../lib/utils";
-import { fitInside } from "../lib/stage";
+import { PagePicture, type Picture } from "./PagePicture";
 import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
 import { SplitLine } from "./SplitLine";
@@ -8,14 +8,13 @@ import { SplitLine } from "./SplitLine";
 type SplitCardProps = {
   /** ページ順での位置。0 から数える */
   index: number;
+  part?: 0 | 1;
   /** 番号の札に出す文字。"3" か "3–4" */
   label: string;
+  actionLabel: string;
   /** 書き込む前と違うか */
   pending: boolean;
-  /**
-   * いま ZIP の中で 2 ページに割れているか（#132）。割った対は割る前の見開きの
-   * 絵で出すので、印が無いと割れたのかどうかが絵からは分からない
-   */
+  /** いま ZIP の中で 2 ページに割れているか */
   applied: boolean;
   /** 前後の送りボタンで、いま指している行か（#131） */
   focused: boolean;
@@ -31,11 +30,12 @@ type SplitCardProps = {
   /** 絵の箱。行をまたいで同じ高さにする */
   boxWidth: number;
   boxHeight: number;
-  /** 元画像の寸法。割る位置はこの座標で持つ */
-  width: number;
-  height: number;
   x: number;
-  imageUrl: string;
+  page: Picture;
+  partner?: Picture;
+  /** 未保存の結合を分ける操作か */
+  joined: boolean;
+  candidate: boolean;
   onToggle: () => void;
   onMoveSplit: (x: number) => void;
   onZoom: () => void;
@@ -54,7 +54,9 @@ type SplitCardProps = {
  */
 export function SplitCard({
   index,
+  part,
   label,
+  actionLabel,
   pending,
   applied,
   focused,
@@ -65,23 +67,22 @@ export function SplitCard({
   span,
   boxWidth,
   boxHeight,
-  width,
-  height,
   x,
-  imageUrl,
+  page,
+  partner,
+  joined,
+  candidate,
   onToggle,
   onMoveSplit,
   onZoom,
 }: SplitCardProps) {
-  // 絵は箱に収まる最大の大きさで置く。線の位置は絵そのものに合わせたいので、
-  // 枠は絵と同じ寸法にし、object-fit の余白が間に入らないようにする
-  const display = fitInside(
-    { width, height },
-    { width: boxWidth, height: boxHeight },
-  );
-  const draft = target && !checked;
+  const draft = target && !checked && !joined;
 
-  const splitLabel = `${label} ページを 2 ページに分ける`;
+  const splitLabel = joined
+    ? `${label} ページの未保存の結合を分ける`
+    : part !== undefined
+      ? `${actionLabel} ページの分割を残す`
+      : `${label} ページを 2 ページに分ける`;
   const zoomLabel = `${label} ページを大きく表示`;
 
   return (
@@ -96,6 +97,7 @@ export function SplitCard({
       )}
       data-testid="split-card"
       data-index={index}
+      data-part={part}
       data-checked={checked}
       data-wide={wide}
       data-focused={focused}
@@ -108,38 +110,35 @@ export function SplitCard({
         style={{ height: boxHeight }}
         onClick={onZoom}
       >
-        <div
-          className={cn(
-            "relative flex overflow-hidden",
-            draft && "outline-2 outline-offset-2 outline-warn outline-dashed",
-          )}
-          style={{ width: display.width, height: display.height }}
+        <PagePicture
+          label={label}
+          page={page}
+          partner={partner}
+          boxWidth={boxWidth}
+          boxHeight={boxHeight}
+          draft={draft}
+          imageTestId="split-image"
+          partnerTestId="split-partner-image"
         >
-          <img
-            data-testid="split-image"
-            className="block h-full w-full"
-            src={imageUrl}
-            // 名前の代わりに番号を読み上げる。名前は画面のどこにも出さない
-            alt={`${label} ページ`}
-            loading="lazy"
-          />
-          {checked ? (
-            <SplitLine
-              label={label}
-              x={x}
-              width={width}
-              displayWidth={display.width}
-              onChange={onMoveSplit}
-            />
-          ) : draft ? (
-            <div
-              data-testid="split-draft-line"
-              aria-hidden
-              className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-warn"
-              style={{ left: (x / width) * display.width - 1 }}
-            />
-          ) : null}
-        </div>
+          {(display) =>
+            checked && part === undefined && !joined ? (
+              <SplitLine
+                label={label}
+                x={x}
+                width={page.width}
+                displayWidth={display.width}
+                onChange={onMoveSplit}
+              />
+            ) : draft && part === undefined ? (
+              <div
+                data-testid="split-draft-line"
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-warn"
+                style={{ left: (x / page.width) * display.width - 1 }}
+              />
+            ) : null
+          }
+        </PagePicture>
       </div>
 
       <div className="flex items-center gap-1.5 border-t border-line px-2 py-1.5">
@@ -152,6 +151,7 @@ export function SplitCard({
           title={splitLabel}
           aria-label={splitLabel}
           checked={checked}
+          disabled={candidate}
           onCheckedChange={onToggle}
           className={cn(
             // 横長でないページを分けることは少ない。指したカードにだけ出す
@@ -176,6 +176,8 @@ export function SplitCard({
             分割済み
           </Badge>
         ) : null}
+        {joined ? <Badge>結合する</Badge> : null}
+        {candidate ? <Badge tone="warn">結合候補</Badge> : null}
         {keptWhole && !checked ? (
           <Badge
             data-testid="split-kept-whole"

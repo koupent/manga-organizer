@@ -110,6 +110,7 @@ PAGE_HEIGHT = 1800
 # 区別できないので、集合ごと固定する
 ROW_KEYS = {
     "names",
+    "deleted",
     "width",
     "height",
     "source",
@@ -322,6 +323,33 @@ class SplitApiTestBase(unittest.TestCase):
 
 class SplitScanTest(SplitApiTestBase):
     """1. 走査が、画面に並べるとおりの行を返す"""
+
+    def test_deleted_pages_are_restorable_but_not_viewer_pages(self):
+        scanned = self.scan(self.archive)
+        rows = self.rows_for(scanned)
+        rows[0]["deleted"] = True
+        result = self.confirmed(self.archive, scanned["token"], rows)
+        self.assertEqual(result["page_count"], 3)
+        self.assertTrue(result["changed"])
+        scanned = self.scan(self.archive)
+        self.assertEqual(scanned["page_count"], 3)
+        hidden = scanned["rows"][0]
+        self.assertTrue(hidden["deleted"])
+        query = self.auth({"archive": str(self.archive), "name": hidden["names"][0]})
+        for route in ("/api/image", "/api/thumb"):
+            response = self.client.get(route, params=query)
+            self.assertEqual(response.status_code, 200, response.text)
+            with Image.open(io.BytesIO(response.content)) as image:
+                self.assertGreater(image.width, 0)
+        response = self.client.get(
+            "/api/pages", params=self.auth({"archive": str(self.archive)})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["pages"]), 3)
+        restored = self.confirmed(
+            self.archive, scanned["token"], self.rows_for(scanned)
+        )
+        self.assertEqual(restored["page_count"], 4)
 
     def test_lists_every_page_in_order_and_flags_only_the_spread(self):
         # Arrange - 3 枚目は 1.15 倍で閾値に届かない。この 1 枚が無いと、

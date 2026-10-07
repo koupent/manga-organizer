@@ -110,11 +110,11 @@ class PathGuard:
         logger.warning("許可された場所の外を指すため除きました: %s", found)
         return False
 
-    def open_editor(self, raw: str) -> ZipPageEditor:
+    def open_editor(self, raw: str, *, include_deleted: bool = False) -> ZipPageEditor:
         """アーカイブを開く。開けない理由はそのまま伝える"""
         path = self.resolve_archive(raw)
         try:
-            return ZipPageEditor(path)
+            return ZipPageEditor(path, include_deleted=include_deleted)
         except PageReorderError as error:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)

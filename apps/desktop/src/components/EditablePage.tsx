@@ -23,6 +23,11 @@ export function EditablePage({
   canCover,
   onCover,
   onAdjust,
+  deleted,
+  displayName = name,
+  canDelete,
+  deleteLabel,
+  onDelete,
   children,
 }: {
   id: string;
@@ -36,6 +41,11 @@ export function EditablePage({
   canCover: boolean;
   onCover: () => void;
   onAdjust: () => void;
+  deleted: boolean;
+  displayName?: string;
+  canDelete: boolean;
+  deleteLabel: string;
+  onDelete: () => void;
   children: ReactNode;
 }) {
   const {
@@ -45,7 +55,7 @@ export function EditablePage({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id, disabled });
+  } = useSortable({ id, disabled: disabled || deleted });
   const [menu, setMenu] = useState(false);
   const tools = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -70,6 +80,7 @@ export function EditablePage({
       data-name={name}
       data-cover={cover}
       data-selected={selected}
+      data-deleted={deleted}
       className={cn(
         "relative min-w-0 rounded border",
         cover ? "border-brand ring-1 ring-brand" : "border-transparent",
@@ -92,9 +103,9 @@ export function EditablePage({
           size="icon"
           className="size-6 cursor-grab touch-none"
           title="ドラッグしてページを並べ替える"
-          aria-label={`${name} を並べ替える`}
+          aria-label={`${displayName} を並べ替える`}
           data-testid="page-drag-handle"
-          disabled={disabled}
+          disabled={disabled || deleted}
           {...attributes}
           {...listeners}
         >
@@ -103,12 +114,12 @@ export function EditablePage({
         <Button
           variant="ghost"
           className="h-6 min-w-0 flex-1 justify-start truncate px-0 text-[11px]"
-          title={`${name} を選択`}
-          aria-label={`${name} を選択`}
-          disabled={disabled}
+          title={`${displayName} を選択`}
+          aria-label={`${displayName} を選択`}
+          disabled={disabled || deleted}
           onClick={onSelect}
         >
-          {cover ? "サムネイル" : name}
+          {cover ? "サムネイル" : displayName}
         </Button>
         <Button
           variant="ghost"
@@ -116,7 +127,7 @@ export function EditablePage({
           className="size-6"
           data-testid="zoom"
           title="原寸で表示"
-          aria-label={`${name} を原寸で表示`}
+          aria-label={`${displayName} を原寸で表示`}
           disabled={disabled}
           onClick={onZoom}
         >
@@ -126,7 +137,7 @@ export function EditablePage({
           variant="ghost"
           size="icon"
           className="size-6"
-          aria-label={`${name} の操作`}
+          aria-label={`${displayName} の操作`}
           aria-expanded={menu}
           disabled={disabled}
           onClick={() => setMenu(!menu)}
@@ -162,21 +173,34 @@ export function EditablePage({
             >
               サムネイルの画像調整
             </Button>
-            {!canCover ? (
+            {!canCover && !deleted ? (
               <span className="p-2 text-[11px] text-ink-muted">
                 このページの分割・結合を先に保存してください
               </span>
             ) : null}
+            <Button
+              variant="ghost"
+              role="menuitem"
+              disabled={!canDelete}
+              className="justify-start"
+              onClick={() => {
+                onDelete();
+                setMenu(false);
+              }}
+            >
+              {deleted ? "ページを復元" : deleteLabel}
+            </Button>
           </div>
         ) : null}
       </div>
       <div
         dir="ltr"
         role="group"
-        aria-label={name}
+        aria-label={displayName}
         onClick={(event) => {
           if (
             !disabled &&
+            !deleted &&
             !(event.target as HTMLElement).closest(
               "button,input,[role=checkbox]",
             )

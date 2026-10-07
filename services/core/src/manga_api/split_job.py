@@ -81,6 +81,9 @@ class SplitIntentRowView(BaseModel):
             "split は null にする"
         ),
     )
+    deleted: bool = Field(
+        default=False, description="ページを復元可能な状態で閲覧対象から外す"
+    )
 
 
 class SplitConfirmRequest(BaseModel):
@@ -104,6 +107,9 @@ class SplitRowView(BaseModel):
     """走査が返す 1 行。画面はこのまま並べる"""
 
     names: list[str]
+    deleted: bool = Field(
+        default=False, description="閲覧対象から外した復元可能なページか"
+    )
     width: int
     height: int
     # 行の画素の出どころ。畳まれた行（"original"）は割る前の絵を
@@ -253,8 +259,10 @@ def _intent(row: SplitIntentRowView) -> SplitIntent | MergeIntent:
     """画面の 1 行を、コアの意図へ直す"""
     if row.merge:
         first, second = row.names
-        return MergeIntent(names=(first, second))
-    return SplitIntent(names=tuple(row.names), split=_position(row.split))
+        return MergeIntent(names=(first, second), deleted=row.deleted)
+    return SplitIntent(
+        names=tuple(row.names), split=_position(row.split), deleted=row.deleted
+    )
 
 
 def _with_pairs_joined(order: list[str], partners: dict[str, str]) -> list[str]:
@@ -289,7 +297,7 @@ def scan_work(path: Path) -> Callable[[ProgressReporter], dict[str, Any]]:
         return SplitScanView(
             archive=str(path),
             # 分母はページ数。割った対は 1 行に畳まれるので、行数とは一致しない
-            page_count=sum(len(row.names) for row in rows),
+            page_count=sum(len(row.names) for row in rows if not row.deleted),
             token=token,
             rows=[_row_view(row) for row in rows],
         ).model_dump()
@@ -335,7 +343,7 @@ def confirm_work(
 
 def _pages_of(path: Path) -> tuple[PageEntry, ...]:
     """いま並んでいるページを、中央ディレクトリだけ読んで取り出す"""
-    editor = ZipPageEditor(path)
+    editor = ZipPageEditor(path, include_deleted=True)
     try:
         return editor.pages
     finally:
@@ -351,6 +359,7 @@ def _row_view(row: SplitRow) -> SplitRowView:
     """走査が組んだ行 1 つを、画面へ渡す形にする"""
     return SplitRowView(
         names=list(row.names),
+        deleted=row.deleted,
         width=row.width,
         height=row.height,
         source=row.source,

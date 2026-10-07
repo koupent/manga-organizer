@@ -1363,6 +1363,34 @@ class SuggestsMergesTest(SplitFixture):
             ),
         )
 
+    def test_brightness_contrast_and_vertical_shift_are_suggested(self):
+        spread = seam_spread()
+        for offset in (-55, 55):
+            with self.subTest(offset=offset):
+                changed = spread.point(lambda value: round(value * 0.65 + 55))
+                self.assertEqual(
+                    [True, False],
+                    self.suggested(
+                        {
+                            "001.png": half_bytes(spread, "right"),
+                            "002.png": half_bytes(changed, "left", offset=offset),
+                        }
+                    ),
+                )
+
+    def test_inverted_greyscale_edges_are_not_suggested(self):
+        spread = seam_spread().convert("L").convert("RGB")
+        inverted = spread.point(lambda value: 255 - value)
+        self.assertEqual(
+            [False, False],
+            self.suggested(
+                {
+                    "001.png": half_bytes(spread, "right"),
+                    "002.png": half_bytes(inverted, "left"),
+                }
+            ),
+        )
+
     def test_shifted_different_pictures_are_not_suggested(self):
         self.assertEqual(
             [False, False],

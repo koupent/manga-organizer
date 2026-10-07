@@ -48,7 +48,7 @@ async function open(page: Page, archive: string, mode: "split" | "reorder") {
 }
 
 const card = (page: Page, index: number) =>
-  page.locator(`[data-testid="split-card"][data-index="${index}"]`);
+  page.locator(`[data-testid="split-card"][data-index="${index}"]`).first();
 
 test.describe("ページ分割: 候補へ送る・割った印・左から右の並び", () => {
   test("前後のボタンで分割候補だけを指し、端から反対の端へ循環する", async ({
@@ -124,7 +124,7 @@ test.describe("ページ分割: 候補へ送る・割った印・左から右の
       "分割済み",
     );
     await expect(card(page, 4).getByTestId("split-applied")).toHaveCount(1);
-    await expect(page.getByTestId("split-applied")).toHaveCount(2);
+    await expect(page.getByTestId("split-applied")).toHaveCount(4);
   });
 
   test("ページ並べ替えも左から右へ並ぶ", async ({ page }) => {

@@ -30,6 +30,25 @@ CONVERSION_TARGET = ".png"
 MACOS_METADATA_DIR = "__MACOSX"
 MACOS_METADATA_PREFIX = f"{MACOS_METADATA_DIR}/"
 MIN_SEQUENCE_DIGITS = 3
+DELETED_PREFIX = ".manga-organizer/deleted/"
+
+
+def deleted_position(name: str) -> int | None:
+    """このアプリが退避したページの、削除前の並び位置。末尾もドット名にする"""
+    if not name.startswith(DELETED_PREFIX):
+        return None
+    parts = name[len(DELETED_PREFIX) :].split("/")
+    if len(parts) != 2:
+        return None
+    slot, leaf = parts
+    if not slot.isdigit() or len(slot) > 9 or int(slot) < 1:
+        return None
+    suffix = Path(leaf).suffix.lower()
+    return (
+        int(slot)
+        if suffix in VIEWER_IMAGE_EXTENSIONS and leaf == f".page{suffix}"
+        else None
+    )
 
 
 def _is_excluded(name: str) -> bool:
