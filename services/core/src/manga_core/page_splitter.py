@@ -91,17 +91,16 @@ _CHANGE_ADJUSTED = "adjusted"
 _CHANGE_JOINED = "joined"
 
 # 結合の候補を探す継ぎ目の比べ方（#149）。端を縦に _SEAM_POINTS 点へ縮め、
-# 色の差がどのチャンネルも _SEAM_TOLERANCE 以内の点を「つながっている」と
-# みなす。その割合か、平均を引いた正規化相関が閾値以上なら候補にする。
-# 候補は示すだけで保留には
-# しないので、取りこぼすより拾いすぎる側へ寄せてある
+# 平均を引いた正規化相関で模様のつながりを比べる。色の一致率だけでは、
+# 白い余白が多い別々のページも拾ってしまう。
 _SEAM_POINTS = 64
 # 読み取り時の上下ズレ（高さの約 6%）は、端の比較位置を合わせて拾う。
 # 候補の判定だけに使い、保存する画像の位置は動かさない。
 _SEAM_SHIFT = 4
-_SEAM_CORRELATION = 0.93
+# 読み取りの濃淡・細部の違いを許容する。実画像の見開きでは約0.83でも
+# つながる一方、余白による誤検出例は約0.76以下だった。
+_SEAM_CORRELATION = 0.8
 _SEAM_TOLERANCE = 32
-_SEAM_MATCH = 0.8
 # 端の点のうちこの割合以上が一色なら、無地の端（余白・塗りつぶし）として
 # 比べない。白い余白どうしは必ず一致するので、比べるとほとんどのページが
 # 候補になる
@@ -684,11 +683,7 @@ def _seam_continues(
         right = right_of_later[
             max(0, -offset) : min(_SEAM_POINTS, _SEAM_POINTS - offset)
         ]
-        close = sum(_near(a, b) for a, b in zip(left, right, strict=True))
-        if (
-            close >= _SEAM_MATCH * len(left)
-            or _correlation(left, right) >= _SEAM_CORRELATION
-        ):
+        if _correlation(left, right) >= _SEAM_CORRELATION:
             return True
     return False
 

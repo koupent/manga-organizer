@@ -1295,6 +1295,16 @@ def framed_bytes(picture: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def seam_levels_bytes(levels: list[int], fmt: str) -> bytes:
+    """端の模様を64段の明るさで作る。実際の漫画画像はテストに含めない。"""
+    image = Image.frombytes("L", (1, 64), bytes(levels)).resize(
+        (320, 640), Image.Resampling.NEAREST
+    )
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, fmt)
+    return buffer.getvalue()
+
+
 class SuggestsMergesTest(SplitFixture):
     """端の色がつながる隣り合う単ページ 2 枚を、結合の候補にする（#149）。
 
@@ -1390,6 +1400,45 @@ class SuggestsMergesTest(SplitFixture):
                 }
             ),
         )
+
+    def test_matching_pattern_with_local_scan_noise_is_suggested(self):
+        # 明るさの差と局所的な濃淡で色一致率も相関も旧基準に届かないが、
+        # 全体の模様はつながる。実画像での見逃しを再現する。
+        levels = [50 + (index * 73 % 140) for index in range(64)]
+        changed = [
+            round(value * 0.8 + 70 + (20 if index % 2 else -20))
+            for index, value in enumerate(levels)
+        ]
+        for fmt in ("PNG", "JPEG"):
+            with self.subTest(fmt=fmt):
+                self.assertEqual(
+                    [True, False],
+                    self.suggested(
+                        {
+                            "001.png": seam_levels_bytes(levels, fmt),
+                            "002.png": seam_levels_bytes(changed, fmt),
+                        }
+                    ),
+                )
+
+    def test_similar_white_edges_with_different_ink_are_not_suggested(self):
+        # 約89%が白い端でも、黒い模様が異なると見開きではない。
+        # 単色除外の90%未満なので、色一致率だけでは誤って候補になる。
+        left = [0 if 12 <= index <= 18 else 248 for index in range(64)]
+        right = [
+            0 if 14 <= index <= 16 or 40 <= index <= 43 else 248 for index in range(64)
+        ]
+        for fmt in ("PNG", "JPEG"):
+            with self.subTest(fmt=fmt):
+                self.assertEqual(
+                    [False, False],
+                    self.suggested(
+                        {
+                            "001.png": seam_levels_bytes(left, fmt),
+                            "002.png": seam_levels_bytes(right, fmt),
+                        }
+                    ),
+                )
 
     def test_shifted_different_pictures_are_not_suggested(self):
         self.assertEqual(
