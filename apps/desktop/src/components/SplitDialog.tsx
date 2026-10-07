@@ -4,6 +4,7 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { SplitLine } from "./SplitLine";
+import { PagePicture, type Picture } from "./PagePicture";
 import { centerOf } from "../lib/split";
 import { fitInside, useBoxSize } from "../lib/stage";
 import { cn } from "../lib/utils";
@@ -21,6 +22,8 @@ type SplitDialogProps = {
   width: number;
   height: number;
   imageUrl: string;
+  partner?: Picture;
+  candidate: boolean;
   onToggle: () => void;
   onMoveSplit: (x: number) => void;
   onClose: () => void;
@@ -52,6 +55,8 @@ export function SplitDialog({
   width,
   height,
   imageUrl,
+  partner,
+  candidate,
   onToggle,
   onMoveSplit,
   onClose,
@@ -92,17 +97,18 @@ export function SplitDialog({
           <span className="flex shrink-0 items-center gap-1.5 text-[12px] text-ink-muted">
             <Checkbox
               data-testid="split-dialog-check"
-              aria-label="2 ページに分ける"
+              aria-label={partner ? "結合を分ける" : "2 ページに分ける"}
               checked={checked}
+              disabled={candidate}
               onCheckedChange={onToggle}
             />
-            2 ページに分ける
+            {partner ? "結合を分ける" : "2 ページに分ける"}
           </span>
           <div className="flex-1" />
           <Button
             variant="secondary"
             data-testid="split-center"
-            disabled={!checked}
+            disabled={!checked || Boolean(partner)}
             onClick={() => onMoveSplit(centerOf(width))}
           >
             <AlignCenterVertical />
@@ -124,36 +130,48 @@ export function SplitDialog({
           ref={stageRef}
           className="flex min-h-0 flex-1 items-start justify-center overflow-hidden"
         >
-          <div
-            className="relative overflow-hidden rounded border border-line"
-            style={{
-              width: display.width + FRAME_BORDER * 2,
-              height: display.height + FRAME_BORDER * 2,
-            }}
-          >
-            <img
-              data-testid="split-dialog-image"
-              className="block h-full w-full"
-              src={imageUrl}
-              alt={`${label} ページ`}
+          {partner ? (
+            <PagePicture
+              label={label}
+              page={{ imageUrl, width, height }}
+              partner={partner}
+              boxWidth={stage.width - FRAME_BORDER * 2}
+              boxHeight={stage.height - FRAME_BORDER * 2}
+              imageTestId="split-dialog-image"
+              partnerTestId="split-dialog-partner-image"
             />
-            {checked ? (
-              <SplitLine
-                label={label}
-                x={x}
-                width={width}
-                displayWidth={display.width}
-                overlay
-                onChange={onMoveSplit}
+          ) : (
+            <div
+              className="relative overflow-hidden rounded border border-line"
+              style={{
+                width: display.width + FRAME_BORDER * 2,
+                height: display.height + FRAME_BORDER * 2,
+              }}
+            >
+              <img
+                data-testid="split-dialog-image"
+                className="block h-full w-full"
+                src={imageUrl}
+                alt={`${label} ページ`}
               />
-            ) : null}
-            {/* 右綴じなので、先に読むのは右半分。番号を隅に置いて、
+              {checked ? (
+                <SplitLine
+                  label={label}
+                  x={x}
+                  width={width}
+                  displayWidth={display.width}
+                  overlay
+                  onChange={onMoveSplit}
+                />
+              ) : null}
+              {/* 右綴じなので、先に読むのは右半分。番号を隅に置いて、
                 線をどちらへ寄せると何が起きるかを絵の上で示す */}
-            <Corner side="right">{numbers[0]}</Corner>
-            {numbers.length === 2 ? (
-              <Corner side="left">{numbers[1]}</Corner>
-            ) : null}
-          </div>
+              <Corner side="right">{numbers[0]}</Corner>
+              {numbers.length === 2 ? (
+                <Corner side="left">{numbers[1]}</Corner>
+              ) : null}
+            </div>
+          )}
         </div>
 
         <div className="flex h-5 shrink-0 items-center gap-2">
@@ -161,7 +179,11 @@ export function SplitDialog({
             className="tabular text-[12px] text-ink-muted"
             data-testid="split-readout"
           >
-            {readout(checked, x, width)}
+            {partner
+              ? candidate
+                ? "結合候補です。結合する操作は「ページを結合」で行います"
+                : "未保存の結合です。分けると結合を取り消します"
+              : readout(checked, x, width)}
           </span>
           <div className="flex-1" />
           <span className="text-[11.5px] text-ink-faint">

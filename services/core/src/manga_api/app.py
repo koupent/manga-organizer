@@ -76,6 +76,7 @@ from manga_core.original_store import (
 )
 from manga_core.output_books import list_output_books, rename_files
 from manga_core.page_reorder import PageReorderError
+from manga_core.viewer_contract import deleted_position
 
 logger = logging.getLogger(__name__)
 
@@ -357,7 +358,9 @@ def create_app(
         request: Request, archive: str, name: str, width: int = 240
     ) -> Response:
         """ページのサムネイルを返す"""
-        editor = path_guard.open_editor(archive)
+        editor = path_guard.open_editor(
+            archive, include_deleted=deleted_position(name) is not None
+        )
         resolved = thumbnails.nearest_width(width)
         try:
             body = app.state.thumbnails.get_or_create(
@@ -606,7 +609,9 @@ def create_app(
     @app.get("/api/image", dependencies=guarded, response_class=Response)
     def image(request: Request, archive: str, name: str) -> Response:
         """ページを原寸で返す。拡大表示に使う"""
-        editor = path_guard.open_editor(archive)
+        editor = path_guard.open_editor(
+            archive, include_deleted=deleted_position(name) is not None
+        )
         try:
             body = editor.read_entry(name)
         except PageReorderError as error:
@@ -628,7 +633,9 @@ def create_app(
         バイト列を /api/cover と分けているのは、画像が JSON に載らないうえ、
         /api/cover は画面を描き直すたびに引かれる軽い経路であってほしいため。
         """
-        editor = path_guard.open_editor(archive)
+        editor = path_guard.open_editor(
+            archive, include_deleted=deleted_position(name) is not None
+        )
         path = editor.zip_path
         try:
             body = editor.read_entry(name)
@@ -763,7 +770,7 @@ def create_app(
         失敗させると、許可の外を指したことが「失敗したジョブ」としてしか
         残らず、画面は投入できたと思ってしまう。
         """
-        editor = path_guard.open_editor(request.archive)
+        editor = path_guard.open_editor(request.archive, include_deleted=True)
         path = editor.zip_path
         editor.close()
         job_id = app.state.jobs.submit("split-scan", {"archive": str(path)})
@@ -785,7 +792,7 @@ def create_app(
         （印）・行の名前を並べたものがいまのページ順と一致するか。どこで
         断ってもアーカイブは 1 バイトも変わらない。
         """
-        editor = path_guard.open_editor(request.archive)
+        editor = path_guard.open_editor(request.archive, include_deleted=True)
         path = editor.zip_path
         try:
             pages = editor.pages

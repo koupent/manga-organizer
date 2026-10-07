@@ -75,25 +75,23 @@ async function open(page: Page, archive: string) {
   // 離れた対がある本は①から開く。入れ替えただけの対の本は②から開くので、
   // ①へ移る（#153）
   await page.getByTestId("split-step-split").click();
-  await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4, {
+  await expect(page.locator('[data-testid="split-card"]')).toHaveCount(5, {
     timeout: 30_000,
   });
 }
 
 const card = (page: Page, index: number) =>
-  page.locator(`[data-testid="split-card"][data-index="${index}"]`);
+  page.locator(`[data-testid="split-card"][data-index="${index}"]`).first();
 
 test.describe("ページ分割: 崩れた対を戻す", () => {
-  test("離れた対は 1 枚の見開きとして出て、割る前へ戻せる", async ({
-    page,
-  }) => {
+  test("離れた対も同じページ一覧に出て、割る前へ戻せる", async ({ page }) => {
     // Arrange - 割った 5 ページのうち、左半分（4 枚目）を末尾へ
     const archive = writeMovedPair("離れた対.zip", [0, 1, 2, 4, 3]);
 
     // Act
     await open(page, archive);
 
-    // Assert - 右半分の位置に見開きが 1 枚で出る。隣り合わせに動くことは、
+    // Assert - 分割した2枚を同じ一覧に出す。隣り合わせに動くことは、
     // 開いた時点で保留として見えている
     await expect(card(page, 2)).toHaveAttribute("data-checked", "true");
     await expect(card(page, 2).getByTestId("split-number")).toHaveAttribute(
@@ -121,7 +119,7 @@ test.describe("ページ分割: 崩れた対を戻す", () => {
     ]);
   });
 
-  test("左右を入れ替えた対も 1 枚の見開きとして出る", async ({ page }) => {
+  test("左右を入れ替えた対も保存済みのページとして出る", async ({ page }) => {
     // Arrange - 右半分と左半分を入れ替える
     const archive = writeMovedPair("入れ替えた対.zip", [0, 1, 3, 2, 4]);
 

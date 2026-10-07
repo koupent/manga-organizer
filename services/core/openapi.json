@@ -2632,6 +2632,12 @@
             "title": "Merge",
             "description": "隣り合う 2 ページ（names の 2 つ）を 1 枚の見開きへ結合するか。split は null にする",
             "default": false
+          },
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted",
+            "description": "ページを復元可能な状態で閲覧対象から外す",
+            "default": false
           }
         },
         "type": "object",

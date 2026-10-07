@@ -1250,6 +1250,12 @@ export interface components {
        * @default false
        */
       merge: boolean;
+      /**
+       * Deleted
+       * @description ページを復元可能な状態で閲覧対象から外す
+       * @default false
+       */
+      deleted: boolean;
     };
     /**
      * SplitPositionView

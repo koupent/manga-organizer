@@ -1,9 +1,7 @@
 import { Link2 } from "lucide-react";
 import { cn } from "../lib/utils";
-import { fitInside } from "../lib/stage";
 import { Badge } from "./ui/badge";
-
-type Picture = { imageUrl: string; width: number; height: number };
+import { PagePicture, type Picture } from "./PagePicture";
 
 /**
  * 「結合…」で相手を選んでいる間の、このカードの立場（#154）。
@@ -80,29 +78,7 @@ export function MergeCard({
   onChoose,
   onCancelPick,
 }: MergeCardProps) {
-  // 結合するときは、高い方に揃えて 2 枚を横に並べた寸法で置く。サイドカーが
-  // 貼り合わせるときと同じ揃え方
-  const joinedHeight = partner
-    ? Math.max(page.height, partner.height)
-    : page.height;
-  const ownWidth = (page.width * joinedHeight) / page.height;
-  const partnerWidth = partner
-    ? (partner.width * joinedHeight) / partner.height
-    : 0;
-  const display = fitInside(
-    { width: ownWidth + partnerWidth, height: joinedHeight },
-    { width: boxWidth, height: boxHeight },
-  );
-  const scale = display.height / joinedHeight;
   const candidate = kind === "candidate";
-  // 候補の継ぎ目。貼り合わせる 2 枚なら境目、割った対なら割った位置
-  const seam = !candidate
-    ? null
-    : partner
-      ? partnerWidth * scale
-      : seamX !== undefined
-        ? (seamX / page.width) * display.width
-        : null;
   const badge =
     kind === "candidate"
       ? { text: "結合候補", className: "bg-warn text-canvas" }
@@ -134,42 +110,31 @@ export function MergeCard({
         className="relative flex flex-none items-center justify-center bg-canvas"
         style={{ height: boxHeight }}
       >
-        <div
-          className={cn(
-            "relative flex overflow-hidden",
-            candidate &&
-              "outline-2 outline-offset-2 outline-warn outline-dashed",
-          )}
-          style={{ width: display.width, height: display.height }}
+        <PagePicture
+          label={label}
+          page={page}
+          partner={partner}
+          boxWidth={boxWidth}
+          boxHeight={boxHeight}
+          draft={candidate}
+          imageTestId="merge-image"
+          partnerTestId="merge-partner-image"
         >
-          {partner ? (
-            <img
-              data-testid="merge-partner-image"
-              className="block h-full object-contain"
-              style={{ width: partnerWidth * scale }}
-              src={partner.imageUrl}
-              alt={`${label} ページの左に並ぶページ`}
-              loading="lazy"
-            />
-          ) : null}
-          <img
-            data-testid="merge-image"
-            // 割った対の半分は寸法を割った位置から見積もる。外れても絵が
-            // 歪まないよう、箱の中に収めて描く
-            className="block h-full object-contain"
-            style={{ width: ownWidth * scale }}
-            src={page.imageUrl}
-            alt={`${label} ページ`}
-            loading="lazy"
-          />
-          {seam !== null ? (
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-warn"
-              style={{ left: seam - 1 }}
-            />
-          ) : null}
-        </div>
+          {(display) =>
+            candidate && (partner || seamX !== undefined) ? (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-warn"
+                style={{
+                  left:
+                    (partner
+                      ? display.seam
+                      : (seamX! / page.width) * display.width) - 1,
+                }}
+              />
+            ) : null
+          }
+        </PagePicture>
         {/* 絵の上に載るので、半透明の地では読めない。地を塗りつぶす */}
         {badge ? (
           <Badge

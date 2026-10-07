@@ -45,6 +45,7 @@ export type SplitScanRow = {
    * 結合した（#139）ページ。「結合・復元した画像」として分割対象を選べる
    */
   kept_whole: boolean;
+  deleted: boolean;
   /** 次の行と継ぎ目の色がつながっていて、2 枚で 1 枚の見開きらしいか（#149） */
   merge_suggested: boolean;
   /** 割った対の 2 枚の継ぎ目がつながっていて、戻せば見開きらしいか（#154） */
@@ -85,6 +86,7 @@ export type SplitRow = {
   detected: boolean;
   /** 結合・復元して 1 枚にした行（kept_whole） */
   keptWhole: boolean;
+  deleted: boolean;
   checked: boolean;
   /** 割る位置。元画像の画素で持ち、描画のときだけ割合に直す */
   x: number;
@@ -106,7 +108,7 @@ export type SplitRow = {
   suggested: boolean;
   /** 割った対を、割る前の 1 枚へ戻すよう勧める（#154） */
   rejoin: boolean;
-  stored: { checked: boolean; x: number };
+  stored: { checked: boolean; x: number; deleted: boolean };
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -151,6 +153,7 @@ export function scanResultOf(value: unknown): SplitScanResult {
       split: positionOf(row.split),
       displaced: row.displaced === true,
       kept_whole: row.kept_whole === true,
+      deleted: row.deleted === true,
       merge_suggested: row.merge_suggested === true,
       rejoin_suggested: row.rejoin_suggested === true,
     };
@@ -223,13 +226,14 @@ export function rowsFrom(result: SplitScanResult): SplitRow[] {
       source: row.source,
       detected: row.is_spread,
       keptWhole: row.kept_whole,
+      deleted: row.deleted,
       checked,
       x,
       displaced: row.displaced,
       mergeNext: false,
       suggested: row.merge_suggested,
       rejoin: row.rejoin_suggested,
-      stored: { checked: row.split !== null, x },
+      stored: { checked: row.split !== null, x, deleted: row.deleted },
     };
   });
 }
@@ -248,6 +252,7 @@ export function isWide(row: SplitRow): boolean {
 export function isPending(row: SplitRow): boolean {
   return (
     row.mergeNext ||
+    row.deleted !== row.stored.deleted ||
     row.checked !== row.stored.checked ||
     (row.checked && (row.x !== row.stored.x || row.displaced))
   );
@@ -267,6 +272,7 @@ export function isAbsorbed(rows: SplitRow[], index: number): boolean {
 export function canMergeNext(rows: SplitRow[], index: number): boolean {
   const single = (row: SplitRow | undefined) =>
     row !== undefined &&
+    !row.deleted &&
     row.names.length === 1 &&
     !row.checked &&
     !row.detected &&
@@ -292,7 +298,10 @@ export function isSplitTarget(
   row: SplitRow,
   source: SplitSource = "original",
 ): boolean {
-  if (row.stored.checked || row.mergeNext) return false;
+  if (row.deleted) return false;
+  if (row.mergeNext || (row.stored.checked && !row.checked))
+    return source !== "original";
+  if (row.stored.checked) return false;
   return row.keptWhole
     ? source !== "original"
     : row.detected && source !== "edited";
@@ -303,7 +312,12 @@ export function isSplitTarget(
  * index は先のページの行
  */
 export function isMergeCandidate(rows: SplitRow[], index: number): boolean {
-  return rows[index].suggested && canMergeNext(rows, index);
+  return (
+    rows[index].suggested &&
+    !rows[index].keptWhole &&
+    !rows[index + 1]?.keptWhole &&
+    canMergeNext(rows, index)
+  );
 }
 
 /**
@@ -311,12 +325,22 @@ export function isMergeCandidate(rows: SplitRow[], index: number): boolean {
  * つながっている対。①で全部の横長を分けたあと、本当の見開きだけを戻す
  */
 export function isRejoinCandidate(row: SplitRow): boolean {
-  return row.names.length === 2 && row.rejoin && row.stored.checked;
+  return (
+    !row.deleted && row.names.length === 2 && row.rejoin && row.stored.checked
+  );
 }
 
 /** ②の候補（送りボタンが辿り、Enter で切り替える行） */
 export function isMergeTarget(rows: SplitRow[], index: number): boolean {
-  return isMergeCandidate(rows, index) || isRejoinCandidate(rows[index]);
+  const row = rows[index];
+  if (row.deleted || isAbsorbed(rows, index)) return false;
+  return (
+    row.keptWhole ||
+    row.mergeNext ||
+    (row.names.length === 2 && !row.checked) ||
+    isMergeCandidate(rows, index) ||
+    isRejoinCandidate(row)
+  );
 }
 
 /**
@@ -339,8 +363,17 @@ export function splitAll(
   source: SplitSource = "original",
 ): SplitRow[] {
   return rows.map((row) =>
-    isSplitTarget(row, source) ? { ...row, checked: true } : row,
+    isSplitTarget(row, source) && (row.mergeNext || !row.checked)
+      ? splitRow(row)
+      : row,
   );
+}
+
+/** 未保存の結合は取り消し、保存済みの画像は分割する */
+export function splitRow(row: SplitRow): SplitRow {
+  return row.mergeNext
+    ? { ...row, mergeNext: false }
+    : { ...row, checked: !row.checked };
 }
 
 /** ②の候補をすべて結合する。割った対の候補は割る前へ戻す */
@@ -357,12 +390,12 @@ export function mergeAll(rows: SplitRow[]): SplitRow[] {
 }
 
 /**
- * ②で格子に並べる 1 枚ぶん（#154）。
+ * 両モード共通の格子に並べる 1 枚ぶん。
  *
- * ②はページ単位で並べる。割った対は 2 枚の単ページとして出し、継ぎ目が
+ * ページ単位で並べる。割った対は 2 枚の単ページとして出し、継ぎ目が
  * つながる対だけを、割る前の 1 枚（結合の候補）として出す。
  */
-export type MergeUnit = {
+export type PageUnit = {
   /** 格子の中で 1 つに決まる名前。割った対の半分は行の番号と part で分ける */
   key: string;
   /**
@@ -380,9 +413,9 @@ export type MergeUnit = {
   via?: "merge" | "rejoin";
 };
 
-/** 行から②の並びを組み立てる */
-export function mergeUnits(rows: SplitRow[]): MergeUnit[] {
-  const units: MergeUnit[] = [];
+/** 行から共通の並びを組み立てる */
+export function pageUnits(rows: SplitRow[]): PageUnit[] {
+  const units: PageUnit[] = [];
   rows.forEach((row, index) => {
     const previous = index - 1;
     // 結合する・結合の候補の 2 枚目は、1 枚目のカードに一緒に描く
@@ -424,24 +457,18 @@ export function mergeUnits(rows: SplitRow[]): MergeUnit[] {
  */
 export function partnersOf(
   rows: SplitRow[],
-  units: MergeUnit[],
-  unit: MergeUnit,
+  units: PageUnit[],
+  unit: PageUnit,
 ): string[] {
-  if (unit.kind !== "page") return [];
+  if (unit.kind !== "page" || rows[unit.row].deleted) return [];
   if (unit.part !== undefined) return [`${unit.row}:${1 - unit.part}`];
-  const pages = new Set(
-    units
-      .filter((item) => item.kind === "page" && item.part === undefined)
-      .map((item) => item.key),
-  );
+  const visible = units.filter((item) => !rows[item.row].deleted);
+  const at = visible.findIndex((item) => item.key === unit.key);
   const partners: string[] = [];
-  const before = unit.row - 1;
-  const after = unit.row + 1;
-  if (pages.has(String(before)) && canMergeNext(rows, before)) {
-    partners.push(String(before));
-  }
-  if (pages.has(String(after)) && canMergeNext(rows, unit.row)) {
-    partners.push(String(after));
+  for (const other of [visible[at - 1], visible[at + 1]]) {
+    if (!other || other.kind !== "page" || other.part !== undefined) continue;
+    const [first, second] = [unit.row, other.row].sort((a, b) => a - b);
+    if (canMergeNext([rows[first], rows[second]], 0)) partners.push(other.key);
   }
   return partners;
 }
@@ -449,11 +476,20 @@ export function partnersOf(
 /** 2 枚を結合した一覧。a・b は partnersOf で選べる組であること */
 export function joinedRows(
   rows: SplitRow[],
-  a: MergeUnit,
-  b: MergeUnit,
+  a: PageUnit,
+  b: PageUnit,
 ): SplitRow[] {
   if (a.part !== undefined) return replaceRow(rows, a.row, { checked: false });
-  return replaceRow(rows, Math.min(a.row, b.row), { mergeNext: true });
+  const [first, second] = [a.row, b.row].sort((x, y) => x - y);
+  if (second === first + 1) return replaceRow(rows, first, { mergeNext: true });
+  const next = [...rows];
+  const [partner] = next.splice(second, 1);
+  next.splice(first + 1, 0, partner);
+  return next.map((row, index) => ({
+    ...row,
+    suggested: false,
+    mergeNext: index === first || row.mergeNext,
+  }));
 }
 
 /** 分割の対象になりうる行。判定に漏れても、手で入れれば対象になる */
@@ -461,7 +497,7 @@ export function isCandidate(
   row: SplitRow,
   source: SplitSource = "original",
 ): boolean {
-  return isSplitTarget(row, source) || row.checked;
+  return !row.deleted && (isSplitTarget(row, source) || row.checked);
 }
 
 /** 保留を全部捨て、開いたときの姿へ戻す */
@@ -470,6 +506,7 @@ export function restoredRows(rows: SplitRow[]): SplitRow[] {
     ...row,
     checked: row.stored.checked,
     x: row.stored.x,
+    deleted: row.stored.deleted,
     mergeNext: false,
   }));
 }
@@ -490,6 +527,8 @@ export function replaceRow(
 export function pageNumbers(rows: SplitRow[]): number[][] {
   let next = 1;
   return rows.map((row, index) => {
+    if (row.deleted || (isAbsorbed(rows, index) && rows[index - 1].deleted))
+      return [];
     if (isAbsorbed(rows, index)) return [next - 1];
     const numbers = row.checked ? [next, next + 1] : [next];
     next += numbers.length;
@@ -499,6 +538,7 @@ export function pageNumbers(rows: SplitRow[]): number[][] {
 
 /** 番号の札に出す文字。2 ページ分は範囲で書く */
 export function numberLabel(numbers: number[]): string {
+  if (numbers.length === 0) return "削除済み";
   return numbers.length === 2
     ? `${numbers[0]}${RANGE_DASH}${numbers[1]}`
     : `${numbers[0]}`;
@@ -508,7 +548,8 @@ export function numberLabel(numbers: number[]): string {
 export function resultTotal(rows: SplitRow[]): number {
   return rows.reduce(
     (total, row, index) =>
-      total + (isAbsorbed(rows, index) ? 0 : row.checked ? 2 : 1),
+      total +
+      (row.deleted || isAbsorbed(rows, index) ? 0 : row.checked ? 2 : 1),
     0,
   );
 }
@@ -528,6 +569,7 @@ export function intentRows(rows: SplitRow[]) {
           names: [...row.names, ...rows[index + 1].names],
           split: null,
           merge: true,
+          deleted: row.deleted,
         },
       ];
     }
@@ -536,6 +578,7 @@ export function intentRows(rows: SplitRow[]) {
         names: row.names,
         split: row.checked ? { x: row.x } : null,
         merge: false,
+        deleted: row.deleted,
       },
     ];
   });
@@ -565,6 +608,14 @@ export function summaryOf(rows: SplitRow[]): string {
   const merged = rows.filter((row) => row.mergeNext).length;
 
   const parts: string[] = [];
+  const removed = rows.filter(
+    (row) => row.deleted && !row.stored.deleted,
+  ).length;
+  const restored = rows.filter(
+    (row) => !row.deleted && row.stored.deleted,
+  ).length;
+  if (removed > 0) parts.push(`${removed} 件のページを削除します（復元可能）`);
+  if (restored > 0) parts.push(`${restored} 件のページを復元します`);
   if (fresh > 0) parts.push(`${fresh} 枚を 2 ページに分けます`);
   if (moved > 0) parts.push(`${moved} 枚の分割位置を直します`);
   if (reverted > 0) parts.push(`${reverted} 枚を 1 ページに戻します`);
@@ -573,7 +624,8 @@ export function summaryOf(rows: SplitRow[]): string {
   if (parts.length === 0) {
     return "変更はありません";
   }
-  const changesCount = fresh > 0 || reverted > 0 || merged > 0;
+  const changesCount =
+    fresh > 0 || reverted > 0 || merged > 0 || removed > 0 || restored > 0;
   // 分割と結合をまとめて採用すると文が長くなる。ツールバーに収まるよう短く書く
   const suffix = changesCount ? ` → 全 ${resultTotal(rows)} ページ` : "";
   return parts.join(" · ") + suffix;

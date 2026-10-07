@@ -54,17 +54,17 @@ import {
   isMergeTarget,
   isPending,
   isSplitTarget,
-  isWide,
   joinedRows,
   mergeAll,
-  mergeUnits,
+  pageUnits,
   numberLabel,
   pageNumbers,
   partnersOf,
   replaceRow,
   splitAll,
+  splitRow,
   summaryOf,
-  type MergeUnit,
+  type PageUnit,
   type SplitRow,
   type SplitSource,
   type Step,
@@ -140,6 +140,7 @@ export function FileEditor({
   // 利用者が選んだステップ。選ぶまでは、開いた本の中身から決める（firstStep）
   const [chosen, setChosen] = useState<Step | null>(null);
   const [splitSource, setSplitSource] = useState<SplitSource>("original");
+  const [showDeleted, setShowDeleted] = useState(false);
   // 表示方向はページ順を変えず、画面の並びだけに適用する
   const [direction, setDirection] = useStoredString("editor.direction");
   const [adjusting, setAdjusting] = useState<string | null>(null);
@@ -165,7 +166,7 @@ export function FileEditor({
   );
   // 列の幅は auto-fill が決める。実測してから絵の箱の寸法を導く
   const [gridRef, gridSize] = useBoxSize<HTMLDivElement>();
-  // ②の「結合…」で相手を選び始めたカード（MergeUnit の key）（#154）
+  // ②の「結合…」で相手を選び始めたカード（PageUnit の key）（#154）
   const [picking, setPicking] = useState<string | null>(null);
 
   // 読み直すと行が減ることがある。開いたままの重ね枠が、もう無い行を
@@ -259,13 +260,17 @@ export function FileEditor({
   // ステップごとの対象。送りボタンはこれを辿る。件数は本に書かれている状態で
   // 数えるので、選んでも減らない
   const splitTargets = rows
-    .map((row, index) => (isSplitTarget(row, splitSource) ? index : -1))
+    .map((row, index) =>
+      !isAbsorbed(rows, index) && isSplitTarget(row, splitSource) ? index : -1,
+    )
     .filter((index) => index >= 0);
   const mergeTargets = rows
     .map((_, index) => (isMergeTarget(rows, index) ? index : -1))
     .filter((index) => index >= 0);
   const targets = step === "split" ? splitTargets : mergeTargets;
-  const canSplitAll = splitTargets.some((index) => !rows[index].checked);
+  const canSplitAll = splitTargets.some(
+    (index) => rows[index].mergeNext || !rows[index].checked,
+  );
   const canMergeAll = mergeTargets.some((index) =>
     isMergeCandidate(rows, index)
       ? !rows[index].mergeNext
@@ -291,7 +296,9 @@ export function FileEditor({
     editRows(next);
   };
   const select = (name: string, event: MouseEvent) => {
-    const names = rows.flatMap((row) => row.names);
+    const names = rows
+      .filter((row) => !row.deleted)
+      .flatMap((row) => row.names);
     if (event.shiftKey && lastClicked.current) {
       const [from, to] = [
         names.indexOf(lastClicked.current),
@@ -353,7 +360,7 @@ export function FileEditor({
         keptWhole: false,
         rejoin: false,
         suggested: false,
-        stored: { checked: false, x: row.x },
+        stored: { checked: false, x: row.x, deleted: row.stored.deleted },
       }));
     });
   const chooseCover = (name: string) => {
@@ -410,7 +417,9 @@ export function FileEditor({
 
   // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ
   const candidates = rows
-    .map((row, index) => (isCandidate(row, splitSource) ? index : -1))
+    .map((row, index) =>
+      !isAbsorbed(rows, index) && isCandidate(row, splitSource) ? index : -1,
+    )
     .filter((index) => index >= 0);
 
   /**
@@ -457,10 +466,16 @@ export function FileEditor({
    * 指した対象を切り替える。①は分ける・分けない、②は結合する・しない
    * （割った対の候補は、割る前へ戻す・戻さない）
    */
-  const toggleTarget = (index: number) =>
-    step === "merge" && isMergeCandidate(rows, index)
-      ? setMerge(index, !rows[index].mergeNext)
-      : setChecked(index, !rows[index].checked);
+  const toggleTarget = (index: number) => {
+    const row = rows[index];
+    if (step === "split") {
+      edit(rows.map((item, at) => (at === index ? splitRow(item) : item)));
+    } else if (row.mergeNext || isMergeCandidate(rows, index)) {
+      setMerge(index, !row.mergeNext);
+    } else if (row.names.length === 2) {
+      setChecked(index, !row.checked);
+    }
+  };
 
   /**
    * 指したカードでのキー操作。Enter で切り替えて次の対象へ進む。← → で前後の
@@ -510,29 +525,20 @@ export function FileEditor({
     height: row.height,
   });
 
-  // ②の並び（#154）。割った対は 2 枚の単ページとして出す
-  const units: MergeUnit[] = step === "merge" ? mergeUnits(rows) : [];
-  const pageGroups =
-    step === "split"
-      ? rows.flatMap((row, index) =>
-          isAbsorbed(rows, index)
-            ? []
-            : [
-                row.mergeNext
-                  ? [...row.names, ...rows[index + 1].names]
-                  : row.names,
-              ],
-        )
-      : units.map((unit) => {
-          const row = rows[unit.row];
-          if (unit.part !== undefined) return [row.names[unit.part]];
-          return unit.via === "merge"
-            ? [...row.names, ...rows[unit.row + 1].names]
-            : row.names;
-        });
+  // 同じページの配列から両モードを描く。操作だけを切り替える
+  const units = pageUnits(rows).filter(
+    (unit) => showDeleted || !rows[unit.row].deleted,
+  );
+  const pageGroups = units.map((unit) => {
+    const row = rows[unit.row];
+    if (unit.part !== undefined) return [row.names[unit.part]];
+    return unit.via === "merge"
+      ? [...row.names, ...rows[unit.row + 1].names]
+      : row.names;
+  });
   const pickedUnit = units.find((unit) => unit.key === picking) ?? null;
   const pickable = pickedUnit ? partnersOf(rows, units, pickedUnit) : [];
-  const roleOf = (unit: MergeUnit): PickRole =>
+  const roleOf = (unit: PageUnit): PickRole =>
     pickedUnit === null
       ? "none"
       : unit.key === pickedUnit.key
@@ -542,63 +548,13 @@ export function FileEditor({
           : "dimmed";
 
   const opened = overlay === null ? null : (rows[overlay] ?? null);
+  const openedUnit = units.find((unit) => unit.row === overlay);
+  const openedPartner =
+    openedUnit?.via === "merge" && openedUnit.part === undefined
+      ? rows[openedUnit.row + 1]
+      : undefined;
 
-  const renderSplitCard = (row: SplitRow, index: number) => {
-    // 結合の相手はまとめたカードに含める。保存済みの結合は横長の 1 枚になる
-    if (isAbsorbed(rows, index)) return null;
-    const wide = isWide(row);
-    const span = wide && columns >= 2;
-    return (
-      <EditablePage
-        key={row.names[0]}
-        id={row.names[0]}
-        name={row.names[0]}
-        span={span}
-        cover={index === 0}
-        disabled={busy}
-        selected={selection.includes(row.names[0])}
-        onSelect={(event) => select(row.names[0], event)}
-        onZoom={() => setZoomed(row.names[0])}
-        canCover={!isPending(row) && !isAbsorbed(rows, index)}
-        onCover={() => chooseCover(row.names[0])}
-        onAdjust={() => setAdjusting(row.names[0])}
-      >
-        <div
-          inert={busy || coverDraft?.name === row.names[0]}
-          className={
-            coverDraft?.name === row.names[0]
-              ? "pointer-events-none opacity-70"
-              : undefined
-          }
-        >
-          <SplitCard
-            key={index}
-            index={index}
-            label={numberLabel(numbers[index])}
-            pending={isPending(row)}
-            applied={row.stored.checked && row.checked}
-            focused={focus === index}
-            checked={row.checked}
-            target={isSplitTarget(row, splitSource)}
-            keptWhole={row.keptWhole}
-            wide={wide}
-            span={span}
-            boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
-            boxHeight={pictureHeight}
-            width={row.width}
-            height={row.height}
-            x={row.x}
-            imageUrl={imageUrlOf(row)}
-            onToggle={() => setChecked(index, !row.checked)}
-            onMoveSplit={(x) => setSplit(index, x)}
-            onZoom={() => setOverlay(index)}
-          />
-        </div>
-      </EditablePage>
-    );
-  };
-
-  const renderMergeCard = (unit: MergeUnit) => {
+  const renderPage = (unit: PageUnit) => {
     const index = unit.row;
     const row = rows[index];
     const merging = unit.via === "merge";
@@ -609,8 +565,9 @@ export function FileEditor({
     const wide =
       unit.kind === "spread" || partner !== null || unit.via === "rejoin";
     const span = wide && columns >= 2;
-    const label =
-      unit.part !== undefined
+    const label = row.deleted
+      ? "削除済み"
+      : unit.part !== undefined
         ? String(numbers[index][unit.part])
         : unit.kind === "candidate" && merging
           ? // 候補はまだ 2 ページのまま
@@ -623,62 +580,137 @@ export function FileEditor({
         id={row.names[unit.part ?? 0]}
         name={row.names[unit.part ?? 0]}
         span={span}
-        cover={index === 0 && (unit.part ?? 0) === 0}
+        cover={
+          !row.deleted &&
+          index ===
+            rows.findIndex(
+              (item, at) => !item.deleted && !isAbsorbed(rows, at),
+            ) &&
+          (unit.part ?? 0) === 0
+        }
+        deleted={row.deleted}
+        displayName={row.deleted ? `削除したページ ${index + 1}` : undefined}
+        canDelete={row.deleted || unit.part === undefined || !isPending(row)}
+        deleteLabel={
+          unit.kind === "candidate"
+            ? "2 ページを削除（復元可能）"
+            : "ページを削除（復元可能）"
+        }
+        onDelete={() => {
+          const names =
+            unit.part !== undefined
+              ? [row.names[unit.part]]
+              : merging
+                ? [...row.names, ...rows[index + 1].names]
+                : row.names;
+          const next = unit.part !== undefined ? separatePages(rows) : rows;
+          edit(
+            next.map((item) =>
+              item.names.some((name) => names.includes(name))
+                ? { ...item, deleted: !row.deleted }
+                : item,
+            ),
+          );
+          if (coverDraft && names.includes(coverDraft.name))
+            setCoverDraft(undefined);
+          setSelection([]);
+          setOverlay(null);
+          setFocus(null);
+        }}
         disabled={busy}
         selected={selection.includes(row.names[unit.part ?? 0])}
         onSelect={(event) => select(row.names[unit.part ?? 0], event)}
         onZoom={() => setZoomed(row.names[unit.part ?? 0])}
-        canCover={!isPending(row) && !isAbsorbed(rows, index)}
+        canCover={!row.deleted && !isPending(row) && !isAbsorbed(rows, index)}
         onCover={() => chooseCover(row.names[unit.part ?? 0])}
         onAdjust={() => setAdjusting(row.names[unit.part ?? 0])}
       >
         <div
-          inert={busy || coverDraft?.name === row.names[unit.part ?? 0]}
-          className={
+          inert={
+            busy ||
+            row.deleted ||
             coverDraft?.name === row.names[unit.part ?? 0]
+          }
+          className={
+            row.deleted || coverDraft?.name === row.names[unit.part ?? 0]
               ? "pointer-events-none opacity-70"
               : undefined
           }
         >
-          <MergeCard
-            key={unit.key}
-            index={index}
-            part={unit.part}
-            label={label}
-            pending={isPending(row)}
-            focused={focus === index && unit.part === undefined}
-            kind={unit.kind}
-            span={span}
-            boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
-            boxHeight={pictureHeight}
-            page={
-              unit.part !== undefined ? halfOf(row, unit.part) : pictureOf(row)
-            }
-            partner={partner ? pictureOf(partner) : undefined}
-            seamX={unit.via === "rejoin" ? row.x : undefined}
-            pick={role}
-            onMerge={
-              unit.kind === "candidate" ? () => toggleTarget(index) : undefined
-            }
-            onCancelMerge={
-              unit.kind === "joined" && merging
-                ? () => setMerge(index, false)
-                : unit.kind === "joined"
-                  ? () => setChecked(index, true)
+          {step === "split" ? (
+            <SplitCard
+              index={index}
+              part={unit.part}
+              label={label}
+              actionLabel={numberLabel(numbers[index])}
+              pending={isPending(row)}
+              applied={row.stored.checked && row.checked}
+              focused={focus === index && unit.part === undefined}
+              checked={row.checked}
+              target={isSplitTarget(row, splitSource)}
+              keptWhole={row.keptWhole}
+              wide={wide}
+              span={span}
+              boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
+              boxHeight={pictureHeight}
+              page={
+                unit.part !== undefined
+                  ? halfOf(row, unit.part)
+                  : pictureOf(row)
+              }
+              partner={partner ? pictureOf(partner) : undefined}
+              joined={row.mergeNext || (row.stored.checked && !row.checked)}
+              candidate={unit.kind === "candidate" && merging}
+              x={row.x}
+              onToggle={() => toggleTarget(index)}
+              onMoveSplit={(x) => setSplit(index, x)}
+              onZoom={() => setOverlay(index)}
+            />
+          ) : (
+            <MergeCard
+              key={unit.key}
+              index={index}
+              part={unit.part}
+              label={label}
+              pending={isPending(row)}
+              focused={focus === index && unit.part === undefined}
+              kind={unit.kind}
+              span={span}
+              boxWidth={span ? columnWidth * 2 + GRID_GAP : columnWidth}
+              boxHeight={pictureHeight}
+              page={
+                unit.part !== undefined
+                  ? halfOf(row, unit.part)
+                  : pictureOf(row)
+              }
+              partner={partner ? pictureOf(partner) : undefined}
+              seamX={unit.via === "rejoin" ? row.x : undefined}
+              pick={role}
+              onMerge={
+                unit.kind === "candidate"
+                  ? () => toggleTarget(index)
                   : undefined
-            }
-            onPick={
-              partnersOf(rows, units, unit).length > 0
-                ? () => setPicking(unit.key)
-                : undefined
-            }
-            onChoose={
-              pickedUnit && role === "partner"
-                ? () => edit(joinedRows(rows, pickedUnit, unit))
-                : undefined
-            }
-            onCancelPick={() => setPicking(null)}
-          />
+              }
+              onCancelMerge={
+                unit.kind === "joined" && merging
+                  ? () => setMerge(index, false)
+                  : unit.kind === "joined"
+                    ? () => setChecked(index, true)
+                    : undefined
+              }
+              onPick={
+                partnersOf(rows, units, unit).length > 0
+                  ? () => setPicking(unit.key)
+                  : undefined
+              }
+              onChoose={
+                pickedUnit && role === "partner"
+                  ? () => edit(joinedRows(rows, pickedUnit, unit))
+                  : undefined
+              }
+              onCancelPick={() => setPicking(null)}
+            />
+          )}
         </div>
       </EditablePage>
     );
@@ -859,6 +891,15 @@ export function FileEditor({
           <label className="flex shrink-0 items-center gap-1.5">
             <input
               type="checkbox"
+              data-testid="show-deleted-pages"
+              checked={showDeleted}
+              onChange={(event) => setShowDeleted(event.target.checked)}
+            />
+            削除したページも表示
+          </label>
+          <label className="flex shrink-0 items-center gap-1.5">
+            <input
+              type="checkbox"
               data-testid="page-direction"
               checked={direction === "rtl"}
               onChange={(event) =>
@@ -922,11 +963,7 @@ export function FileEditor({
               }}
               onKeyDown={onCardKey}
             >
-              {columnWidth > 0
-                ? step === "split"
-                  ? rows.map(renderSplitCard)
-                  : units.map(renderMergeCard)
-                : null}
+              {columnWidth > 0 ? units.map(renderPage) : null}
             </div>
           </div>
         </SortableContext>
@@ -939,7 +976,12 @@ export function FileEditor({
             className="flex h-[90vh] w-[94vw] max-w-none! flex-col items-center"
             aria-describedby={undefined}
           >
-            <DialogTitle>{zoomed}（Esc で閉じる）</DialogTitle>
+            <DialogTitle>
+              {rows.find((row) => row.names.includes(zoomed))?.deleted
+                ? "削除したページ"
+                : zoomed}
+              （Esc で閉じる）
+            </DialogTitle>
             <img
               data-testid="lightbox-image"
               className="min-h-0 flex-1 object-contain"
@@ -959,7 +1001,21 @@ export function FileEditor({
           width={opened.width}
           height={opened.height}
           imageUrl={imageUrlOf(opened)}
-          onToggle={() => setChecked(overlay, !opened.checked)}
+          partner={
+            openedPartner
+              ? {
+                  ...pictureOf(openedPartner),
+                  imageUrl: imageUrlOf(openedPartner),
+                }
+              : undefined
+          }
+          candidate={
+            openedUnit?.kind === "candidate" && openedUnit.via === "merge"
+          }
+          onToggle={() => {
+            toggleTarget(overlay);
+            if (opened.mergeNext) setOverlay(null);
+          }}
           onMoveSplit={(x) => setSplit(overlay, x)}
           onClose={() => setOverlay(null)}
           onWalk={walk}

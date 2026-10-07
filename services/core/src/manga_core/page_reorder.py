@@ -26,6 +26,8 @@ from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.naming import natural_sort_key
 from manga_core.viewer_contract import (
+    DELETED_PREFIX,
+    deleted_position,
     is_page_source,
     needs_conversion,
     sequential_name,
@@ -60,6 +62,7 @@ class PageEntry:
     # 中身の照合用。中央ディレクトリに書いてあるので画素は展開しない。
     # 大きさだけでは、同じ大きさに収まる別の絵への差し替えを見分けられない
     crc: int = 0
+    deleted: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,7 @@ class OutputPage:
 
     source: str
     content: bytes | None = None
+    deleted: bool = False
 
 
 @dataclass(frozen=True)
@@ -210,11 +214,18 @@ def _output_names(outputs: Sequence[OutputPage]) -> tuple[str, ...]:
     2 回使う分割で後の 1 つしか残らず、片方の半分がどこにも書かれないまま
     エラーも出ずに消える。
     """
-    total = len(outputs)
-    return tuple(
-        sequential_name(position, total, Path(output.source).suffix)
-        for position, output in enumerate(outputs, 1)
-    )
+    total = sum(not output.deleted for output in outputs)
+    names: list[str] = []
+    visible = 0
+    for position, output in enumerate(outputs, 1):
+        suffix = Path(output.source).suffix
+        if output.deleted:
+            name = sequential_name(position, len(outputs), suffix)
+            names.append(f"{DELETED_PREFIX}{Path(name).stem}/.page{Path(name).suffix}")
+        else:
+            visible += 1
+            names.append(sequential_name(visible, total, suffix))
+    return tuple(names)
 
 
 def _content_for(output: OutputPage, replacements: Mapping[str, bytes]) -> bytes | None:
@@ -266,8 +277,9 @@ def _required_directories(
 class ZipPageEditor:
     """1 つの ZIP に対するページ一覧の取得と並び順の適用を担当する"""
 
-    def __init__(self, zip_path: Path):
+    def __init__(self, zip_path: Path, *, include_deleted: bool = False):
         self.zip_path = Path(zip_path)
+        self.include_deleted = include_deleted
         if not self.zip_path.is_file():
             raise PageReorderError(f"ファイルが見つかりません: {self.zip_path}")
         if not is_editable_archive(self.zip_path):
@@ -328,8 +340,9 @@ class ZipPageEditor:
         with self._lock:
             ordered = tuple(ordered_names)
             self._validate_order(ordered)
+            deleted = {page.name: page.deleted for page in self._pages}
             return self.apply_pages(
-                [OutputPage(name) for name in ordered],
+                [OutputPage(name, deleted=deleted[name]) for name in ordered],
                 progress=progress,
                 extra_entries=extra_entries,
                 replacements=replacements,
@@ -381,7 +394,7 @@ class ZipPageEditor:
             ):
                 return ReorderResult(
                     changed=False,
-                    page_count=len(pages),
+                    page_count=sum(not page.deleted for page in pages),
                     renamed_count=0,
                     times_restored=True,
                 )
@@ -406,7 +419,7 @@ class ZipPageEditor:
             self._pages = self._load_pages()
             return ReorderResult(
                 changed=True,
-                page_count=len(pages),
+                page_count=sum(not page.deleted for page in pages),
                 renamed_count=sum(
                     1
                     for source, name in zip(sources, names, strict=True)
@@ -435,7 +448,12 @@ class ZipPageEditor:
                 f"書き出した ZIP を読み直せませんでした: {error}"
             ) from error
 
-        pages = {name for name in written_names if is_image_name(name)}
+        pages = {
+            name
+            for name in written_names
+            if is_image_name(name)
+            or (self.include_deleted and deleted_position(name) is not None)
+        }
         missing = sorted(set(names) - pages)
         if missing:
             raise PageReorderError(f"書き出した ZIP にページが足りません: {missing}")
@@ -473,7 +491,14 @@ class ZipPageEditor:
                 infos = [
                     info
                     for info in archive.infolist()
-                    if not info.is_dir() and is_image_name(info.filename)
+                    if not info.is_dir()
+                    and (
+                        is_image_name(info.filename)
+                        or (
+                            self.include_deleted
+                            and deleted_position(info.filename) is not None
+                        )
+                    )
                 ]
         except zipfile.BadZipFile as error:
             raise PageReorderError(f"ZIP を読み込めません: {error}") from error
@@ -493,13 +518,23 @@ class ZipPageEditor:
                 f"同名の画像エントリが含まれており編集できません: {duplicated}"
             )
 
-        infos.sort(key=lambda info: natural_sort_key(info.filename))
+        visible = sorted(
+            (info for info in infos if deleted_position(info.filename) is None),
+            key=lambda info: natural_sort_key(info.filename),
+        )
+        for info in sorted(
+            (info for info in infos if deleted_position(info.filename) is not None),
+            key=lambda info: deleted_position(info.filename),
+        ):
+            visible.insert(deleted_position(info.filename) - 1, info)
+        infos = visible
         return tuple(
             PageEntry(
                 name=info.filename,
                 size=info.file_size,
                 modified=_format_modified(info.date_time),
                 crc=info.CRC,
+                deleted=deleted_position(info.filename) is not None,
             )
             for info in infos
         )
@@ -712,11 +747,14 @@ class ZipPageEditor:
 
     def _reject_name_collisions(self, names: tuple[str, ...]) -> None:
         """連番名が画像以外のエントリと衝突していないか確認する"""
+        consumed = {page.name for page in self._pages}
         with zipfile.ZipFile(self.zip_path, "r") as archive:
             others = {
                 info.filename
                 for info in archive.infolist()
-                if not info.is_dir() and not is_image_name(info.filename)
+                if not info.is_dir()
+                and not is_image_name(info.filename)
+                and info.filename not in consumed
             }
         conflicts = sorted(others & set(names))
         if conflicts:
