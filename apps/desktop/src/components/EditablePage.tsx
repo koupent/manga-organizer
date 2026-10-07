@@ -20,6 +20,7 @@ export function EditablePage({
   selected,
   onSelect,
   onZoom,
+  zoomLabel,
   canCover,
   onCover,
   onAdjust,
@@ -38,6 +39,7 @@ export function EditablePage({
   selected: boolean;
   onSelect: (event: MouseEvent) => void;
   onZoom: () => void;
+  zoomLabel: string;
   canCover: boolean;
   onCover: () => void;
   onAdjust: () => void;
@@ -126,8 +128,8 @@ export function EditablePage({
           size="icon"
           className="size-6"
           data-testid="zoom"
-          title="原寸で表示"
-          aria-label={`${displayName} を原寸で表示`}
+          title={zoomLabel}
+          aria-label={zoomLabel}
           disabled={disabled}
           onClick={onZoom}
         >

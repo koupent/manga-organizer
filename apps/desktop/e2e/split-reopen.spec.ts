@@ -236,7 +236,7 @@ test.describe("ページ分割: 割った本を開き直す", () => {
       `畳んだ行の幅が ${Math.round(folded.width)}px、縦長は ${Math.round(plain.width)}px`,
     ).toBeCloseTo(plain.width, 0);
 
-    await cardAt(page, 2).getByTestId("split-zoom").click();
+    await page.getByTestId("editable-page").nth(2).getByTestId("zoom").click();
 
     // Assert - 線は保存された位置に出る。読み取りの値と、実際に描かれて
     // いる位置の両方を見る。片方だけだと、値は正しいのに絵の上では
