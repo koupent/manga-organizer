@@ -534,7 +534,8 @@ export function FileEditor({
   });
 
   // 同じページの配列から両モードを描く。操作だけを切り替える
-  const units = pageUnits(rows).filter(
+  const manualUnits = pageUnits(rows, false);
+  const units = (picking === null ? pageUnits(rows) : manualUnits).filter(
     (unit) => showDeleted || !rows[unit.row].deleted,
   );
   const pageGroups = units.map((unit) => {
@@ -711,7 +712,7 @@ export function FileEditor({
                     : undefined
               }
               onPick={
-                partnersOf(rows, units, unit).length > 0
+                partnersOf(rows, manualUnits, unit).length > 0
                   ? () => setPicking(unit.key)
                   : undefined
               }

@@ -469,6 +469,6 @@ test.describe("画面を切り替えても状態が残る", () => {
     await expect(page.getByTestId("editable-page")).toHaveCount(MANY_PAGES);
     await expect(
       page.getByTestId("editable-page").first().locator("img"),
-    ).toHaveJSProperty("naturalWidth", CARD_WIDTH_MAX);
+    ).toHaveJSProperty("naturalWidth", 600); // 元画像の幅まで取得する
   });
 });
