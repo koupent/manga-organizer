@@ -4,10 +4,65 @@ import { coloursOf, pageSizesOf, runPython } from "./archive";
 import { startSidecar, type Sidecar } from "./sidecar";
 
 let sidecar: Sidecar;
+test.use({ deviceScaleFactor: 2 });
 test.beforeAll(async () => {
   sidecar = await startSidecar();
 });
 test.afterAll(() => sidecar?.stop());
+
+test("結合保存後も表示幅に足りるプレビューを取得し、拡大・再オープン・モード切り替えで画質を保つ", async ({
+  page,
+}) => {
+  const archive = join(sidecar.workDir, "merge-preview.zip");
+  runPython(
+    `import io, sys, zipfile
+from PIL import Image, ImageDraw
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+ for i, colour in enumerate(('red', 'blue', 'green'), 1):
+  image = Image.new('RGB', (1600, 2400), colour)
+  draw = ImageDraw.Draw(image)
+  for x in range(0, 1600, 12): draw.line((x, 0, x, 2400), fill='black', width=2)
+  b=io.BytesIO(); image.save(b, 'PNG'); z.writestr(f'{i:03d}.png', b.getvalue())`,
+    archive,
+  );
+  await page.goto(
+    `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
+  );
+  await page.getByTestId("split-step-merge").click();
+  const cards = page.getByTestId("merge-card");
+  await expect(cards).toHaveCount(3);
+  await cards.first().hover();
+  await cards.first().getByTestId("merge-pick").click();
+  await cards.nth(1).getByTestId("merge-partner").click();
+  await page.getByTestId("split-confirm").click();
+  await expect(page.getByTestId("split-page-count")).toHaveText("2 ページ");
+  const enoughPixels = async (testId: string) => {
+    await expect
+      .poll(() =>
+        page
+          .getByTestId(testId)
+          .first()
+          .evaluate(
+            (img: HTMLImageElement) =>
+              img.naturalWidth /
+              (img.getBoundingClientRect().width * window.devicePixelRatio),
+          ),
+      )
+      .toBeGreaterThanOrEqual(0.99);
+  };
+  await enoughPixels("merge-image");
+  await page.getByTestId("split-card-width").fill("520");
+  await enoughPixels("merge-image");
+  await page.reload();
+  await page.getByTestId("split-step-merge").click();
+  await enoughPixels("merge-image");
+  await page.getByTestId("split-step-split").click();
+  await enoughPixels("split-image");
+  expect(Object.values(pageSizesOf(archive))).toEqual([
+    [3200, 2400],
+    [1600, 2400],
+  ]);
+});
 
 test("開き直した細い結合画像も、元から横長の画像と分けて一括分割できる", async ({
   page,

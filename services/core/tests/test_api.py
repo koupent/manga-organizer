@@ -505,6 +505,32 @@ class PagesTest(ApiTestBase):
         with Image.open(io.BytesIO(response.content)) as image:
             self.assertEqual((800, 1200), image.size)
 
+    def test_serves_wide_previews_without_downsizing_them_to_a_single_column(self):
+        buffer = io.BytesIO()
+        Image.new("RGB", (3200, 2400), "navy").save(buffer, "JPEG")
+        with zipfile.ZipFile(self.archive, "a") as archive:
+            archive.writestr("wide.jpg", buffer.getvalue())
+        before = self.archive.read_bytes()
+        for width in (800, 1500, 3000):
+            with self.subTest(width=width):
+                response = self.client.get(
+                    "/api/thumb",
+                    params=self.auth(
+                        {
+                            "archive": str(self.archive),
+                            "name": "wide.jpg",
+                            "width": width,
+                        }
+                    ),
+                )
+                self.assertEqual(200, response.status_code)
+                with Image.open(io.BytesIO(response.content)) as thumbnail:
+                    self.assertGreaterEqual(thumbnail.width, width)
+                    self.assertAlmostEqual(
+                        thumbnail.width / thumbnail.height, 4 / 3, places=2
+                    )
+        self.assertEqual(before, self.archive.read_bytes())
+
     def test_rejects_a_full_size_request_for_an_unknown_page(self):
         # Act / Assert
         response = self.client.get(
