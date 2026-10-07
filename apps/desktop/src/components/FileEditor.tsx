@@ -829,7 +829,7 @@ export function FileEditor({
         </>
       }
       hint={
-        <span className="flex items-center gap-3">
+        <span className="flex h-7 items-center gap-3">
           {step === "split" ? (
             <span className="flex shrink-0 items-center gap-1.5">
               分割対象
