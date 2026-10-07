@@ -31,6 +31,13 @@ import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { Empty } from "./ui/empty";
 import { Segmented } from "./ui/segmented";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { EditorLayout } from "./EditorLayout";
 import { MergeCard, type PickRole } from "./MergeCard";
 import { SplitCard } from "./SplitCard";
@@ -40,7 +47,6 @@ import { useSplitJob } from "../lib/split-job";
 import { useBoxSize } from "../lib/stage";
 import { cn } from "../lib/utils";
 import {
-  canUnmerge,
   firstStep,
   isAbsorbed,
   isCandidate,
@@ -58,9 +64,9 @@ import {
   replaceRow,
   splitAll,
   summaryOf,
-  unmergeAll,
   type MergeUnit,
   type SplitRow,
+  type SplitSource,
   type Step,
 } from "../lib/split";
 
@@ -86,9 +92,9 @@ const PICTURE_RATIO = 1.5;
 /** ステップごとの説明。見出しの下に 1 行で出す */
 const GUIDES: Record<Step, string> = {
   split:
-    "横長のページを 2 ページに分けます ・ 線を掴むと分ける位置を動かせます ・ 画像をクリックで大きく表示",
+    "画像を 2 ページに分けます ・ 線を掴むと分ける位置を動かせます ・ 画像をクリックで大きく表示",
   merge:
-    "端の絵がつながる 2 ページを候補にしています ・ 候補に無い 2 ページは「結合…」を押してから相手を押す ・ ✂ で見開きを解く",
+    "端の絵がつながる 2 ページを候補にしています ・ 候補に無い 2 ページは「結合…」を押してから相手を押す ・ 保存済みの画像を分けるときは「ページを分割」へ",
 };
 
 type FileEditorProps = {
@@ -133,6 +139,7 @@ export function FileEditor({
 
   // 利用者が選んだステップ。選ぶまでは、開いた本の中身から決める（firstStep）
   const [chosen, setChosen] = useState<Step | null>(null);
+  const [splitSource, setSplitSource] = useState<SplitSource>("original");
   // 表示方向はページ順を変えず、画面の並びだけに適用する
   const [direction, setDirection] = useStoredString("editor.direction");
   const [adjusting, setAdjusting] = useState<string | null>(null);
@@ -252,7 +259,7 @@ export function FileEditor({
   // ステップごとの対象。送りボタンはこれを辿る。件数は本に書かれている状態で
   // 数えるので、選んでも減らない
   const splitTargets = rows
-    .map((row, index) => (isSplitTarget(row) ? index : -1))
+    .map((row, index) => (isSplitTarget(row, splitSource) ? index : -1))
     .filter((index) => index >= 0);
   const mergeTargets = rows
     .map((_, index) => (isMergeTarget(rows, index) ? index : -1))
@@ -264,7 +271,6 @@ export function FileEditor({
       ? !rows[index].mergeNext
       : rows[index].checked,
   );
-  const canUnmergeAll = rows.some(canUnmerge);
 
   // 列の幅は auto-fill が決める。同じ規則で数えてから、絵の箱をそこへ合わせる
   const columns = Math.max(
@@ -404,7 +410,7 @@ export function FileEditor({
 
   // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ
   const candidates = rows
-    .map((row, index) => (isCandidate(row) ? index : -1))
+    .map((row, index) => (isCandidate(row, splitSource) ? index : -1))
     .filter((index) => index >= 0);
 
   /**
@@ -573,7 +579,7 @@ export function FileEditor({
             applied={row.stored.checked && row.checked}
             focused={focus === index}
             checked={row.checked}
-            target={isSplitTarget(row)}
+            target={isSplitTarget(row, splitSource)}
             keptWhole={row.keptWhole}
             wide={wide}
             span={span}
@@ -650,20 +656,15 @@ export function FileEditor({
             }
             partner={partner ? pictureOf(partner) : undefined}
             seamX={unit.via === "rejoin" ? row.x : undefined}
-            cut={
-              unit.kind === "spread" && row.checked
-                ? { x: row.x, onMove: (x) => setSplit(index, x) }
-                : undefined
-            }
             pick={role}
             onMerge={
               unit.kind === "candidate" ? () => toggleTarget(index) : undefined
             }
-            onUnmerge={
+            onCancelMerge={
               unit.kind === "joined" && merging
                 ? () => setMerge(index, false)
-                : unit.kind === "joined" || unit.kind === "spread"
-                  ? () => setChecked(index, !row.checked)
+                : unit.kind === "joined"
+                  ? () => setChecked(index, true)
                   : undefined
             }
             onPick={
@@ -715,9 +716,9 @@ export function FileEditor({
               variant="secondary"
               className="shrink-0"
               data-testid="split-all"
-              title="まだ分けていない横長のページを、すべて中央で分ける"
+              title="選んだ種類の画像を、分割線の位置ですべて分ける"
               disabled={!canSplitAll || busy}
-              onClick={() => edit(splitAll(rows))}
+              onClick={() => edit(splitAll(rows, splitSource))}
             >
               <Scissors />
               すべて分割
@@ -733,19 +734,6 @@ export function FileEditor({
             >
               <Link2 />
               候補をすべて結合
-            </Button>
-          ) : null}
-          {step === "merge" ? (
-            <Button
-              variant="ghost"
-              className="shrink-0"
-              data-testid="unmerge-all"
-              title="見開きをすべて解く（結合をやめ、横長のページは中央で分ける）"
-              disabled={!canUnmergeAll || busy}
-              onClick={() => edit(unmergeAll(rows))}
-            >
-              <Scissors />
-              すべて解く
             </Button>
           ) : null}
           <span className="flex shrink-0 items-center gap-1">
@@ -842,6 +830,28 @@ export function FileEditor({
       }
       hint={
         <span className="flex items-center gap-3">
+          {step === "split" ? (
+            <span className="flex shrink-0 items-center gap-1.5">
+              分割対象
+              <Select
+                value={splitSource}
+                disabled={busy}
+                onValueChange={(value: SplitSource) => {
+                  setSplitSource(value);
+                  setFocus(null);
+                }}
+              >
+                <SelectTrigger data-testid="split-source" aria-label="分割対象">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="original">元から横長の画像</SelectItem>
+                  <SelectItem value="edited">結合・復元した画像</SelectItem>
+                  <SelectItem value="all">両方</SelectItem>
+                </SelectContent>
+              </Select>
+            </span>
+          ) : null}
           <span className="min-w-0 flex-1 truncate">
             {GUIDES[step]} ・ 取っ手で並べ替え ・ ⋮／右クリックでサムネイル選択
             ・ Ctrl／Shift＋名前クリックで複数選択
