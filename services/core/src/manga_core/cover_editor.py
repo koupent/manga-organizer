@@ -241,7 +241,9 @@ def _transform_operations(transform: CoverTransform) -> tuple[Operation, ...]:
     if transform.split:
         operations.append(Operation("split", {"side": transform.split}))
     if transform.crop:
-        operations.append(Operation("crop", {"box": list(transform.crop)}))
+        operations.append(
+            Operation("crop", {"box": list(transform.crop), "purpose": "cover"})
+        )
     if transform.rotate % 360:
         operations.append(Operation("rotate", {"degrees": transform.rotate % 360}))
     return tuple(operations)

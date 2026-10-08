@@ -1120,6 +1120,58 @@
         }
       }
     },
+    "/api/jobs/margin-restore": {
+      "post": {
+        "summary": "Submit Margin Restore",
+        "operationId": "submit_margin_restore_api_jobs_margin_restore_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarginRestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/split-scan": {
       "post": {
         "summary": "Submit Split Scan",
@@ -2302,6 +2354,33 @@
           "margins"
         ],
         "title": "MarginRequest"
+      },
+      "MarginRestoreRequest": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Names"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive",
+          "token",
+          "names"
+        ],
+        "title": "MarginRestoreRequest"
       },
       "MarginScanRequest": {
         "properties": {

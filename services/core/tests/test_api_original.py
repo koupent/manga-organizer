@@ -158,7 +158,7 @@ class CoverOriginalTest(OriginalApiTestBase):
         # Assert - 何をした結果いまの 1 枚になったかが分かる。
         # 画面はこれを読んで、前回の範囲を枠として置き直す
         self.assertEqual(
-            [{"kind": "crop", "params": {"box": FIRST_CROP}}],
+            [{"kind": "crop", "params": {"box": FIRST_CROP, "purpose": "cover"}}],
             original["operations"],
             f"施した加工が復元できない: {original}",
         )
@@ -199,8 +199,8 @@ class CoverOriginalTest(OriginalApiTestBase):
         # Assert - 元画像から見た適用順で、2 回ぶんが並ぶ
         self.assertEqual(
             [
-                {"kind": "crop", "params": {"box": FIRST_CROP}},
-                {"kind": "crop", "params": {"box": SECOND_CROP}},
+                {"kind": "crop", "params": {"box": FIRST_CROP, "purpose": "cover"}},
+                {"kind": "crop", "params": {"box": SECOND_CROP, "purpose": "cover"}},
             ],
             original["operations"],
             f"加工の並びが元画像から見た順になっていない: {original}",

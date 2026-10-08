@@ -998,7 +998,20 @@ export function FileEditor({
         </span>
       }
     >
-      {chosen === "trim" ? <MarginControls job={margin} /> : null}
+      {chosen === "trim" ? (
+        <div className="flex flex-wrap items-start gap-3">
+          <MarginControls job={margin} />
+          <Button
+            variant="secondary"
+            data-testid="margin-restore"
+            disabled={busy || pending || margin.restorableCount === 0}
+            title="選択したページのうち、直前の画像が保存されている切り取りを戻します。分割・結合や順番は維持します。"
+            onClick={() => void margin.save(true)}
+          >
+            切り取り前に戻す（{margin.restorableCount} ページ）
+          </Button>
+        </div>
+      ) : null}
       {/* スクロールするのはこの箱であって窓ではない */}
       <DndContext
         sensors={sensors}

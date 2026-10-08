@@ -20,6 +20,8 @@ type PagesResponse =
 
 export type MarginRequest =
   paths["/api/jobs/margins"]["post"]["requestBody"]["content"]["application/json"];
+type MarginRestoreRequest =
+  paths["/api/jobs/margin-restore"]["post"]["requestBody"]["content"]["application/json"];
 type CoverResponse =
   paths["/api/cover"]["get"]["responses"][200]["content"]["application/json"];
 type JobResponse =
@@ -182,6 +184,10 @@ export class SidecarClient {
 
   trimMargins(request: MarginRequest): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/margins", request);
+  }
+
+  restoreMargins(request: MarginRestoreRequest): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/margin-restore", request);
   }
 
   /** 割った結果を書き込む。行は差分ではなくページ順に全部を送る */

@@ -7,7 +7,13 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from manga_api.split_job import archive_token, refuse_stale_token
-from manga_core.page_margins import common_margins, trim_pages, white_margins
+from manga_core.original_store import find_crop_source
+from manga_core.page_margins import (
+    common_margins,
+    restore_margins,
+    trim_pages,
+    white_margins,
+)
 from manga_core.page_reorder import ZipPageEditor
 
 
@@ -15,9 +21,12 @@ class MarginScanRequest(BaseModel):
     archive: str
 
 
-class MarginRequest(MarginScanRequest):
+class MarginRestoreRequest(MarginScanRequest):
     token: str
     names: list[str] = Field(min_length=1)
+
+
+class MarginRequest(MarginRestoreRequest):
     margins: tuple[float, float, float, float]
 
 
@@ -38,6 +47,7 @@ def scan_work(path: Path):
                         "width": width,
                         "height": height,
                         "margins": white_margins(data),
+                        "restorable": find_crop_source(path, data) is not None,
                     }
                 )
                 report(current=index + 1, total=len(visible))
@@ -52,20 +62,24 @@ def scan_work(path: Path):
     return work
 
 
-def confirm_work(path: Path, request: MarginRequest, thumbnails):
+def confirm_work(path: Path, request: MarginRequest | MarginRestoreRequest, thumbnails):
     def work(report):
         editor = ZipPageEditor(path, include_deleted=True)
         try:
             refuse_stale_token(editor.pages, request.token)
         finally:
             editor.close()
-        count = trim_pages(
-            path,
-            request.names,
-            request.margins,
-            progress=lambda current, total: report(current=current, total=total),
-        )
+
+        def progress(current, total):
+            report(current=current, total=total)
+
+        if isinstance(request, MarginRequest):
+            count = trim_pages(path, request.names, request.margins, progress=progress)
+            result = {"trimmed_count": count}
+        else:
+            count = restore_margins(path, request.names, progress=progress)
+            result = {"restored_count": count}
         thumbnails.discard(str(path))
-        return {"trimmed_count": count}
+        return result
 
     return work

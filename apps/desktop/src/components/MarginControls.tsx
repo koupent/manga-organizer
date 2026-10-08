@@ -9,7 +9,13 @@ import { Button } from "./ui/button";
 type Scan = {
   token: string;
   margins: MarginRequest["margins"];
-  pages: { name: string; width: number; height: number; margins: number[] }[];
+  pages: {
+    name: string;
+    width: number;
+    height: number;
+    margins: number[];
+    restorable: boolean;
+  }[];
 };
 
 /** 余白の走査・選択・保存。ページの表示は共通の一覧に任せる。 */
@@ -89,21 +95,34 @@ export function useMarginJob({
     };
   }, [active, archive, client, generation, scanGeneration, retry]);
 
-  const save = async () => {
+  const restorable = selected.filter((name) =>
+    scan?.pages.some((page) => page.name === name && page.restorable),
+  );
+  const save = async (restore = false) => {
     if (!scan || busy) return;
     setBusy(true);
-    setMessage("余白カットを保存しています…");
+    setMessage(
+      restore
+        ? "切り取り前の画像に戻しています…"
+        : "余白カットを保存しています…",
+    );
     try {
-      const accepted = await client.trimMargins({
+      const request = {
         archive,
         token: scan.token,
-        names: selected,
-        margins,
-      });
+        names: restore ? restorable : selected,
+      };
+      const accepted = restore
+        ? await client.restoreMargins(request)
+        : await client.trimMargins({ ...request, margins });
       const job = await client.waitForJob(accepted.id);
       if (job.state !== "succeeded")
         throw new Error(job.error ?? "保存に失敗しました");
-      setMessage(`${selected.length} ページの余白をカットしました`);
+      setMessage(
+        restore
+          ? `${restorable.length} ページを切り取り前に戻しました`
+          : `${selected.length} ページの余白をカットしました`,
+      );
       onSaved();
     } catch (error) {
       setMessage(sidecarReason(error));
@@ -125,6 +144,7 @@ export function useMarginJob({
     message,
     busy,
     canSave: !busy && !!scan && selected.length > 0 && valid,
+    restorableCount: restorable.length,
     save,
     rescan: () => {
       setScanGeneration(-1);

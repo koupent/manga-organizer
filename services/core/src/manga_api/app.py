@@ -790,6 +790,25 @@ def create_app(
         return JobAccepted(id=job_id)
 
     @app.post(
+        "/api/jobs/margin-restore",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_margin_restore(request: margin_job.MarginRestoreRequest) -> JobAccepted:
+        editor = path_guard.open_editor(request.archive, include_deleted=True)
+        path = editor.zip_path
+        try:
+            refuse_stale_token(editor.pages, request.token)
+        finally:
+            editor.close()
+        job_id = app.state.jobs.submit("margin-restore", {"archive": str(path)})
+        start_job(
+            app, job_id, margin_job.confirm_work(path, request, app.state.thumbnails)
+        )
+        return JobAccepted(id=job_id)
+
+    @app.post(
         "/api/jobs/split-scan",
         dependencies=guarded,
         status_code=status.HTTP_202_ACCEPTED,

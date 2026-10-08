@@ -428,6 +428,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/jobs/margin-restore": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Submit Margin Restore */
+    post: operations["submit_margin_restore_api_jobs_margin_restore_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/jobs/split-scan": {
     parameters: {
       query?: never;
@@ -996,6 +1013,15 @@ export interface components {
       names: string[];
       /** Margins */
       margins: [number, number, number, number];
+    };
+    /** MarginRestoreRequest */
+    MarginRestoreRequest: {
+      /** Archive */
+      archive: string;
+      /** Token */
+      token: string;
+      /** Names */
+      names: string[];
     };
     /** MarginScanRequest */
     MarginScanRequest: {
@@ -2120,6 +2146,42 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["MarginRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_margin_restore_api_jobs_margin_restore_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MarginRestoreRequest"];
       };
     };
     responses: {

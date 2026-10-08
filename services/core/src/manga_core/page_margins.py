@@ -7,7 +7,15 @@ from statistics import median
 
 from PIL import Image, ImageChops
 
-from manga_core.original_store import Derivation, Operation, plan_edit, plan_manifest
+from manga_core.original_store import (
+    Derivation,
+    Operation,
+    find_crop_source,
+    plan_edit,
+    plan_manifest,
+    plan_original,
+    read_original,
+)
 from manga_core.page_reorder import OutputPage, ProgressCallback, ZipPageEditor
 
 
@@ -102,12 +110,17 @@ def trim_pages(
                     options = {"quality": 100}
                 image.save(buffer, format=source.format, **options)
                 produced = buffer.getvalue()
+            # 分割や表紙調整の後でも、直前の画像そのものへ戻せるよう残す。
+            extras = plan_original(path, original, page.name, planned=extras)
             extras = plan_manifest(
                 path,
                 source=original,
                 source_name=page.name,
                 derivations=(
-                    Derivation(produced, (Operation("crop", {"box": list(box)}),)),
+                    Derivation(
+                        produced,
+                        (Operation("crop", {"box": list(box), "purpose": "margin"}),),
+                    ),
                 ),
                 planned=extras,
             )
@@ -117,6 +130,38 @@ def trim_pages(
                 progress(processed, len(selected))
         extras = plan_edit(path, "review", planned=extras)
         editor.apply_pages(outputs, progress=progress, extra_entries=extras)
+        return len(selected)
+    finally:
+        editor.close()
+
+
+def restore_margins(
+    path: Path,
+    names: Sequence[str],
+    progress: ProgressCallback | None = None,
+) -> int:
+    """選択ページの直前の切り取りだけを戻す。再圧縮せず原子的に保存する。"""
+    if not names or len(set(names)) != len(names):
+        raise ValueError("復元するページを指定してください")
+    editor = ZipPageEditor(path, include_deleted=True)
+    try:
+        selected = set(names)
+        if not selected <= {p.name for p in editor.pages if not p.deleted}:
+            raise ValueError("復元するページが見つかりません")
+        outputs = []
+        processed = 0
+        for page in editor.pages:
+            data = None
+            if page.name in selected:
+                ref = find_crop_source(path, editor.read_entry(page.name))
+                if ref is None:
+                    raise ValueError("切り取り直前の画像が保存されていません")
+                data = read_original(path, ref)
+                processed += 1
+                if progress:
+                    progress(processed, len(selected))
+            outputs.append(OutputPage(page.name, data, deleted=page.deleted))
+        editor.apply_pages(outputs, progress=progress)
         return len(selected)
     finally:
         editor.close()
