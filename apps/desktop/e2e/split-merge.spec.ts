@@ -447,6 +447,7 @@ test.describe("ページ分割・結合: 共通一覧のモード切り替え", 
     await page.goto(
       `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "split", archive })}`,
     );
+    await page.getByTestId("split-step-split").click();
     await page.getByTestId("split-all").click();
     await page.getByTestId("split-step-merge").click();
     await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
