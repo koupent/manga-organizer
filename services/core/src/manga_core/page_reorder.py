@@ -9,6 +9,7 @@
 import io
 import logging
 import os
+import shutil
 import struct
 import threading
 import time
@@ -23,6 +24,7 @@ from pathlib import Path, PurePosixPath
 from PIL import Image
 
 from manga_core.archive_save import create_archive_temp, replace_archive
+from manga_core.edit_reset import BACKUP_ENTRY, preserve_before_edit
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.naming import natural_sort_key
 from manga_core.viewer_contract import (
@@ -160,6 +162,13 @@ def _copy_entry(
     replacement を渡すとその中身で差し替える。差し替える側は呼び出し元が
     viewer の読める形式に整えて渡すので、ここでは変換しない。
     """
+    if info.filename == BACKUP_ENTRY and replacement is None:
+        with (
+            source.open(info) as reader,
+            destination.open(info, "w", force_zip64=True) as writer,
+        ):
+            shutil.copyfileobj(reader, writer, length=1024 * 1024)
+        return
     rewritten = replacement is not None
     data = replacement if rewritten else source.read(info)
     if not rewritten and convert and needs_conversion(info.filename):
@@ -410,6 +419,7 @@ class ZipPageEditor:
                 self._verify_carried_content(temp_path, pages, names, replaced)
                 self._verify_replacements(temp_path, written)
                 self._verify_extra_entries(temp_path, extras)
+                preserve_before_edit(temp_path, self.zip_path)
                 replace_archive(temp_path, self.zip_path)
             finally:
                 # 置き換えに成功していれば既に消えている

@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from manga_core import original_store as store  # noqa: E402
 from manga_core import page_splitter as splitter  # noqa: E402
 from manga_core.cover_editor import CoverTransform, apply_to_archive  # noqa: E402
+from manga_core.edit_reset import BACKUP_ENTRY, reset_edits  # noqa: E402
 from manga_core.file_organizer import FileOrganizer  # noqa: E402
 from manga_core.viewer_contract import is_viewer_page, sequential_name  # noqa: E402
 
@@ -221,6 +222,17 @@ class OrganizeKeepsCoverOriginalTest(OrganizeFixture):
             "加工前の画像がそもそも同梱されていない",
         )
 
+    def test_full_reset_survives_organizing(self):
+        with zipfile.ZipFile(self.archive) as archive:
+            before = archive.read(BACKUP_ENTRY)
+        organized = self.organize()
+        with zipfile.ZipFile(organized) as archive:
+            self.assertEqual(
+                zipfile.ZIP_STORED, archive.getinfo(BACKUP_ENTRY).compress_type
+            )
+        reset_edits(organized)
+        self.assertEqual(before, organized.read_bytes())
+
     def test_the_pre_edit_image_survives_organizing(self):
         # Arrange - 整理前に入っていた元画像の名前と中身
         entry = stored_originals(self.archive)[0]
@@ -285,6 +297,7 @@ class OrganizeKeepsCoverOriginalTest(OrganizeFixture):
         self.assertEqual(expected, viewer_page_names(organized))
         self.assertEqual(
             [
+                ".manga-organizer/before-edit.bin",
                 store.MANIFEST_ENTRY,
                 store.original_entry_name(self.original_hash, "page-1.jpg"),
             ],

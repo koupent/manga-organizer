@@ -9,7 +9,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => sidecar?.stop());
 
-test("全モードで一覧の配置と表示設定を共有し、余白カットは分割と結合の間に並ぶ", async ({
+test("全モードで一覧の配置と表示設定を共有し、余白カットが先頭・初期モードになる", async ({
   page,
 }) => {
   const archive = join(sidecar.workDir, "margin-layout.zip");
@@ -25,6 +25,12 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   await page.goto(
     `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
   );
+  await expect(page.getByTestId("split-step-trim")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("margin-card")).toHaveCount(12);
+  await page.getByTestId("split-step-split").click();
   const cards = page.getByTestId("editable-page");
   await expect(cards).toHaveCount(12);
   await cards
@@ -80,7 +86,7 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
     await modeButtons.evaluateAll((buttons) =>
       buttons.map((button) => button.getAttribute("data-testid")),
     ),
-  ).toEqual(["split-step-split", "split-step-trim", "split-step-merge"]);
+  ).toEqual(["split-step-trim", "split-step-split", "split-step-merge"]);
   await expect(
     page
       .locator('[data-testid="editable-page"][data-deleted="true"]')
@@ -250,15 +256,14 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   await page.goto(
     `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
   );
-  await expect(page.getByTestId("split-confirm")).toBeVisible();
+  await expect(page.getByTestId("margin-save")).toBeVisible();
   const primaryStyle = await page
-    .getByTestId("split-confirm")
+    .getByTestId("margin-save")
     .evaluate((button) => ({
       color: getComputedStyle(button).backgroundColor,
       height: button.getBoundingClientRect().height,
     }));
   const top = (await page.getByTestId("split-grid").boundingBox())!.y;
-  await page.getByTestId("split-step-trim").click();
   await expect(page.getByTestId("margin-progress")).toContainText(
     "全ページの余白を検出しています",
   );

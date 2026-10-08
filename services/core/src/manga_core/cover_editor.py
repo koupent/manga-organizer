@@ -15,6 +15,7 @@ ZIP 内の実画像を差し替える破壊的操作なので、page_reorder と
 import io
 import logging
 import os
+import shutil
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from pathlib import Path
 from PIL import Image, ImageStat
 
 from manga_core.archive_save import create_archive_temp, replace_archive
+from manga_core.edit_reset import BACKUP_ENTRY, preserve_before_edit
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.original_store import (
     Operation,
@@ -296,6 +298,7 @@ def record_review(path: Path) -> None:
     try:
         _write_replacement(path, temp, "", "", b"", extras)
         _verify(temp, "", 0, extras)
+        preserve_before_edit(temp, path)
         replace_archive(temp, path)
     finally:
         temp.unlink(missing_ok=True)
@@ -372,6 +375,7 @@ def _replace_in_place(
     try:
         _write_replacement(archive_path, temp_path, name, new_name, produced, extras)
         _verify(temp_path, new_name, len(produced), extras)
+        preserve_before_edit(temp_path, archive_path)
         replace_archive(temp_path, archive_path)
     finally:
         temp_path.unlink(missing_ok=True)
@@ -468,7 +472,14 @@ def _write_replacement(
             copied.compress_type = info.compress_type
             copied.external_attr = info.external_attr
             copied.comment = info.comment
-            destination.writestr(copied, source.read(info))
+            if info.filename == BACKUP_ENTRY:
+                with (
+                    source.open(info) as reader,
+                    destination.open(copied, "w", force_zip64=True) as writer,
+                ):
+                    shutil.copyfileobj(reader, writer, length=1024 * 1024)
+            else:
+                destination.writestr(copied, source.read(info))
 
         for name, data in sorted(added.items()):
             destination.writestr(

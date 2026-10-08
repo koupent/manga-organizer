@@ -7,6 +7,7 @@ from types import MappingProxyType
 
 from manga_core.archive_handler import ArchiveHandler
 from manga_core.archive_save import create_archive_temp, replace_archive
+from manga_core.edit_reset import BACKUP_ENTRY
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.organized_detector import judge_organized
 from manga_core.original_store import sidecar_members
@@ -274,7 +275,15 @@ class FileOrganizer:
         try:
             with zipfile.ZipFile(output_path, "a", zipfile.ZIP_DEFLATED) as archive:
                 for name, path in members:
-                    archive.write(path, name)
+                    archive.write(
+                        path,
+                        name,
+                        compress_type=(
+                            zipfile.ZIP_STORED
+                            if name == BACKUP_ENTRY
+                            else zipfile.ZIP_DEFLATED
+                        ),
+                    )
         except (OSError, ValueError, zipfile.BadZipFile) as e:
             # 書けなかったことを黙って飲み込むと、元画像を失った本が成功として
             # 並び、元のアーカイブまで消される。失敗として返して元を残す

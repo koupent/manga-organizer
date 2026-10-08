@@ -94,6 +94,7 @@ async function openSplit(page: Page, archive: string, cards: number) {
       `&mode=split&archive=${encodeURIComponent(archive)}`,
   );
   await expect(page.getByTestId("split-grid")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("split-step-split").click();
   await expect(page.locator('[data-testid="split-card"]')).toHaveCount(cards, {
     timeout: 30_000,
   });

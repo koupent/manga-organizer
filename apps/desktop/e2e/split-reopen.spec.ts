@@ -457,11 +457,11 @@ test.describe("ページ分割: 割った本を開き直す", () => {
 
     // 開き直しても見開きのまま残り、分割対象として扱える。
     await page.reload();
+    await showSplitStep(page);
     await expect(page.getByTestId("split-step-split")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    await showSplitStep(page);
     await expect(page.locator('[data-testid="split-card"]')).toHaveCount(4);
     await expect(cardAt(page, 2)).toHaveAttribute("data-checked", "false");
     await expect(cardAt(page, 2).getByTestId("split-kept-whole")).toBeVisible();

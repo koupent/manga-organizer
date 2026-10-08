@@ -45,6 +45,9 @@ async function open(page: Page, archive: string, mode: "split" | "reorder") {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=${mode}&archive=${encodeURIComponent(archive)}`,
   );
+  await page
+    .getByTestId(mode === "split" ? "split-step-split" : "split-step-merge")
+    .click();
 }
 
 const card = (page: Page, index: number) =>

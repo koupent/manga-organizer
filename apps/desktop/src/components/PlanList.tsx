@@ -6,6 +6,7 @@ import {
   Folder,
   Package,
   Trash2,
+  Undo2,
   TriangleAlert,
 } from "lucide-react";
 import {
@@ -111,7 +112,7 @@ const COLUMNS = [
   { key: "name", label: "変換後のファイル名", width: 260, min: 150 },
   { key: "count", label: "画像枚数", width: 64, min: 64 },
   { key: "status", label: "状態", width: 80, min: 76 },
-  { key: "actions", label: "操作", width: 64, min: 64 },
+  { key: "actions", label: "操作", width: 96, min: 96 },
 ] as const;
 const GRID =
   "40px var(--plan-source) 12px var(--plan-name) var(--plan-count) var(--plan-status) var(--plan-actions)";
@@ -152,6 +153,7 @@ type PlanListProps = {
   onOpenArchive: (path: string, mode: HandoffMode) => void;
   /** 本のファイルをごみ箱へ移す（#164）。確かめるのは受け取った側 */
   onTrash: (target: TrashTarget) => void;
+  onReset: (path: string) => void;
   /** 本ごとの編集済みの種類。整理済みの行の近道に印を出す（#143） */
   edits: EditMarks;
   /** 利用者が巻数を直した本の鍵 */
@@ -196,6 +198,7 @@ export function PlanList({
   sameVolume,
   onOpenArchive,
   onTrash,
+  onReset,
   edits,
   corrected,
   renamed,
@@ -256,6 +259,7 @@ export function PlanList({
     onToggle,
     onOpenArchive,
     onTrash,
+    onReset,
     onCorrect,
     onFill,
     onRename,
@@ -266,6 +270,7 @@ export function PlanList({
       onToggle,
       onOpenArchive,
       onTrash,
+      onReset,
       onCorrect,
       onFill,
       onRename,
@@ -290,6 +295,7 @@ export function PlanList({
       },
       openArchive: (path, mode) => latest.current.onOpenArchive(path, mode),
       trash: (target) => latest.current.onTrash(target),
+      reset: (path) => latest.current.onReset(path),
       correct: (row, volume) => latest.current.onCorrect(row, volume),
       fill: (row, volume) => latest.current.onFill(row, volume),
       rename: (row, name) => latest.current.onRename(row, name),
@@ -436,6 +442,7 @@ type RowHandlers = {
   toggle: (row: PlanRow, keep: boolean, range: boolean) => void;
   openArchive: (path: string, mode: HandoffMode) => void;
   trash: (target: TrashTarget) => void;
+  reset: (path: string) => void;
   correct: (row: PlanRow, volume: number | null) => void;
   fill: (row: PlanRow, volume: number) => void;
   rename: (row: PlanRow, name: string | null) => void;
@@ -668,6 +675,22 @@ const PlanListRow = memo(function PlanListRow({
               testIdPrefix="plan"
               onOpen={handlers.openArchive}
             />
+          ) : null}
+        </span>
+        <span className="flex w-6 shrink-0">
+          {finished ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-ink-faint"
+              data-testid="plan-reset"
+              title={`${name} の編集をすべて元に戻す`}
+              aria-label={`${name} の編集をすべて元に戻す`}
+              disabled={locked || edited.length === 0}
+              onClick={() => handlers.reset(madePath ?? row.source)}
+            >
+              <Undo2 />
+            </Button>
           ) : null}
         </span>
       </span>

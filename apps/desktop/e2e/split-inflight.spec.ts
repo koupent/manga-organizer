@@ -114,6 +114,7 @@ async function openSplit(page: Page, archive: string, cards: number) {
       `&mode=split&archive=${encodeURIComponent(archive)}`,
   );
   await expect(page.getByTestId("split-grid")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("split-step-split").click();
   await expect(cardsOf(page)).toHaveCount(cards, { timeout: 30_000 });
 }
 
@@ -398,6 +399,7 @@ test.describe("ページ分割: 見捨てた走査", () => {
 
     // Act - 次の本を選ぶ。3 本目の走査が始まる
     await chooseArchiveViaBrowser(page, next);
+    await page.getByTestId("split-step-split").click();
     await expect(cardsOf(page)).toHaveCount(BEFORE_PAGES, { timeout: 30_000 });
     expect(scans, "次の本の走査が投入されていない").toHaveLength(3);
 

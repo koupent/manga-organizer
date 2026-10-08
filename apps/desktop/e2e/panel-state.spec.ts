@@ -322,6 +322,7 @@ test.describe("画面を切り替えても状態が残る", () => {
       })),
     );
     await openApp(page, { mode: "reorder", archive });
+    await page.getByTestId("split-step-merge").click();
 
     const cards = page.getByTestId("editable-page");
     await expect(cards).toHaveCount(4);
@@ -428,6 +429,7 @@ test.describe("画面を切り替えても状態が残る", () => {
       })),
     );
     await openApp(page, { mode: "reorder", archive });
+    await page.getByTestId("split-step-merge").click();
     await expect(page.getByTestId("editable-page")).toHaveCount(MANY_PAGES);
     await expect(page.getByTestId("split-card-width")).toHaveValue(
       String(CARD_WIDTH_MAX),

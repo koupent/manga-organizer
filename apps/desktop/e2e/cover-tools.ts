@@ -3,6 +3,7 @@ import { expect, type Page } from "@playwright/test";
 export async function openCoverTools(page: Page, name?: string) {
   if (await page.getByRole("dialog").count())
     await page.keyboard.press("Escape");
+  await page.getByTestId("split-step-split").click();
   const cards = page.getByTestId("editable-page");
   await expect(cards.first()).toBeVisible({ timeout: 30_000 });
   const card = name

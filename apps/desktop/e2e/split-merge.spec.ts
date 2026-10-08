@@ -447,6 +447,7 @@ test.describe("ページ分割・結合: 共通一覧のモード切り替え", 
     await page.goto(
       `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "split", archive })}`,
     );
+    await page.getByTestId("split-step-split").click();
     await page.getByTestId("split-all").click();
     await page.getByTestId("split-step-merge").click();
     await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
@@ -515,6 +516,7 @@ async function splitEverything(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=split&archive=${encodeURIComponent(archive)}`,
   );
+  await page.getByTestId("split-step-split").click();
   await page.getByTestId("split-all").click();
   await page.getByTestId("split-confirm").click();
   await expect(page.getByTestId("split-page-count")).toHaveText("3 ページ", {

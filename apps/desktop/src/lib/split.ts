@@ -336,20 +336,6 @@ export function isMergeTarget(rows: SplitRow[], index: number): boolean {
   );
 }
 
-/**
- * 開いたときのステップ。①の対象があれば①から始める。中身が全部見開きの本は
- * ①から、ふつうの本や仕上げた本は②から始まる。
- *
- * 離れた対（#133）がある本も①から始める。離れた対は開いた時点で保留に数えるので、
- * ②から開くと、何も触っていないのに①へ移るたび「保存していない変更」を
- * 確かめられる
- */
-export function firstStep(rows: SplitRow[]): Step {
-  return rows.some((row) => isSplitTarget(row) || row.displaced)
-    ? "split"
-    : "merge";
-}
-
 /** すべての分割対象を分ける */
 export function splitAll(rows: SplitRow[]): SplitRow[] {
   return rows.map((row) =>

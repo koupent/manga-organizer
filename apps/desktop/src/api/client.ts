@@ -267,6 +267,10 @@ export class SidecarClient {
   }
 
   /** ファイルをごみ箱へ移す（#164）。消す前の確認は呼び出す側が済ませる */
+  resetEdits(archive: string): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/edit-reset", { archive });
+  }
+
   trashFile(path: string): Promise<Trashed> {
     return this.post<Trashed>("/api/files/trash", { path });
   }
