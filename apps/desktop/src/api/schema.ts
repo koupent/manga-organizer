@@ -394,6 +394,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/jobs/margin-scan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Submit Margin Scan */
+    post: operations["submit_margin_scan_api_jobs_margin_scan_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/jobs/margins": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Submit Margins */
+    post: operations["submit_margins_api_jobs_margins_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/jobs/split-scan": {
     parameters: {
       query?: never;
@@ -951,6 +985,22 @@ export interface components {
       unchanged: components["schemas"]["LibraryEntry"][];
       /** Conflicts */
       conflicts: components["schemas"]["LibraryConflict"][];
+    };
+    /** MarginRequest */
+    MarginRequest: {
+      /** Archive */
+      archive: string;
+      /** Token */
+      token: string;
+      /** Names */
+      names: string[];
+      /** Margins */
+      margins: [number, number, number, number];
+    };
+    /** MarginScanRequest */
+    MarginScanRequest: {
+      /** Archive */
+      archive: string;
     };
     /**
      * OperationView
@@ -1998,6 +2048,78 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["ReorderRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_margin_scan_api_jobs_margin_scan_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MarginScanRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  submit_margins_api_jobs_margins_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MarginRequest"];
       };
     };
     responses: {

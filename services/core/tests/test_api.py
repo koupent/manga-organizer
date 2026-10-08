@@ -333,6 +333,18 @@ class AllowedRootsTest(ApiTestBase):
                 "json": {"archive": target["archive"], "token": token, "rows": rows},
             }
 
+        def margin_body(target):
+            token, _ = self.scanned_rows(target["archive"])
+            return {
+                "params": self.auth(),
+                "json": {
+                    "archive": target["archive"],
+                    "token": token,
+                    "names": ["001.jpg"],
+                    "margins": [5, 0, 5, 0],
+                },
+            }
+
         page = {"name": "001.jpg"}
         return [
             GuardedCase("GET", "/api/pages", "archive", query(), "archive", 200),
@@ -359,6 +371,12 @@ class AllowedRootsTest(ApiTestBase):
             ),
             GuardedCase(
                 "POST", "/api/jobs/split", "archive", split_body, "archive", 202
+            ),
+            GuardedCase(
+                "POST", "/api/jobs/margin-scan", "archive", body(), "archive", 202
+            ),
+            GuardedCase(
+                "POST", "/api/jobs/margins", "archive", margin_body, "archive", 202
             ),
             GuardedCase(
                 "POST", "/api/jobs/analyze", "archives", body(), "archive_list", 202

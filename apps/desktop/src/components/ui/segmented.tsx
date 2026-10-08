@@ -6,10 +6,12 @@ export function Segmented<T extends string>({
   items,
   value,
   onChange,
+  disabled = false,
 }: {
   items: { id: T; label: ReactNode; testId?: string }[];
   value: T;
   onChange: (id: T) => void;
+  disabled?: boolean;
 }) {
   return (
     <div
@@ -20,6 +22,7 @@ export function Segmented<T extends string>({
         <button
           key={item.id}
           type="button"
+          disabled={disabled}
           data-testid={item.testId}
           aria-pressed={value === item.id}
           onClick={() => onChange(item.id)}
