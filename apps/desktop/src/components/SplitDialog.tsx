@@ -23,7 +23,6 @@ type SplitDialogProps = {
   height: number;
   imageUrl: string;
   partner?: Picture;
-  candidate: boolean;
   onToggle: () => void;
   onMoveSplit: (x: number) => void;
   onClose: () => void;
@@ -56,7 +55,6 @@ export function SplitDialog({
   height,
   imageUrl,
   partner,
-  candidate,
   onToggle,
   onMoveSplit,
   onClose,
@@ -99,7 +97,6 @@ export function SplitDialog({
               data-testid="split-dialog-check"
               aria-label={partner ? "結合を分ける" : "2 ページに分ける"}
               checked={checked}
-              disabled={candidate}
               onCheckedChange={onToggle}
             />
             {partner ? "結合を分ける" : "2 ページに分ける"}
@@ -180,9 +177,7 @@ export function SplitDialog({
             data-testid="split-readout"
           >
             {partner
-              ? candidate
-                ? "結合候補です。結合する操作は「ページを結合」で行います"
-                : "未保存の結合です。分けると結合を取り消します"
+              ? "未保存の結合です。分けると結合を取り消します"
               : readout(checked, x, width)}
           </span>
           <div className="flex-1" />
