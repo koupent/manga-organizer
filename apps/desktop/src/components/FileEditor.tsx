@@ -41,7 +41,6 @@ import { useSplitJob } from "../lib/split-job";
 import { fitInside, useBoxSize } from "../lib/stage";
 import { cn } from "../lib/utils";
 import {
-  firstStep,
   isAbsorbed,
   isCandidate,
   isMergeCandidate,
@@ -131,8 +130,8 @@ export function FileEditor({
     refresh,
   } = useSplitJob({ client, archive, onArchiveChanged });
 
-  // 利用者が選んだステップ。選ぶまでは、開いた本の中身から決める（firstStep）
-  const [chosen, setChosen] = useState<Step | "trim" | null>(null);
+  // 余白は分割前の画像で揃えるため、最初に余白カットを開く。
+  const [chosen, setChosen] = useState<Step | "trim">("trim");
   const [modeNotice, setModeNotice] = useState("");
   const [deletedVisibility, setDeletedVisibility] =
     useStoredString("editor.showDeleted");
@@ -180,7 +179,7 @@ export function FileEditor({
   const margin = useMarginJob({
     client,
     archive,
-    active: chosen === "trim",
+    active: active && chosen === "trim",
     generation: reloadKey,
     onSaved: () => {
       setReviewed(true);
@@ -252,7 +251,7 @@ export function FileEditor({
     );
   }
 
-  const step = (chosen === "trim" ? "split" : chosen) ?? firstStep(rows);
+  const step = chosen === "trim" ? "split" : chosen;
   const numbers = pageNumbers(rows);
   const pending = rows.some(isPending) || reordered || Boolean(coverDraft);
   const status =
@@ -791,12 +790,12 @@ export function FileEditor({
     <Segmented<Step | "trim">
       disabled={busy}
       items={[
+        { id: "trim", label: "余白カット", testId: "split-step-trim" },
         {
           id: "split",
           label: <StepLabel text="ページを分割" count={splitTargets.length} />,
           testId: "split-step-split",
         },
-        { id: "trim", label: "余白カット", testId: "split-step-trim" },
         {
           id: "merge",
           label: <StepLabel text="ページを結合" count={mergeTargets.length} />,

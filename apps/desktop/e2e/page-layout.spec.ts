@@ -44,6 +44,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await page.setViewportSize({ width: 1318, height: 890 });
   const url = `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`;
   await page.goto(url);
+  await page.getByTestId("split-step-merge").click();
   const cards = page.getByTestId("merge-card");
   await expect(cards).toHaveCount(16);
   const before = await layout(page);

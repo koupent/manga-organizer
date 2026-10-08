@@ -65,6 +65,7 @@ from manga_api.split_job import (
     scan_work,
 )
 from manga_core.cover_editor import COVER_ASPECT_RATIO, is_spread
+from manga_core.edit_reset import reset_edits
 from manga_core.input_expander import ARCHIVE_SUFFIXES
 from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
@@ -754,6 +755,26 @@ def create_app(
             "reorder", {"archive": str(path), "pages": len(request.order)}
         )
         start_job(app, job_id, reorder_work(path, request, app.state.thumbnails))
+        return JobAccepted(id=job_id)
+
+    @app.post(
+        "/api/jobs/edit-reset",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_edit_reset(request: margin_job.MarginScanRequest) -> JobAccepted:
+        editor = path_guard.open_editor(request.archive, include_deleted=True)
+        path = editor.zip_path
+        editor.close()
+
+        def work(report):
+            reset_edits(path)
+            app.state.thumbnails.discard(str(path))
+            return {"reset": True}
+
+        job_id = app.state.jobs.submit("edit-reset", {"archive": str(path)})
+        start_job(app, job_id, work)
         return JobAccepted(id=job_id)
 
     @app.post(

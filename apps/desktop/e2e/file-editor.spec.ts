@@ -14,6 +14,7 @@ async function open(page: Page, archive: string) {
   await page.goto(
     `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, archive, mode: "edit" })}`,
   );
+  await page.getByTestId("split-step-split").click();
   await expect(page.getByTestId("editable-page").first()).toBeVisible();
 }
 async function save(page: Page) {
@@ -98,6 +99,7 @@ test("左右の表示方向を替えても保存順は変わらず、再表示�
   await expect(page.getByTestId("split-confirm")).toHaveText("確認済みにする");
   expect(readFileSync(archive)).toEqual(before);
   await page.reload();
+  await page.getByTestId("split-step-split").click();
   await expect(page.getByTestId("page-direction")).toBeChecked();
   await save(page);
   expect(pageEntriesOf(archive)).toEqual(["001.png", "002.png", "003.png"]);

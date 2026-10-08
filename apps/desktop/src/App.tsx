@@ -75,6 +75,7 @@ export function App() {
   const [health, setHealth] = useState("");
   // 新しい版の案内。起動時と、設定の「更新を確認」が出す（#136）
   const [update, setUpdate] = useState<Update | null>(null);
+  const [resetVersion, setResetVersion] = useState(0);
   const [editsVersion, setEditsVersion] = useState(0);
 
   /**
@@ -374,6 +375,10 @@ export function App() {
               onOutputDirectoryChange={setOutputDirectory}
               onOpenProduced={openArchiveIn}
               editsVersion={editsVersion}
+              onEditsReset={(path) => {
+                archiveChanged();
+                if (path === archive) setResetVersion((value) => value + 1);
+              }}
               onAddSources={addSources}
               nativeDragging={nativeDragging}
               flashing={flashing}
@@ -384,7 +389,7 @@ export function App() {
         {opened.includes("edit") && client && archive ? (
           <Panel active={mode === "edit"}>
             <FileEditor
-              key={archive}
+              key={`${archive}:${resetVersion}`}
               client={client}
               archive={archive}
               active={mode === "edit"}

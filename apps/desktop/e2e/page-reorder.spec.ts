@@ -30,6 +30,8 @@ test.describe("ページ並べ替え", () => {
         `&archive=${encodeURIComponent(archive)}`,
     );
 
+    await page.getByTestId("split-step-split").click();
+
     // Assert - サムネイルが実際に描画される
     const cards = page.getByTestId("editable-page");
     await expect(cards).toHaveCount(3);
@@ -137,6 +139,7 @@ test.describe("複数選択・Undo・原寸表示", () => {
       `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
         `&archive=${encodeURIComponent(archive)}`,
     );
+    await page.getByTestId("split-step-split").click();
     await expect(page.getByTestId("editable-page")).toHaveCount(4);
     return archive;
   }
@@ -280,10 +283,12 @@ test.describe("ページ並べ替えの対象選択", () => {
         `[data-testid="browse-entry"][data-name="${name}"] .browser-name`,
       )
       .click();
+    await page.getByTestId("split-step-split").click();
   }
 
   /** カードを掴んで別のカードの位置まで運ぶ */
   async function dragCard(page: Page, from: number, to: number) {
+    await page.getByTestId("split-step-split").click();
     const cards = page.getByTestId("editable-page");
     await cards.nth(from).getByTestId("page-drag-handle").hover();
     await page.mouse.down();
@@ -556,6 +561,7 @@ async function openDenseArchive(page: Page, archive: string): Promise<void> {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&archive=${encodeURIComponent(archive)}`,
   );
+  await page.getByTestId("split-step-split").click();
   await expect(page.getByTestId("editable-page")).toHaveCount(DENSE_PAGE_COUNT);
 }
 

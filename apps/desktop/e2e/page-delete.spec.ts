@@ -31,6 +31,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await page.goto(
     `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
   );
+  await page.getByTestId("split-step-split").click();
   const cards = page.getByTestId("editable-page");
   await expect(cards).toHaveCount(3);
   await remove(cards.nth(1));
@@ -116,6 +117,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z: z.writestr('001.png', b.getvalue())
   await page.goto(
     `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
   );
+  await page.getByTestId("split-step-split").click();
   const cards = page.getByTestId("editable-page");
   await expect(cards).toHaveCount(1);
   await remove(cards.first());
@@ -154,6 +156,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await page.goto(
     `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
   );
+  await page.getByTestId("split-step-split").click();
   const cards = page.getByTestId("editable-page");
   await expect(cards).toHaveCount(2);
   await page.getByTestId("split-all").click();

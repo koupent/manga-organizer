@@ -285,6 +285,7 @@ class OrganizeKeepsCoverOriginalTest(OrganizeFixture):
         self.assertEqual(expected, viewer_page_names(organized))
         self.assertEqual(
             [
+                ".manga-organizer/before-edit.bin",
                 store.MANIFEST_ENTRY,
                 store.original_entry_name(self.original_hash, "page-1.jpg"),
             ],

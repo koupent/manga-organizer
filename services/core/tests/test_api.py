@@ -373,6 +373,9 @@ class AllowedRootsTest(ApiTestBase):
                 "POST", "/api/jobs/split", "archive", split_body, "archive", 202
             ),
             GuardedCase(
+                "POST", "/api/jobs/edit-reset", "archive", body(), "archive", 202
+            ),
+            GuardedCase(
                 "POST", "/api/jobs/margin-scan", "archive", body(), "archive", 202
             ),
             GuardedCase(
@@ -762,7 +765,13 @@ class JobTest(ApiTestBase):
         # 並べ替えたことは同梱の記録に残る（#143）。ページはそれ以外
         with zipfile.ZipFile(self.archive) as archive:
             self.assertEqual(
-                [".manga-organizer/manifest.json", "001.jpg", "002.jpg", "003.jpg"],
+                [
+                    ".manga-organizer/manifest.json",
+                    "001.jpg",
+                    "002.jpg",
+                    "003.jpg",
+                    ".manga-organizer/before-edit.bin",
+                ],
                 archive.namelist(),
             )
 

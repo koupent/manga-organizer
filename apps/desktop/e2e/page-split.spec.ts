@@ -131,6 +131,7 @@ async function openSplit(page: Page, archive: string, cards: number) {
     "aria-pressed",
     "true",
   );
+  await page.getByTestId("split-step-split").click();
   await expect(page.getByTestId("split-grid")).toBeVisible({ timeout: 30_000 });
   await expect(cardsOf(page)).toHaveCount(cards, { timeout: 30_000 });
 }
@@ -378,13 +379,8 @@ test.describe("ページ分割: 開いた直後と確定", () => {
     // Arrange - 縦長しか入っていない本
     const archive = writeTallOnlyArchive("見開きなし.zip");
 
-    // Act - ①の対象が無いので②から開く。①へ移る（#153）
-    await openSplit(page, archive, 0);
-    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    await page.getByTestId("split-step-split").click();
+    // 候補がなくても分割モードで全ページを手動操作できる。
+    await openSplit(page, archive, 4);
     await expect(cardsOf(page)).toHaveCount(4);
 
     // Assert - 空の画面にはしない。判定は外れうるので、一覧は出したまま
@@ -501,6 +497,7 @@ test.describe("ページ分割: 配置", () => {
     await expect(page.getByTestId("split-grid")).toBeVisible({
       timeout: 30_000,
     });
+    await page.getByTestId("split-step-split").click();
     await expect(cardsOf(page)).toHaveCount(5, { timeout: 30_000 });
     await page.unroute(/\/api\/jobs\/split-scan(\?|$)/);
     const loaded = await gridEdges(page);
