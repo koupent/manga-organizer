@@ -230,6 +230,7 @@ export function useSplitJob({
     confirm,
     refresh: () => {
       setBusy(true);
+      setReport(NOTHING);
       setReloadKey((key) => key + 1);
     },
     reordered:

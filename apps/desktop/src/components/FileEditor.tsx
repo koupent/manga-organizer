@@ -760,6 +760,7 @@ export function FileEditor({
         modes={modes}
         onBusy={setTrimBusy}
         onSaved={() => {
+          setReviewed(true);
           onArchiveChanged?.();
           refresh();
         }}

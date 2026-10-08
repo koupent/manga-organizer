@@ -65,4 +65,5 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   await page.screenshot({ path: test.info().outputPath("margin-editor.png") });
   await page.getByTestId("split-step-merge").click();
   await expect(page.getByTestId("merge-card")).toHaveCount(3);
+  await expect(page.getByTestId("split-confirm")).toBeDisabled();
 });
