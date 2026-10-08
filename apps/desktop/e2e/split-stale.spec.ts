@@ -93,6 +93,7 @@ async function openReorder(page: Page, archive: string) {
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +
       `&mode=reorder&archive=${encodeURIComponent(archive)}`,
   );
+  await page.getByTestId("split-step-merge").click();
   await expect(page.getByTestId("mode-edit")).toHaveAttribute(
     "aria-pressed",
     "true",

@@ -1158,6 +1158,7 @@ test.describe("整理後の受け渡し", () => {
     // Act - 戻って、同じ本のサムネイルを作る
     await page.getByTestId("mode-organize").click();
     await item(expected[1]).getByTestId("plan-to-edit").click();
+    await page.getByTestId("split-step-split").click();
     await page.getByTestId("split-confirm").click();
     await expect(page.getByTestId("split-status")).toHaveAttribute(
       "data-state",
