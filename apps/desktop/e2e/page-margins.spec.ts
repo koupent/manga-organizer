@@ -59,10 +59,22 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
       });
     });
   const splitLayout = await layout();
+  const gridTop = (await page.getByTestId("split-grid").boundingBox())!.y;
   await page.getByTestId("split-step-trim").click();
   await expect(page.getByTestId("split-step-trim")).toBeEnabled();
   await expect(page.getByTestId("margin-card")).toHaveCount(12);
+  await expect(page.getByTestId("margin-result")).toContainText("共通余白なし");
+  await expect(page.getByTestId("margin-result")).toContainText("指定できます");
+  await expect(page.getByTestId("margin-save")).toBeDisabled();
   expect(await layout()).toEqual(splitLayout);
+  expect((await page.getByTestId("split-grid").boundingBox())!.y).toBe(gridTop);
+  await page.getByTestId("margin-settings").click();
+  await expect(page.getByTestId("margin-settings-dialog")).toBeVisible();
+  expect((await page.getByTestId("split-grid").boundingBox())!.y).toBe(gridTop);
+  await page
+    .getByRole("button", { name: "範囲を一覧で確認", exact: true })
+    .click();
+  expect((await page.getByTestId("split-grid").boundingBox())!.y).toBe(gridTop);
   const modeButtons = page.locator('[data-testid^="split-step-"]');
   expect(
     await modeButtons.evaluateAll((buttons) =>
@@ -115,17 +127,25 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
     .click();
   await expect(page.getByTestId("lightbox")).toBeVisible();
   await page.keyboard.press("Escape");
+  await page.getByTestId("margin-settings").click();
   await expect(page.getByTestId("margin-0")).not.toHaveValue("0");
   await page.getByTestId("margin-0").fill("10");
   await page.getByTestId("margin-1").fill("5");
   await page.getByTestId("margin-2").fill("10");
   await page.getByTestId("margin-3").fill("5");
   await page
+    .getByRole("button", { name: "範囲を一覧で確認", exact: true })
+    .click();
+  await page
     .getByRole("checkbox", { name: "2 ページを切り取る", exact: true })
     .click();
   await page.getByTestId("split-step-merge").click();
   await page.getByTestId("split-step-trim").click();
+  await page.getByTestId("margin-settings").click();
   await expect(page.getByTestId("margin-0")).toHaveValue("10");
+  await page
+    .getByRole("button", { name: "範囲を一覧で確認", exact: true })
+    .click();
   await expect(
     page.getByRole("checkbox", { name: "2 ページを切り取る", exact: true }),
   ).not.toBeChecked();
@@ -156,12 +176,17 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   // 閉じて開き直しても、チェックしたページの切り取りだけを復元できる。
   await page.reload();
   await page.getByTestId("split-step-trim").click();
+  await page.getByTestId("margin-settings").click();
   await expect(page.getByTestId("margin-restore")).toHaveText(
     "切り取り前に戻す（2 ページ）",
   );
   await page
+    .getByRole("button", { name: "範囲を一覧で確認", exact: true })
+    .click();
+  await page
     .getByRole("checkbox", { name: "3 ページを切り取る", exact: true })
     .uncheck();
+  await page.getByTestId("margin-settings").click();
   await expect(page.getByTestId("margin-restore")).toHaveText(
     "切り取り前に戻す（1 ページ）",
   );
@@ -173,6 +198,7 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
       [400, 600],
       [320, 540],
     ]);
+  await page.getByTestId("margin-settings").click();
   await expect(page.getByTestId("margin-restore")).toBeEnabled();
   await page.getByTestId("margin-restore").click();
   await expect
@@ -182,5 +208,115 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
       [400, 600],
       [400, 600],
     ]);
+  await page.getByTestId("margin-settings").click();
   await expect(page.getByTestId("margin-restore")).toBeDisabled();
+});
+
+test("検出中のページ数と進捗、完了結果と失敗を明示し、小さい窓でも一覧を動かさない", async ({
+  page,
+}) => {
+  const archive = join(sidecar.workDir, "margin-progress.zip");
+  runPython(
+    `import io,sys,zipfile
+from PIL import Image,ImageDraw
+with zipfile.ZipFile(sys.argv[1],'w') as archive:
+ for i in range(3):
+  image=Image.new('RGB',(400,600),'white'); ImageDraw.Draw(image).rectangle((40,30,359,569),fill='black')
+  buffer=io.BytesIO(); image.save(buffer,'PNG'); archive.writestr(f'{i+1:03d}.png',buffer.getvalue())`,
+    archive,
+  );
+  let state: "running" | "real" | "failed" = "running";
+  await page.route("**/api/jobs/**", async (route) => {
+    const response = await route.fetch();
+    const job = await response.json();
+    if (
+      route.request().method() === "GET" &&
+      job.kind === "margin-scan" &&
+      state !== "real"
+    ) {
+      await route.fulfill({
+        response,
+        json: {
+          ...job,
+          state,
+          current: 2,
+          total: 3,
+          result: null,
+          error: state === "failed" ? "検出に失敗しました（テスト）" : null,
+        },
+      });
+    } else await route.fulfill({ response });
+  });
+  await page.goto(
+    `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
+  );
+  await expect(page.getByTestId("split-confirm")).toBeVisible();
+  const primaryStyle = await page
+    .getByTestId("split-confirm")
+    .evaluate((button) => ({
+      color: getComputedStyle(button).backgroundColor,
+      height: button.getBoundingClientRect().height,
+    }));
+  const top = (await page.getByTestId("split-grid").boundingBox())!.y;
+  await page.getByTestId("split-step-trim").click();
+  await expect(page.getByTestId("margin-progress")).toContainText(
+    "全ページの余白を検出しています",
+  );
+  await expect(page.getByTestId("margin-progress")).toContainText(
+    "2 / 3 ページ",
+  );
+  await expect(
+    page.getByRole("progressbar", { name: "余白カットの進捗" }),
+  ).toHaveAttribute("aria-valuenow", "67");
+  await expect(page.getByTestId("margin-save")).toBeDisabled();
+  expect((await page.getByTestId("split-grid").boundingBox())!.y).toBe(top);
+  await page.screenshot({
+    path: test.info().outputPath("margin-scanning.png"),
+    animations: "disabled",
+  });
+  state = "real";
+  await expect(page.getByTestId("margin-progress")).toHaveCount(0);
+  await expect(page.getByTestId("margin-result")).toContainText("余白を検出");
+  await expect(page.getByTestId("margin-save")).toHaveText("余白カットを反映");
+  expect(
+    await page.getByTestId("margin-save").evaluate((button) => ({
+      color: getComputedStyle(button).backgroundColor,
+      height: button.getBoundingClientRect().height,
+    })),
+  ).toEqual(primaryStyle);
+  for (const viewport of [
+    { width: 1920, height: 1080 },
+    { width: 1280, height: 860 },
+    { width: 1000, height: 560 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(page.getByTestId("margin-save")).toBeInViewport();
+    await expect(page.getByTestId("margin-settings")).toBeInViewport();
+    await expect(page.getByTestId("page-direction")).toBeInViewport();
+    await page.getByTestId("margin-settings").click();
+    await expect(
+      page.getByRole("button", { name: "範囲を一覧で確認", exact: true }),
+    ).toBeInViewport();
+    await page.screenshot({
+      path: test.info().outputPath(`margin-settings-${viewport.width}.png`),
+    });
+    await page.keyboard.press("Escape");
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <= innerWidth &&
+          document.documentElement.scrollHeight <= innerHeight,
+      ),
+    ).toBe(true);
+  }
+  await page.screenshot({ path: test.info().outputPath("margin-small.png") });
+  state = "failed";
+  await page.getByRole("button", { name: "余白を再検出", exact: true }).click();
+  await expect(page.getByTestId("margin-result")).toContainText(
+    "検出に失敗しました（テスト）",
+  );
+  await expect(page.getByTestId("margin-progress")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "余白を再検出", exact: true }),
+  ).toBeEnabled();
 });

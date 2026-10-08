@@ -1,7 +1,7 @@
 {
   "name": "manga-organizer-desktop",
   "private": true,
-  "version": "4.22.2",
+  "version": "4.22.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
