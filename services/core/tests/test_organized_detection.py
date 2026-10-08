@@ -22,13 +22,13 @@
 | 2 | 名前 == ``format_volume_name(a, t, v) + ".zip"`` | ``VolumeDetector`` |
 | 3 | ページ名が順に ``sequential_name(i, N, 拡張子)`` | ``viewer_contract`` |
 | 4 | 目次にそのページ以外が無い（同梱物だけ許す） | ``original_store`` |
-| 5 | 親フォルダ名 == ``[著者] 作品`` | ``FileOrganizer`` |
 
 条件 4 の許可一覧は手心ではなく安全条件。#96 で分かったとおり、表紙を
 切り抜いた本は ``.manga-organizer/`` を抱える。許可しないと、加工した本が
 すべて「未整理」と判定され、既定で作り直されて加工前の画像を失う。
 
-``True`` は必ず「肯定的な事実の積」。読めない目次・未対応の形式・親が無い・
+保存場所や親フォルダ名は利用者が自由に変更できる。
+``True`` は必ず「肯定的な事実の積」。読めない目次・未対応の形式・
 名前を読めないといった「分からない」はすべて ``False`` に落ちる。
 
 第 2 段階で ``PlannedBook`` / ``PlannedBookView`` に 4 つの欄が増える
@@ -91,7 +91,6 @@ NOT_ZIP = "not-zip"
 NAME_MISMATCH = "name-mismatch"
 PAGES_MISMATCH = "pages-mismatch"
 EXTRA_ENTRIES = "extra-entries"
-FOLDER_MISMATCH = "folder-mismatch"
 
 
 class OrganizedTestBase(unittest.TestCase):
@@ -250,24 +249,25 @@ class OrganizedShapeTest(OrganizedTestBase):
         # Assert
         self.assert_not_organized(self.only_book(books, gapped), PAGES_MISMATCH)
 
-    def test_a_folder_not_named_after_the_series_is_not_organized(self):
-        # Arrange - 本そのものは整理済みだが、置かれているフォルダが `作品`。
-        # 整理は `[著者] 作品` にしか書き出さない
-        library = self.work_dir / "蔵書"
+    def test_renaming_or_moving_the_parent_keeps_the_book_organized(self):
         built = self.build_organized(self.work_dir / "整理済み")
-        misplaced = self.copy_into(built, library, TITLE)
-
-        # Act
-        books = self.analyze(library)
-
-        # Assert
-        book = self.only_book(books, misplaced)
-        self.assert_not_organized(book, FOLDER_MISMATCH)
-        # 何が違うのかを、いまの名前と整理の形の両方で言う（#126）
-        self.assertEqual(
-            f"いまのフォルダは {TITLE}（整理の形なら {SERIES_DIR}）",
-            book.organized_detail,
-        )
+        for folder in (
+            f"[完]{SERIES_DIR}",
+            f"[完結]{SERIES_DIR}",
+            "任意の分類/お気に入り",
+            "[別人] 別作品",
+        ):
+            with self.subTest(folder=folder):
+                moved = self.copy_into(built, self.work_dir / "移動先", folder)
+                book = self.only_book(self.analyze(moved), moved)
+                self.assert_organized(book)
+                self.assertEqual((AUTHOR, TITLE), (book.author, book.title))
+                self.assertEqual(built.name, book.output_name)
+                # 置き場所を自由にしても、中身が違う本を見逃さない。
+                self.add_entries(moved, {"readme.txt": b"hello"})
+                self.assert_not_organized(
+                    self.only_book(self.analyze(moved), moved), EXTRA_ENTRIES
+                )
 
     def test_a_stray_book_in_the_series_folder_is_judged_on_its_own(self):
         # Arrange - 同じフォルダに、整理済みの本と名前だけ違う本を並べる。
@@ -425,6 +425,12 @@ class OrganizedEntryWhitelistTest(OrganizedTestBase):
         self.assertEqual([], results)
         self.assertEqual(before, built.read_bytes())
 
+        # 編集後に親フォルダを改名しても、退避ページと編集記録をそのまま読める。
+        renamed = built.parent.with_name(f"[完]{built.parent.name}")
+        built.parent.rename(renamed)
+        built = renamed / built.name
+        self.assert_organized(self.only_book(self.analyze(library), built))
+        self.assertEqual(before, built.read_bytes())
         apply_rows(built, [replace(row, deleted=False) for row in scan_rows(built)])
         restored = self.only_book(self.analyze(library), built)
         self.assert_organized(restored)

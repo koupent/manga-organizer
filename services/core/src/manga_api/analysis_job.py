@@ -114,13 +114,13 @@ class PlannedBookView(BaseModel):
         default=None,
         description=(
             "整理済みでない理由。multiple-books / not-zip / name-mismatch / "
-            "pages-mismatch / extra-entries / folder-mismatch のいずれか"
+            "pages-mismatch / extra-entries のいずれか"
         ),
     )
     organized_detail: str | None = Field(
         default=None,
         description=(
-            "整理済みでない理由の中身。どのページ・どのファイル・どのフォルダが"
+            "整理済みでない理由の中身。どのページ・どのファイルが"
             "何と違うかを利用者が読める 1 文で言う。画面はそのまま見せるだけで、"
             "判断には organized_reason を使う"
         ),

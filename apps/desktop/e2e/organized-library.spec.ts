@@ -1,9 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, type Sidecar } from "./sidecar";
+import { runPython } from "./archive";
 
 /**
  * 整理済みと判定された本を、画面で読めるようにし（#73 第 3 段階）、
@@ -29,7 +36,7 @@ import { startSidecar, type Sidecar } from "./sidecar";
  * - `data-organized-reason` … 整理済みでない理由 1 つ。整理済みなら空文字
  * - `plan-row-state`        … 整理済みの行に出す `Badge tone="ok"` + `CircleCheck`
  * - `plan-row-warning`      … 行に 1 つだけ出す警告のアイコン（#172）。名前は
- *                             合っているのに落ちた 3 つでは `data-reason` が付き、
+ *                             合っているのに中身で落ちた 2 つでは `data-reason` が付き、
  *                             乗せると何を直せば整理済みになるのかが読める
  * - 行の `title`            … 整理済みでない本すべてに、理由を言葉で
  *
@@ -41,7 +48,7 @@ import { startSidecar, type Sidecar } from "./sidecar";
  *   整理済みの本は外れたまま（覚えるのは利用者が触った行だけ）
  * - 残した本が全部自分の名前を持つなら、左の列は空でも実行できる
  *
- * 理由 6 つのうち `multiple-books` / `not-zip` / `name-mismatch` に印は出さない。
+ * 理由 5 つのうち `multiple-books` / `not-zip` / `name-mismatch` に印は出さない。
  * この 3 つは「まだ整理していない蔵書」の普通の姿で、そこに印を足すと一覧が
  * 印だらけになり、印が何も指さなくなる。
  *
@@ -90,7 +97,6 @@ const MULTIPLE_BOOKS = "multiple-books";
 const NAME_MISMATCH = "name-mismatch";
 const PAGES_MISMATCH = "pages-mismatch";
 const EXTRA_ENTRIES = "extra-entries";
-const FOLDER_MISMATCH = "folder-mismatch";
 
 /** 蔵書に入っている整理済みの本の数。2 作 × 2 巻 */
 const ORGANIZED_COUNT = 4;
@@ -98,11 +104,11 @@ const ORGANIZED_COUNT = 4;
 /**
  * 蔵書に入れたアーカイブの数。
  *
- * 整理済み 4 つ + 整理済みでない 1 冊もの 4 つ + 合本 1 つ。
+ * 整理済み 4 つ + 整理済みでない 1 冊もの 3 つ + 合本 1 つ。
  */
 
 /** 出来上がる本の数。合本からだけ 2 冊出る */
-const BOOK_COUNT = 10;
+const BOOK_COUNT = 9;
 
 /** 一覧の行数。放り込んだフォルダ 1 + アーカイブ + 本 */
 const ROW_COUNT = BOOK_COUNT;
@@ -124,7 +130,7 @@ const DEFAULT_KEPT = BOOK_COUNT - ORGANIZED_COUNT;
  * 蔵書」を作るため。段階 4b の要は「全部整理済みで、何も作らない」場面の
  * 振る舞いなので、そこに未整理の本が混ざっていると確かめられない。
  *
- * 派生させる 4 つは、整理済みの本を 1 つずつ崩して作る。崩す条件を 1 つに
+ * 派生させる 3 つは、整理済みの本を 1 つずつ崩して作る。崩す条件を 1 つに
  * 絞ることで、出てくる理由がその条件のものだと言い切れる。
  */
 const FIXTURE_SCRIPT = `
@@ -235,10 +241,6 @@ print(
                 )
             ),
             "extraEntries": str(extra),
-            # 中身も名前も整理済みのまま、置いてあるフォルダだけが違う
-            "folderMismatch": str(
-                copy_into(in_library[0], library / "その他", f"{shelf_series} 第007巻.zip")
-            ),
             # 1 つの ZIP から 2 冊。この道具の成果物はファイルなので整理済みにならない
             "compound": str(
                 zip_with(library / "合本.zip", {**sheets("第01巻/"), **sheets("第02巻/")})
@@ -268,7 +270,6 @@ type Library = {
   nameMismatch: string;
   pagesMismatch: string;
   extraEntries: string;
-  folderMismatch: string;
   compound: string;
   /** 蔵書の外に置いた、まだ整理していないアーカイブ */
   loose: string;
@@ -315,6 +316,58 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(() => sidecar?.stop());
+
+test("親フォルダを改名・移動しても整理済みで、実際の場所から編集できる", async ({
+  page,
+}) => {
+  const fileName = library.organized.split(/[\\/]/).pop()!;
+  const prepared = join(sidecar.workDir, fileName);
+  copyFileSync(library.organized, prepared);
+  runPython(
+    `
+import sys
+from pathlib import Path
+from dataclasses import replace
+from manga_core.page_splitter import apply_rows, scan_rows
+archive = Path(sys.argv[1])
+apply_rows(archive, [replace(row, deleted=i == 1) for i, row in enumerate(scan_rows(archive))], reviewed=True)
+`,
+    prepared,
+  );
+  const before = readFileSync(prepared);
+  for (const name of [
+    `[完]${library.shelfSeries}`,
+    `[完結]${library.shelfSeries}`,
+    "自由な分類名",
+  ]) {
+    const folder = join(sidecar.workDir, name);
+    mkdirSync(folder);
+    const source = join(folder, fileName);
+    copyFileSync(prepared, source);
+    await openPlan(page, name);
+    await addFolder(page, name);
+    await waitForBooks(page, 1);
+    const row = bookRow(page, source);
+    await expect(row).toHaveAttribute("data-organized", "true");
+    await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
+    await expect(checkOf(row)).toHaveAttribute("aria-checked", "false");
+    await expect(row.getByTestId("plan-row-name")).toHaveText(fileName);
+    await expect(row.getByTestId("plan-row-path")).toHaveAttribute(
+      "title",
+      source,
+    );
+    const edit = row.getByTestId("plan-to-edit");
+    await expect(edit).toHaveAttribute("data-edited", "true");
+    await edit.click();
+    await expect(page.getByTestId("archive-name")).toHaveText(fileName);
+    await expect(page.getByTestId("mode-edit")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("editable-page")).toHaveCount(2);
+    expect(readFileSync(source)).toEqual(before);
+  }
+});
 
 /** 蔵書の中の整理済み 4 冊 */
 function allOrganized(): string[] {
@@ -636,17 +689,16 @@ apply_rows(target, [replace(row, deleted=i == 1) for i, row in enumerate(scan_ro
     ).toHaveCount(ORGANIZED_COUNT);
   });
 
-  test("名前は合っているのに落ちた 3 つだけに、理由の印が出る", async ({
+  test("名前は合っているのに中身で落ちた 2 つだけに、理由の印が出る", async ({
     page,
   }) => {
     // Arrange / Act
     await preparePlan(page, "理由の印");
 
-    // Assert - 置き場所・ページの並び・同梱物で落ちた 3 冊。名前は既に
+    // Assert - ページの並び・同梱物で落ちた 2 冊。名前は既に
     // 往復しているので、利用者には「整っているのに作り直される」と見える。
     // 何を直せば整理済みになるのかを言葉で出す
     for (const [source, reason] of [
-      [library.folderMismatch, FOLDER_MISMATCH],
       [library.pagesMismatch, PAGES_MISMATCH],
       [library.extraEntries, EXTRA_ENTRIES],
     ] as const) {
@@ -681,7 +733,7 @@ apply_rows(target, [replace(row, deleted=i == 1) for i, row in enumerate(scan_ro
 
     // Assert - 対照 1。まだ整理していない蔵書の普通の姿（名前が違う）には
     // 印を出さない。整理済みでない行すべてに出す実装では、一覧が印で埋まり、
-    // 直せば整理済みになる 3 つが見分けられなくなる
+    // 直せば整理済みになる 2 つが見分けられなくなる
     const messy = bookRow(page, library.nameMismatch);
     await expect(messy).toHaveAttribute("data-organized-reason", NAME_MISMATCH);
     await expect(
@@ -704,13 +756,13 @@ apply_rows(target, [replace(row, deleted=i == 1) for i, row in enumerate(scan_ro
       ).toHaveCount(0);
     }
 
-    // Assert - 印が出た行はちょうど 3 つ
+    // Assert - 印が出た行はちょうど 2 つ
     await expect(
       page.locator(
         '[data-testid="plan-row"][data-kind="book"] [data-testid="plan-row-warning"][data-reason]',
       ),
-      "理由の印が 3 冊より多くの行に出ている",
-    ).toHaveCount(3);
+      "理由の印が 2 冊より多くの行に出ている",
+    ).toHaveCount(2);
   });
 
   test("整理済みでない本は、行に乗せると理由が読める", async ({ page }) => {
@@ -765,19 +817,13 @@ apply_rows(target, [replace(row, deleted=i == 1) for i, row in enumerate(scan_ro
       `理由が違うのに同じ説明が出ている: ${JSON.stringify([...tips])}`,
     ).toBe(tips.size);
 
-    // Assert - 蔵書には理由が 5 種類そろっている。1 種類しか無い蔵書で
+    // Assert - 蔵書には理由が 4 種類そろっている。1 種類しか無い蔵書で
     // 「違う説明が出る」と言っても何も確かめたことにならない
     expect(
       [...tips.keys()].sort(),
       `理由がそろっていない: ${[...tips.keys()]}`,
     ).toEqual(
-      [
-        MULTIPLE_BOOKS,
-        NAME_MISMATCH,
-        PAGES_MISMATCH,
-        EXTRA_ENTRIES,
-        FOLDER_MISMATCH,
-      ].sort(),
+      [MULTIPLE_BOOKS, NAME_MISMATCH, PAGES_MISMATCH, EXTRA_ENTRIES].sort(),
     );
   });
 
@@ -820,14 +866,13 @@ apply_rows(target, [replace(row, deleted=i == 1) for i, row in enumerate(scan_ro
       ).toHaveAttribute("aria-checked", "false");
     }
 
-    // Assert - 対照。整理済みでない本は 6 冊とも既定でオンのまま。
+    // Assert - 対照。整理済みでない本は 5 冊とも既定でオンのまま。
     // 「全部オフ」にする実装も「整理済みを見て何かした」ことにはなるが、
     // 一度も整理していない蔵書が丸ごと作られなくなる
     for (const source of [
       library.nameMismatch,
       library.pagesMismatch,
       library.extraEntries,
-      library.folderMismatch,
     ]) {
       await expect(
         checkOf(bookRow(page, source)),
@@ -1295,7 +1340,7 @@ test.describe("整理済みの行の仕上げ", () => {
     ).toBe(FULL);
 
     // Act - 利用者が自分で外した行。整理済みではないので理由の印が出ている
-    const dropped = bookRow(page, library.folderMismatch);
+    const dropped = bookRow(page, library.pagesMismatch);
     await checkOf(dropped).click();
     await leaveRows(page);
     await expect(

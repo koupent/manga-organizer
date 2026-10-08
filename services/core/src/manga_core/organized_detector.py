@@ -4,7 +4,8 @@
 作り直される」こと。作り直しても得るものは無く、失うもの（加工前の画像、ファイルの
 時刻、手を入れた並び）はある。
 
-**定義**: 整理済み = その本が既に「この道具が作る物そのもの」である状態。
+**定義**: 整理済み = ファイル名と中身が既にこの道具の出力と同じ状態。
+保存場所・親フォルダ名は利用者の分類なので、判定には使わない。
 
 条件はすべて「作る側と同じ関数で期待値を作り直し、等しいか比べる」形で見る。
 「整っているように見える名前」を正規表現で探すのではなく往復させる。これが実処理から
@@ -21,7 +22,6 @@
 | 2 | 名前 == ``format_volume_name(a, t, v) + ".zip"`` | ``volume_detector`` |
 | 3 | 名前順のページ名 == ``sequential_name(i, N, 拡張子)`` | ``viewer_contract`` |
 | 4 | 目次にそのページ以外が無い（同梱物だけ許す） | ``original_store`` |
-| 5 | 親フォルダ名 == ``[著者] 作品`` | ``FileOrganizer`` |
 
 ``True`` は必ず「肯定的な事実の積」。読めない目次・未対応の形式・名前を読めないと
 いった「分からない」はすべて ``False`` へ落ちる。偽陰性（未整理と見て作り直す）は
@@ -46,7 +46,7 @@ from pathlib import Path, PurePosixPath
 
 from manga_core.original_store import MANIFEST_ENTRY, ORIGINALS_PREFIX
 from manga_core.viewer_contract import deleted_position, is_page_source, sequential_name
-from manga_core.volume_detector import format_series_dir, format_volume_name
+from manga_core.volume_detector import format_volume_name
 
 # 整理済みでない理由。画面がそのまま読む文字列なので、値そのものが公開契約
 MULTIPLE_BOOKS = "multiple-books"
@@ -54,7 +54,6 @@ NOT_ZIP = "not-zip"
 NAME_MISMATCH = "name-mismatch"
 PAGES_MISMATCH = "pages-mismatch"
 EXTRA_ENTRIES = "extra-entries"
-FOLDER_MISMATCH = "folder-mismatch"
 
 # 整理が書き出す唯一の拡張子。``create_archive`` は ZIP しか書かないので、
 # ``.cbz`` や ``.rar`` は中身がどれだけ整っていても出来上がりではない
@@ -150,15 +149,6 @@ def judge_organized(
     strangers = [name for name in extras if not _is_bundled(name)]
     if strangers:
         return OrganizedVerdict(False, EXTRA_ENTRIES, detail=_strangers(strangers))
-
-    expected_dir = format_series_dir(author, title)
-    if source.parent.name != expected_dir:
-        found = source.parent.name
-        return OrganizedVerdict(
-            False,
-            FOLDER_MISMATCH,
-            detail=f"いまのフォルダは {found}（整理の形なら {expected_dir}）",
-        )
 
     return OrganizedVerdict(True, None, author, title)
 
