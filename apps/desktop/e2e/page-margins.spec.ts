@@ -153,4 +153,34 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   await page.getByTestId("split-step-merge").click();
   await expect(page.getByTestId("merge-card")).toHaveCount(3);
   await expect(page.getByTestId("split-confirm")).toBeDisabled();
+  // 閉じて開き直しても、チェックしたページの切り取りだけを復元できる。
+  await page.reload();
+  await page.getByTestId("split-step-trim").click();
+  await expect(page.getByTestId("margin-restore")).toHaveText(
+    "切り取り前に戻す（2 ページ）",
+  );
+  await page
+    .getByRole("checkbox", { name: "3 ページを切り取る", exact: true })
+    .uncheck();
+  await expect(page.getByTestId("margin-restore")).toHaveText(
+    "切り取り前に戻す（1 ページ）",
+  );
+  await page.getByTestId("margin-restore").click();
+  await expect
+    .poll(() => Object.values(pageSizesOf(archive)))
+    .toEqual([
+      [400, 600],
+      [400, 600],
+      [320, 540],
+    ]);
+  await expect(page.getByTestId("margin-restore")).toBeEnabled();
+  await page.getByTestId("margin-restore").click();
+  await expect
+    .poll(() => Object.values(pageSizesOf(archive)))
+    .toEqual([
+      [400, 600],
+      [400, 600],
+      [400, 600],
+    ]);
+  await expect(page.getByTestId("margin-restore")).toBeDisabled();
 });

@@ -361,6 +361,25 @@ def find_original(archive_path: Path, image: bytes) -> OriginalRef | None:
     return OriginalRef(hash=current, entry=entry, operations=tuple(operations))
 
 
+def find_crop_source(archive_path: Path, image: bytes) -> OriginalRef | None:
+    """直前の切り取り元が保存されている場合だけ返す。分割などは遡らない。
+
+    purpose のない旧版の crop も読む。旧版では余白と表紙の切り取りを区別できない。
+    """
+    document = _load_document(Path(archive_path))
+    record = document.get(_DERIVED_KEY, {}).get(content_hash(image))
+    if record is None:
+        return None
+    operations = _operations_from_json(record)
+    if len(operations) != 1 or operations[0].kind != "crop":
+        return None
+    if operations[0].params.get("purpose") not in (None, "margin"):
+        return None
+    digest = record.get(_SOURCE_KEY)
+    entry = document.get(_ORIGINALS_KEY, {}).get(digest)
+    return OriginalRef(hash=digest, entry=entry) if entry else None
+
+
 def stored_original_hashes(archive_path: Path) -> frozenset[str]:
     """同梱してある元画像の中身のハッシュ。
 

@@ -379,6 +379,14 @@ class AllowedRootsTest(ApiTestBase):
                 "POST", "/api/jobs/margins", "archive", margin_body, "archive", 202
             ),
             GuardedCase(
+                "POST",
+                "/api/jobs/margin-restore",
+                "archive",
+                margin_body,
+                "archive",
+                202,
+            ),
+            GuardedCase(
                 "POST", "/api/jobs/analyze", "archives", body(), "archive_list", 202
             ),
             GuardedCase("POST", "/api/edits", "paths", body(), "path_list", 200),
