@@ -68,9 +68,8 @@ def unique_file_name(
 def format_series_dir(author: str, title: str) -> str:
     """整理が作る、作品ごとのフォルダ名。
 
-    実処理（``FileOrganizer._create_manga_directory``）と、整理済みかどうかの
-    判定（``organized_detector``）で別々に書くと、片方を直したときに整理済みの
-    本が「置き場が違う」と判定され、既定で作り直される。
+    フォルダと本のファイル名に使う、著者・作品名の共通部分。
+    保存場所は整理済み判定の条件にはしない。
     """
     return f"[{author}] {title}"
 
