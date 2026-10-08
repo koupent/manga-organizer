@@ -34,7 +34,7 @@ import { Segmented } from "./ui/segmented";
 import { EditorLayout } from "./EditorLayout";
 import { MergeCard, type PickRole } from "./MergeCard";
 import { SplitCard } from "./SplitCard";
-import { MarginControls, useMarginJob } from "./MarginControls";
+import { MarginControls, MarginProgress, useMarginJob } from "./MarginControls";
 import { MarginCard, MarginFrame } from "./MarginCard";
 import { SplitDialog } from "./SplitDialog";
 import { useSplitJob } from "../lib/split-job";
@@ -772,6 +772,21 @@ export function FileEditor({
     );
   };
 
+  let marginResult = "余白の検出を開始しています…";
+  if (margin.error) marginResult = margin.message;
+  else if (margin.busy) marginResult = "余白カットを処理しています…";
+  else if (margin.scan) {
+    const detected = margin.scan.margins.some((value) => value > 0);
+    if (margin.margins.some((value) => value > 0)) {
+      const amounts = margin.margins
+        .map((value, index) => `${["左", "上", "右", "下"][index]} ${value}%`)
+        .join(" / ");
+      marginResult = `${detected ? "余白を検出" : "手動の切り取り量"} · ${amounts} · 枠を確認して反映`;
+    } else {
+      marginResult = `${detected ? "切り取り量は0%です" : "共通余白なし"} · 「切り取り量を調整」から指定できます`;
+    }
+  }
+
   const modes = (
     <Segmented<Step | "trim">
       disabled={busy}
@@ -807,9 +822,16 @@ export function FileEditor({
             </span>
           ) : null}
           {chosen === "trim" ? (
-            <Button variant="secondary" disabled={busy} onClick={margin.rescan}>
-              余白を再検出
-            </Button>
+            <>
+              <MarginControls job={margin} pending={pending} />
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={margin.rescan}
+              >
+                余白を再検出
+              </Button>
+            </>
           ) : (
             <>
               {step === "split" ? (
@@ -882,15 +904,21 @@ export function FileEditor({
               report.state === "error" ? "text-danger" : "text-ink-muted",
             )}
           >
-            {chosen === "trim" ? margin.message : status}
+            {chosen === "trim"
+              ? `${margin.selected.length} ページ選択`
+              : status}
           </span>
           {chosen === "trim" && !pending ? (
             <Button
+              variant="primary"
+              size="lg"
+              className="shrink-0"
               data-testid="margin-save"
               disabled={busy || !margin.canSave}
               onClick={() => void margin.save()}
             >
-              余白カットを保存
+              <Save />
+              余白カットを反映
             </Button>
           ) : (
             <>
@@ -946,11 +974,25 @@ export function FileEditor({
       hint={
         <span className="flex h-7 items-center gap-3">
           <span className="min-w-0 flex-1 truncate">
-            {chosen === "trim"
-              ? "同じ割合で余白を切り取ります ・ 画像をクリックで範囲を拡大確認"
-              : GUIDES[step]}{" "}
-            ・ 取っ手で並べ替え ・ ⋮／右クリックでサムネイル選択 ・
-            Ctrl／Shift＋名前クリックで複数選択
+            {chosen === "trim" ? (
+              <span
+                data-testid="margin-result"
+                role="status"
+                title={margin.message}
+                className={cn(
+                  "font-semibold",
+                  margin.error ? "text-danger" : "text-brand",
+                )}
+              >
+                {marginResult}
+              </span>
+            ) : (
+              <>
+                {GUIDES[step]} ・ 取っ手で並べ替え ・
+                ⋮／右クリックでサムネイル選択 ・
+                Ctrl／Shift＋名前クリックで複数選択
+              </>
+            )}
           </span>
           <label className="flex shrink-0 items-center gap-1.5">
             <input
@@ -998,56 +1040,48 @@ export function FileEditor({
         </span>
       }
     >
-      {chosen === "trim" ? (
-        <div className="flex flex-wrap items-start gap-3">
-          <MarginControls job={margin} />
-          <Button
-            variant="secondary"
-            data-testid="margin-restore"
-            disabled={busy || pending || margin.restorableCount === 0}
-            title="選択したページのうち、直前の画像が保存されている切り取りを戻します。分割・結合や順番は維持します。"
-            onClick={() => void margin.save(true)}
-          >
-            切り取り前に戻す（{margin.restorableCount} ページ）
-          </Button>
-        </div>
-      ) : null}
-      {/* スクロールするのはこの箱であって窓ではない */}
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={({ active }) => {
-          const name = String(active.id);
-          if (!selection.includes(name)) setSelection([name]);
-        }}
-        onDragEnd={dragEnd}
+      <div
+        className="relative flex min-h-0 flex-1 flex-col"
+        aria-busy={chosen === "trim" && margin.busy}
       >
-        <SortableContext
-          items={pageGroups.map((names) => names[0])}
-          strategy={rectSortingStrategy}
+        {/* スクロールするのはこの箱であって窓ではない */}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={({ active }) => {
+            const name = String(active.id);
+            if (!selection.includes(name)) setSelection([name]);
+          }}
+          onDragEnd={dragEnd}
         >
-          <div
-            data-testid="split-grid"
-            className="min-h-0 flex-1 overflow-y-auto"
+          <SortableContext
+            items={pageGroups.map((names) => names[0])}
+            strategy={rectSortingStrategy}
           >
-            {/* 行の高さは中身に合わせる（auto-rows-max）。auto のままだと、
-            高さの決まった格子を行数で割った高さへ押し込められる */}
-            {/* カードのキー操作はここで受ける（onCardKey） */}
-            {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
             <div
-              ref={gridRef}
-              dir={direction === "rtl" ? "rtl" : "ltr"}
-              className="grid auto-rows-max content-start gap-3"
-              style={{
-                gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
-              }}
-              onKeyDown={onCardKey}
+              data-testid="split-grid"
+              className="min-h-0 flex-1 overflow-y-auto"
             >
-              {columnWidth > 0 ? units.map(renderPage) : null}
+              {/* 行の高さは中身に合わせる（auto-rows-max）。auto のままだと、
+            高さの決まった格子を行数で割った高さへ押し込められる */}
+              {/* カードのキー操作はここで受ける（onCardKey） */}
+              {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+              <div
+                ref={gridRef}
+                dir={direction === "rtl" ? "rtl" : "ltr"}
+                className="grid auto-rows-max content-start gap-3"
+                style={{
+                  gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
+                }}
+                onKeyDown={onCardKey}
+              >
+                {columnWidth > 0 ? units.map(renderPage) : null}
+              </div>
             </div>
-          </div>
-        </SortableContext>
-      </DndContext>
+          </SortableContext>
+        </DndContext>
+        {chosen === "trim" ? <MarginProgress job={margin} /> : null}
+      </div>
 
       {zoomed ? (
         <Dialog open onOpenChange={() => setZoomed(null)}>
