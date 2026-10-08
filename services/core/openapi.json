@@ -1016,6 +1016,110 @@
         }
       }
     },
+    "/api/jobs/margin-scan": {
+      "post": {
+        "summary": "Submit Margin Scan",
+        "operationId": "submit_margin_scan_api_jobs_margin_scan_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarginScanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/margins": {
+      "post": {
+        "summary": "Submit Margins",
+        "operationId": "submit_margins_api_jobs_margins_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/split-scan": {
       "post": {
         "summary": "Submit Split Scan",
@@ -2150,6 +2254,67 @@
         ],
         "title": "LibraryImportResult",
         "description": "取り込みの結果。入れた対・既に在った対・断った作品名"
+      },
+      "MarginRequest": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Names"
+          },
+          "margins": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Margins"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive",
+          "token",
+          "names",
+          "margins"
+        ],
+        "title": "MarginRequest"
+      },
+      "MarginScanRequest": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive"
+        ],
+        "title": "MarginScanRequest"
       },
       "OperationView": {
         "properties": {

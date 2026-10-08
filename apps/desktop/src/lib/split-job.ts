@@ -59,6 +59,7 @@ export type SplitJob = {
   /** 保留を書き込む。書き込めたかを返す（①から②へ進むかを決める） */
   confirm: (cover?: CoverRequest) => Promise<boolean>;
   reordered: boolean;
+  refresh: () => void;
 };
 
 export function useSplitJob({
@@ -227,6 +228,10 @@ export function useSplitJob({
     editRows,
     restore,
     confirm,
+    refresh: () => {
+      setBusy(true);
+      setReloadKey((key) => key + 1);
+    },
     reordered:
       JSON.stringify(rows?.flatMap((row) => row.names)) !==
       JSON.stringify(originalRows.current.flatMap((row) => row.names)),

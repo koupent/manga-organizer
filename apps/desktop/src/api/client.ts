@@ -17,6 +17,9 @@ export class ApiError extends Error {
 
 type PagesResponse =
   paths["/api/pages"]["get"]["responses"][200]["content"]["application/json"];
+
+export type MarginRequest =
+  paths["/api/jobs/margins"]["post"]["requestBody"]["content"]["application/json"];
 type CoverResponse =
   paths["/api/cover"]["get"]["responses"][200]["content"]["application/json"];
 type JobResponse =
@@ -171,6 +174,14 @@ export class SidecarClient {
    */
   splitScan(archive: string): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/split-scan", { archive });
+  }
+
+  marginScan(archive: string): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/margin-scan", { archive });
+  }
+
+  trimMargins(request: MarginRequest): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/margins", request);
   }
 
   /** 割った結果を書き込む。行は差分ではなくページ順に全部を送る */

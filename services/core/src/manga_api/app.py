@@ -18,7 +18,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from send2trash import send2trash
 
-from manga_api import thumbnails
+from manga_api import margin_job, thumbnails
 from manga_api.analysis_job import AnalyzeRequest, analysis_work
 from manga_api.cover_job import CoverRequest, cover_work
 from manga_api.cover_views import CoverView, describe_original
@@ -754,6 +754,39 @@ def create_app(
             "reorder", {"archive": str(path), "pages": len(request.order)}
         )
         start_job(app, job_id, reorder_work(path, request, app.state.thumbnails))
+        return JobAccepted(id=job_id)
+
+    @app.post(
+        "/api/jobs/margin-scan",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_margin_scan(request: margin_job.MarginScanRequest) -> JobAccepted:
+        editor = path_guard.open_editor(request.archive, include_deleted=True)
+        path = editor.zip_path
+        editor.close()
+        job_id = app.state.jobs.submit("margin-scan", {"archive": str(path)})
+        start_job(app, job_id, margin_job.scan_work(path))
+        return JobAccepted(id=job_id)
+
+    @app.post(
+        "/api/jobs/margins",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_margins(request: margin_job.MarginRequest) -> JobAccepted:
+        editor = path_guard.open_editor(request.archive, include_deleted=True)
+        path = editor.zip_path
+        try:
+            refuse_stale_token(editor.pages, request.token)
+        finally:
+            editor.close()
+        job_id = app.state.jobs.submit("margins", {"archive": str(path)})
+        start_job(
+            app, job_id, margin_job.confirm_work(path, request, app.state.thumbnails)
+        )
         return JobAccepted(id=job_id)
 
     @app.post(
