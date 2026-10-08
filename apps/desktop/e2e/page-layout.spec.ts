@@ -72,10 +72,6 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await page.screenshot({ path: test.info().outputPath("merge.png") });
   await page.getByTestId("split-step-split").click();
   expect(await layout(page)).toEqual(merged);
-  await page.getByTestId("split-source").click();
-  await page
-    .getByRole("option", { name: "結合・復元した画像", exact: true })
-    .click();
   await expect(page.getByTestId("split-focus-position")).toHaveText("– / 1");
   await page.getByTestId("split-next").click();
   await expect(
@@ -103,10 +99,6 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await expect(page.getByTestId("split-confirm")).toHaveText("確認済みにする");
   await page.getByTestId("split-step-split").click();
   expect(await layout(page)).toEqual(saved);
-  await page.getByTestId("split-source").click();
-  await page
-    .getByRole("option", { name: "結合・復元した画像", exact: true })
-    .click();
   await expect(page.getByTestId("split-focus-position")).toHaveText("– / 1");
   await page.getByTestId("split-all").click();
   await page.getByTestId("split-confirm").click();

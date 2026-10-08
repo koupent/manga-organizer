@@ -146,7 +146,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     );
   });
 
-  test("保存すると 1 枚の見開きになり、①の「すべて分割」の対象にならない", async ({
+  test("保存すると 1 枚の見開きになり、分割モードで一括分割できる", async ({
     page,
   }) => {
     // Arrange - ①の対象が無い本は②から開く
@@ -175,19 +175,15 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     await expect(card(page, 1).getByTestId("merge-undo")).toHaveCount(0);
     await expect(page.getByTestId("unmerge-all")).toHaveCount(0);
 
-    // Assert - 結合した見開きは①の対象にしない（#151 #153）。対象にすると、
-    // ①の「すべて分割」が②で結合したものを壊す。分けたければ手で選べる
-    await expect(page.getByTestId("split-step-split")).toHaveText(
-      "ページを分割",
-    );
+    // 保存済みの結合画像も、分割モードでは一括分割の対象にする。
     await page.getByTestId("split-step-split").click();
     const spread = page.locator('[data-testid="split-card"][data-index="1"]');
-    await expect(spread).toHaveAttribute("data-target", "false");
+    await expect(spread).toHaveAttribute("data-target", "true");
     await expect(spread.getByTestId("split-kept-whole")).toHaveText(
       "結合・復元済み",
     );
-    await expect(page.getByTestId("split-all")).toBeDisabled();
-    await spread.getByTestId("split-check").click();
+    await expect(page.getByTestId("split-all")).toBeEnabled();
+    await page.getByTestId("split-all").click();
     await expect(spread).toHaveAttribute("data-checked", "true");
 
     // Assert - ZIP の中身。2 ページ目が 1200 幅の 1 枚になり、右に先の
@@ -322,6 +318,34 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       );
     });
   }
+
+  test("結合候補は分割モードでは個別に表示し、カードと拡大画面から分割できる", async ({
+    page,
+  }) => {
+    const archive = writeSeamBook("モードごとの候補.zip");
+    await open(page, archive, 2);
+    await expect(card(page, 0)).toHaveAttribute("data-kind", "candidate");
+    await page.getByTestId("split-step-split").click();
+    const singles = page.getByTestId("split-card");
+    await expect(singles).toHaveCount(3);
+    await expect(page.getByTestId("split-source")).toHaveCount(0);
+    await expect(singles.getByText("結合候補", { exact: true })).toHaveCount(0);
+    await singles.first().hover();
+    await expect(singles.first().getByTestId("split-check")).toBeEnabled();
+    await singles.first().getByTestId("split-check").click();
+    await expect(singles.first()).toHaveAttribute("data-checked", "true");
+    await page.getByTestId("undo").click();
+    await page.getByTestId("editable-page").first().getByTestId("zoom").click();
+    const check = page.getByTestId("split-dialog-check");
+    await expect(check).toBeEnabled();
+    await check.click();
+    await expect(check).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await expect(singles.first()).toHaveAttribute("data-checked", "true");
+    await page.getByTestId("undo").click();
+    await page.getByTestId("split-step-merge").click();
+    await expect(card(page, 0)).toHaveAttribute("data-kind", "candidate");
+  });
 
   test("結合候補も最後から最初へ、最初から最後へ循環する", async ({ page }) => {
     const archive = writeSeamBook("結合候補の循環.zip");
@@ -547,14 +571,10 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     ).trim();
     expect(after, "戻したページが割る前の 1 枚と違う").toBe(before);
 
-    // 復元した見開きも、分割側で対象を選べば一括分割できる。
+    // 復元した見開きも、分割側でそのまま一括分割できる。
     await expect(card(page, 0)).toHaveAttribute("data-kind", "spread");
     await expect(page.getByTestId("unmerge-all")).toHaveCount(0);
     await page.getByTestId("split-step-split").click();
-    await page.getByTestId("split-source").click();
-    await page
-      .getByRole("option", { name: "結合・復元した画像", exact: true })
-      .click();
     await page.getByTestId("split-all").click();
     await expect(page.getByTestId("split-card").first()).toHaveAttribute(
       "data-checked",

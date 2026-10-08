@@ -31,13 +31,6 @@ import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { Empty } from "./ui/empty";
 import { Segmented } from "./ui/segmented";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
 import { EditorLayout } from "./EditorLayout";
 import { MergeCard, type PickRole } from "./MergeCard";
 import { SplitCard } from "./SplitCard";
@@ -65,7 +58,6 @@ import {
   summaryOf,
   type PageUnit,
   type SplitRow,
-  type SplitSource,
   type Step,
 } from "../lib/split";
 
@@ -138,7 +130,6 @@ export function FileEditor({
 
   // 利用者が選んだステップ。選ぶまでは、開いた本の中身から決める（firstStep）
   const [chosen, setChosen] = useState<Step | null>(null);
-  const [splitSource, setSplitSource] = useState<SplitSource>("original");
   const [deletedVisibility, setDeletedVisibility] =
     useStoredString("editor.showDeleted");
   const showDeleted = deletedVisibility === "true";
@@ -262,7 +253,7 @@ export function FileEditor({
   // 数えるので、選んでも減らない
   const splitTargets = rows
     .map((row, index) =>
-      !isAbsorbed(rows, index) && isSplitTarget(row, splitSource) ? index : -1,
+      !isAbsorbed(rows, index) && isSplitTarget(row) ? index : -1,
     )
     .filter((index) => index >= 0);
   const mergeTargets = rows
@@ -292,6 +283,7 @@ export function FileEditor({
   // 行を変えたら、選びかけの相手は捨てる。並びが変わり、もう選べないことがある
   const edit = (next: SplitRow[]) => {
     if (busy) return;
+    setChosen(step);
     setHistory((past) => [...past, { rows, cover: coverDraft }].slice(-100));
     setPicking(null);
     editRows(next);
@@ -419,7 +411,7 @@ export function FileEditor({
   // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ
   const candidates = rows
     .map((row, index) =>
-      !isAbsorbed(rows, index) && isCandidate(row, splitSource) ? index : -1,
+      !isAbsorbed(rows, index) && isCandidate(row) ? index : -1,
     )
     .filter((index) => index >= 0);
 
@@ -533,11 +525,11 @@ export function FileEditor({
     height: row.height,
   });
 
-  // 同じページの配列から両モードを描く。操作だけを切り替える
+  // 確定した編集状態は両モード共通。未確定の結合候補は結合モードだけでまとめる。
   const manualUnits = pageUnits(rows, false);
-  const units = (picking === null ? pageUnits(rows) : manualUnits).filter(
-    (unit) => showDeleted || !rows[unit.row].deleted,
-  );
+  const units = (
+    step === "merge" && picking === null ? pageUnits(rows) : manualUnits
+  ).filter((unit) => showDeleted || !rows[unit.row].deleted);
   const pageGroups = units.map((unit) => {
     const row = rows[unit.row];
     if (unit.part !== undefined) return [row.names[unit.part]];
@@ -668,7 +660,7 @@ export function FileEditor({
               applied={row.stored.checked && row.checked}
               focused={focus === index && unit.part === undefined}
               checked={row.checked}
-              target={isSplitTarget(row, splitSource)}
+              target={isSplitTarget(row)}
               keptWhole={row.keptWhole}
               wide={wide}
               span={span}
@@ -677,7 +669,6 @@ export function FileEditor({
               page={pagePicture}
               partner={partnerPicture}
               joined={row.mergeNext || (row.stored.checked && !row.checked)}
-              candidate={unit.kind === "candidate" && merging}
               x={row.x}
               onToggle={() => toggleTarget(index)}
               onMoveSplit={(x) => setSplit(index, x)}
@@ -761,9 +752,9 @@ export function FileEditor({
               variant="secondary"
               className="shrink-0"
               data-testid="split-all"
-              title="選んだ種類の画像を、分割線の位置ですべて分ける"
+              title="元から横長の画像と結合・復元した画像を、分割線の位置ですべて分ける"
               disabled={!canSplitAll || busy}
-              onClick={() => edit(splitAll(rows, splitSource))}
+              onClick={() => edit(splitAll(rows))}
             >
               <Scissors />
               すべて分割
@@ -875,28 +866,6 @@ export function FileEditor({
       }
       hint={
         <span className="flex h-7 items-center gap-3">
-          {step === "split" ? (
-            <span className="flex shrink-0 items-center gap-1.5">
-              分割対象
-              <Select
-                value={splitSource}
-                disabled={busy}
-                onValueChange={(value: SplitSource) => {
-                  setSplitSource(value);
-                  setFocus(null);
-                }}
-              >
-                <SelectTrigger data-testid="split-source" aria-label="分割対象">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="original">元から横長の画像</SelectItem>
-                  <SelectItem value="edited">結合・復元した画像</SelectItem>
-                  <SelectItem value="all">両方</SelectItem>
-                </SelectContent>
-              </Select>
-            </span>
-          ) : null}
           <span className="min-w-0 flex-1 truncate">
             {GUIDES[step]} ・ 取っ手で並べ替え ・ ⋮／右クリックでサムネイル選択
             ・ Ctrl／Shift＋名前クリックで複数選択
@@ -1023,9 +992,6 @@ export function FileEditor({
                   imageUrl: imageUrlOf(openedPartner),
                 }
               : undefined
-          }
-          candidate={
-            openedUnit?.kind === "candidate" && openedUnit.via === "merge"
           }
           onToggle={() => {
             toggleTarget(overlay);

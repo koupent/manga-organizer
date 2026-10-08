@@ -64,7 +64,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   ]);
 });
 
-test("開き直した細い結合画像も、元から横長の画像と分けて一括分割できる", async ({
+test("開き直した細い結合画像と元から横長の画像を、切り替えずに一括分割できる", async ({
   page,
 }) => {
   const archive = join(sidecar.workDir, "narrow-merge.zip");
@@ -98,39 +98,34 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await expect(page.getByTestId("merge-undo")).toHaveCount(0);
   await page.getByTestId("split-step-split").click();
   const splitCards = page.getByTestId("split-card");
-  await expect(splitCards.nth(0)).toHaveAttribute("data-target", "false");
+  await expect(page.getByTestId("split-source")).toHaveCount(0);
+  await expect(splitCards.nth(0)).toHaveAttribute("data-target", "true");
   await expect(splitCards.nth(1)).toHaveAttribute("data-target", "true");
   await page.getByTestId("split-all").click();
-  await expect(splitCards.nth(0)).toHaveAttribute("data-checked", "false");
+  await expect(splitCards.nth(0)).toHaveAttribute("data-checked", "true");
   await expect(splitCards.nth(1)).toHaveAttribute("data-checked", "true");
   await page.getByTestId("split-reset").click();
-  await page.getByTestId("split-source").click();
-  await page.getByRole("option", { name: "両方", exact: true }).click();
   await expect(splitCards.nth(0)).toHaveAttribute("data-target", "true");
   await expect(splitCards.nth(1)).toHaveAttribute("data-target", "true");
-  await page.getByTestId("split-source").click();
-  await page
-    .getByRole("option", { name: "結合・復元した画像", exact: true })
-    .click();
-  await expect(splitCards.nth(0)).toHaveAttribute("data-target", "true");
-  await expect(splitCards.nth(1)).toHaveAttribute("data-target", "false");
   await page.getByTestId("split-next").click();
   await expect(splitCards.nth(0)).toHaveAttribute("data-focused", "true");
   await page.getByTestId("split-all").click();
   await expect(splitCards.nth(0)).toHaveAttribute("data-checked", "true");
-  await expect(splitCards.nth(1)).toHaveAttribute("data-checked", "false");
+  await expect(splitCards.nth(1)).toHaveAttribute("data-checked", "true");
   await page.screenshot({ path: test.info().outputPath("split-source.png") });
   await page.getByTestId("split-confirm").click();
-  await expect(page.getByTestId("split-page-count")).toHaveText("4 ページ");
+  await expect(page.getByTestId("split-page-count")).toHaveText("5 ページ");
   expect(Object.values(pageSizesOf(archive))).toEqual([
     [300, 900],
     [300, 900],
-    [1200, 900],
+    [600, 900],
+    [600, 900],
     [600, 900],
   ]);
   expect(Object.values(coloursOf(archive))).toEqual([
     "#ff0000",
     "#0000ff",
+    "#008000",
     "#008000",
     "#ffff00",
   ]);

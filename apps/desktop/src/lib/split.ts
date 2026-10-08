@@ -42,7 +42,7 @@ export type SplitScanRow = {
   displaced: boolean;
   /**
    * 見開きのまま残すと決めたページか。割ってから戻した（#138）・2 ページを
-   * 結合した（#139）ページ。「結合・復元した画像」として分割対象を選べる
+   * 結合した（#139）ページ。元から横長の画像と同じく分割対象にする
    */
   kept_whole: boolean;
   deleted: boolean;
@@ -288,23 +288,16 @@ export function canMergeNext(rows: SplitRow[], index: number): boolean {
 
 /** 画面のモード。ページを分割・ページを結合 */
 export type Step = "split" | "merge";
-export type SplitSource = "original" | "edited" | "all";
 
 /**
- * 選んだ種類で、まだ分割していない画像。既定では元から横長の画像だけを対象にする。
- * 結合・復元した画像は記録で区別し、縦横比にかかわらず対象にできる。
+ * 元から横長の画像と、結合・復元した画像をまとめて分割対象にする。
+ * 未保存の結合は取り消せる対象。保存済みの結合は縦横比にかかわらず対象にする。
  */
-export function isSplitTarget(
-  row: SplitRow,
-  source: SplitSource = "original",
-): boolean {
+export function isSplitTarget(row: SplitRow): boolean {
   if (row.deleted) return false;
-  if (row.mergeNext || (row.stored.checked && !row.checked))
-    return source !== "original";
+  if (row.mergeNext || (row.stored.checked && !row.checked)) return true;
   if (row.stored.checked) return false;
-  return row.keptWhole
-    ? source !== "original"
-    : row.detected && source !== "edited";
+  return row.keptWhole || row.detected;
 }
 
 /**
@@ -357,15 +350,10 @@ export function firstStep(rows: SplitRow[]): Step {
     : "merge";
 }
 
-/** 選んだ種類の対象をすべて分ける */
-export function splitAll(
-  rows: SplitRow[],
-  source: SplitSource = "original",
-): SplitRow[] {
+/** すべての分割対象を分ける */
+export function splitAll(rows: SplitRow[]): SplitRow[] {
   return rows.map((row) =>
-    isSplitTarget(row, source) && (row.mergeNext || !row.checked)
-      ? splitRow(row)
-      : row,
+    isSplitTarget(row) && (row.mergeNext || !row.checked) ? splitRow(row) : row,
   );
 }
 
@@ -413,7 +401,7 @@ export type PageUnit = {
   via?: "merge" | "rejoin";
 };
 
-/** 行から共通の並びを組み立てる。手動で相手を選ぶ間は未確定の候補を個別に出す */
+/** 行から共通の並びを組み立てる。分割モードと手動の相手選択では未確定の候補を個別に出す */
 export function pageUnits(
   rows: SplitRow[],
   groupCandidates = true,
@@ -497,11 +485,8 @@ export function joinedRows(
 }
 
 /** 分割の対象になりうる行。判定に漏れても、手で入れれば対象になる */
-export function isCandidate(
-  row: SplitRow,
-  source: SplitSource = "original",
-): boolean {
-  return !row.deleted && (isSplitTarget(row, source) || row.checked);
+export function isCandidate(row: SplitRow): boolean {
+  return !row.deleted && (isSplitTarget(row) || row.checked);
 }
 
 /** 保留を全部捨て、開いたときの姿へ戻す */

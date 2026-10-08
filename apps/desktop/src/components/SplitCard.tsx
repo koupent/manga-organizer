@@ -19,7 +19,7 @@ type SplitCardProps = {
   /** 前後の送りボタンで、いま指している行か（#131） */
   focused: boolean;
   checked: boolean;
-  /** 選んだ種類の分割対象か */
+  /** 分割対象か */
   target: boolean;
   /** 結合・復元して 1 枚にした画像か */
   keptWhole: boolean;
@@ -35,7 +35,6 @@ type SplitCardProps = {
   partner?: Picture;
   /** 未保存の結合を分ける操作か */
   joined: boolean;
-  candidate: boolean;
   onToggle: () => void;
   onMoveSplit: (x: number) => void;
   onZoom: () => void;
@@ -71,7 +70,6 @@ export function SplitCard({
   page,
   partner,
   joined,
-  candidate,
   onToggle,
   onMoveSplit,
   onZoom,
@@ -103,7 +101,6 @@ export function SplitCard({
           title={splitLabel}
           aria-label={splitLabel}
           checked={checked}
-          disabled={candidate}
           onCheckedChange={onToggle}
           className={cn(
             "shrink-0",
@@ -123,11 +120,10 @@ export function SplitCard({
             </Badge>
           ) : null}
           {joined ? <Badge>結合する</Badge> : null}
-          {candidate ? <Badge tone="warn">結合候補</Badge> : null}
           {keptWhole && !checked ? (
             <Badge
               data-testid="split-kept-whole"
-              title="結合・復元した画像です。分割対象で選ぶと一括分割できます"
+              title="結合・復元した画像です。一括分割の対象です"
             >
               結合・復元済み
             </Badge>
