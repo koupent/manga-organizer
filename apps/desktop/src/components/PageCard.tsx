@@ -2,7 +2,7 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "../lib/utils";
 
 type PageCardProps = Omit<HTMLAttributes<HTMLDivElement>, "part"> & {
-  mode: "split" | "merge";
+  mode: "split" | "merge" | "margin";
   index: number;
   part?: 0 | 1;
   label: string;
@@ -15,7 +15,7 @@ type PageCardProps = Omit<HTMLAttributes<HTMLDivElement>, "part"> & {
   actions: ReactNode;
 };
 
-/** 両モードで番号を左下、操作を右下に固定するページカード。 */
+/** 各モードで番号を左下、操作を右下に固定するページカード。 */
 export function PageCard({
   mode,
   index,

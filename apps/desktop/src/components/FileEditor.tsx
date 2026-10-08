@@ -34,7 +34,8 @@ import { Segmented } from "./ui/segmented";
 import { EditorLayout } from "./EditorLayout";
 import { MergeCard, type PickRole } from "./MergeCard";
 import { SplitCard } from "./SplitCard";
-import { MarginEditor } from "./MarginEditor";
+import { MarginControls, useMarginJob } from "./MarginControls";
+import { MarginCard, MarginFrame } from "./MarginCard";
 import { SplitDialog } from "./SplitDialog";
 import { useSplitJob } from "../lib/split-job";
 import { fitInside, useBoxSize } from "../lib/stage";
@@ -121,7 +122,7 @@ export function FileEditor({
     pageCount,
     progress,
     report,
-    busy,
+    busy: splitBusy,
     reloadKey,
     editRows,
     restore,
@@ -132,7 +133,6 @@ export function FileEditor({
 
   // 利用者が選んだステップ。選ぶまでは、開いた本の中身から決める（firstStep）
   const [chosen, setChosen] = useState<Step | "trim" | null>(null);
-  const [trimBusy, setTrimBusy] = useState(false);
   const [modeNotice, setModeNotice] = useState("");
   const [deletedVisibility, setDeletedVisibility] =
     useStoredString("editor.showDeleted");
@@ -176,6 +176,19 @@ export function FileEditor({
     setSelection([]);
     setZoomed(null);
   }, [reloadKey]);
+
+  const margin = useMarginJob({
+    client,
+    archive,
+    active: chosen === "trim",
+    generation: reloadKey,
+    onSaved: () => {
+      setReviewed(true);
+      onArchiveChanged?.();
+      refresh();
+    },
+  });
+  const busy = splitBusy || margin.busy;
 
   // 相手を選んでいる間は Esc でやめられる
   useEffect(() => {
@@ -287,7 +300,7 @@ export function FileEditor({
   // 行を変えたら、選びかけの相手は捨てる。並びが変わり、もう選べないことがある
   const edit = (next: SplitRow[]) => {
     if (busy) return;
-    setChosen(step);
+    if (chosen !== "trim") setChosen(step);
     setHistory((past) => [...past, { rows, cover: coverDraft }].slice(-100));
     setPicking(null);
     editRows(next);
@@ -328,7 +341,7 @@ export function FileEditor({
    * 未保存の変更を残してモードを移る。保存と読み直しの最中は移らない
    */
   const requestStep = (next: Step | "trim") => {
-    if (busy || trimBusy) return;
+    if (busy) return;
     if (next === "trim" && pending) {
       setModeNotice("余白カットの前に、編集中の変更を反映してください。");
       return;
@@ -342,7 +355,7 @@ export function FileEditor({
   const save = async () => {
     if (await confirm(coverDraft)) {
       setReviewed(true);
-      if (step === "split") setChosen("merge");
+      if (step === "split" && chosen !== "trim") setChosen("merge");
     }
   };
 
@@ -486,7 +499,7 @@ export function FileEditor({
    */
   const onCardKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const card = event.target as HTMLElement;
-    if (!card.hasAttribute("tabindex") || busy) return;
+    if (!card.hasAttribute("tabindex") || busy || chosen === "trim") return;
     const index = Number(card.dataset.index);
     if (event.key === "Enter") {
       if (!targets.includes(index)) return;
@@ -534,10 +547,12 @@ export function FileEditor({
     height: row.height,
   });
 
-  // 確定した編集状態は両モード共通。未確定の結合候補は結合モードだけでまとめる。
+  // 確定した編集状態は各モード共通。未確定の結合候補は結合モードだけでまとめる。
   const manualUnits = pageUnits(rows, false);
   const units = (
-    step === "merge" && picking === null ? pageUnits(rows) : manualUnits
+    chosen !== "trim" && step === "merge" && picking === null
+      ? pageUnits(rows)
+      : manualUnits
   ).filter((unit) => showDeleted || !rows[unit.row].deleted);
   const pageGroups = units.map((unit) => {
     const row = rows[unit.row];
@@ -638,7 +653,7 @@ export function FileEditor({
         selected={selection.includes(row.names[unit.part ?? 0])}
         onSelect={(event) => select(row.names[unit.part ?? 0], event)}
         onZoom={() =>
-          step === "split" && !row.deleted
+          chosen !== "trim" && step === "split" && !row.deleted
             ? setOverlay(index)
             : setZoomed(row.names[unit.part ?? 0])
         }
@@ -659,7 +674,35 @@ export function FileEditor({
               : undefined
           }
         >
-          {step === "split" ? (
+          {chosen === "trim" ? (
+            <MarginCard
+              index={index}
+              part={unit.part}
+              label={label}
+              span={span}
+              boxWidth={boxWidth}
+              boxHeight={pictureHeight}
+              page={pagePicture}
+              margins={margin.margins}
+              checked={margin.selected.includes(row.names[unit.part ?? 0])}
+              disabled={
+                busy ||
+                row.deleted ||
+                !margin.scan?.pages.some(
+                  (page) => page.name === row.names[unit.part ?? 0],
+                )
+              }
+              onToggle={() => {
+                const name = row.names[unit.part ?? 0];
+                margin.setSelected(
+                  margin.selected.includes(name)
+                    ? margin.selected.filter((item) => item !== name)
+                    : [...margin.selected, name],
+                );
+              }}
+              onZoom={() => setZoomed(row.names[unit.part ?? 0])}
+            />
+          ) : step === "split" ? (
             <SplitCard
               index={index}
               part={unit.part}
@@ -731,19 +774,19 @@ export function FileEditor({
 
   const modes = (
     <Segmented<Step | "trim">
-      disabled={busy || trimBusy}
+      disabled={busy}
       items={[
         {
           id: "split",
           label: <StepLabel text="ページを分割" count={splitTargets.length} />,
           testId: "split-step-split",
         },
+        { id: "trim", label: "余白カット", testId: "split-step-trim" },
         {
           id: "merge",
           label: <StepLabel text="ページを結合" count={mergeTargets.length} />,
           testId: "split-step-merge",
         },
-        { id: "trim", label: "余白カット", testId: "split-step-trim" },
       ]}
       value={chosen === "trim" ? "trim" : step}
       onChange={requestStep}
@@ -751,37 +794,24 @@ export function FileEditor({
   );
 
   return (
-    <>
-      <MarginEditor
-        client={client}
-        archive={archive}
-        active={chosen === "trim"}
-        generation={reloadKey}
-        modes={modes}
-        onBusy={setTrimBusy}
-        onSaved={() => {
-          setReviewed(true);
-          onArchiveChanged?.();
-          refresh();
-        }}
-      />
-      <div
-        className={
-          chosen === "trim" ? "hidden" : "flex min-h-0 flex-1 flex-col"
-        }
-      >
-        <EditorLayout
-          toolbar={
+    <EditorLayout
+      toolbar={
+        <>
+          <span className="shrink-0 text-[11px] text-ink-faint">
+            モード選択
+          </span>
+          {modes}
+          {modeNotice ? (
+            <span className="text-xs text-amber-400" role="status">
+              {modeNotice}
+            </span>
+          ) : null}
+          {chosen === "trim" ? (
+            <Button variant="secondary" disabled={busy} onClick={margin.rescan}>
+              余白を再検出
+            </Button>
+          ) : (
             <>
-              <span className="shrink-0 text-[11px] text-ink-faint">
-                モード選択
-              </span>
-              {chosen !== "trim" ? modes : null}
-              {modeNotice ? (
-                <span className="text-xs text-amber-400" role="status">
-                  {modeNotice}
-                </span>
-              ) : null}
               {step === "split" ? (
                 <Button
                   variant="secondary"
@@ -839,19 +869,31 @@ export function FileEditor({
                   <ChevronRight />
                 </Button>
               </span>
-              <div className="flex-1" />
-              <span
-                role="status"
-                data-testid="split-status"
-                data-state={report.state}
-                title={status}
-                className={cn(
-                  "max-w-[420px] truncate text-[12px]",
-                  report.state === "error" ? "text-danger" : "text-ink-muted",
-                )}
-              >
-                {status}
-              </span>
+            </>
+          )}
+          <div className="flex-1" />
+          <span
+            role="status"
+            data-testid="split-status"
+            data-state={report.state}
+            title={chosen === "trim" ? margin.message : status}
+            className={cn(
+              "max-w-[420px] truncate text-[12px]",
+              report.state === "error" ? "text-danger" : "text-ink-muted",
+            )}
+          >
+            {chosen === "trim" ? margin.message : status}
+          </span>
+          {chosen === "trim" && !pending ? (
+            <Button
+              data-testid="margin-save"
+              disabled={busy || !margin.canSave}
+              onClick={() => void margin.save()}
+            >
+              余白カットを保存
+            </Button>
+          ) : (
+            <>
               <Button
                 variant="ghost"
                 size="icon"
@@ -898,180 +940,195 @@ export function FileEditor({
                 {pending ? "変更を反映" : "確認済みにする"}
               </Button>
             </>
-          }
-          hint={
-            <span className="flex h-7 items-center gap-3">
-              <span className="min-w-0 flex-1 truncate">
-                {GUIDES[step]} ・ 取っ手で並べ替え ・
-                ⋮／右クリックでサムネイル選択 ・
-                Ctrl／Shift＋名前クリックで複数選択
-              </span>
-              <label className="flex shrink-0 items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  data-testid="show-deleted-pages"
-                  checked={showDeleted}
-                  onChange={(event) =>
-                    setDeletedVisibility(String(event.target.checked))
-                  }
-                />
-                削除したページも表示
-              </label>
-              <label className="flex shrink-0 items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  data-testid="page-direction"
-                  checked={direction === "rtl"}
-                  onChange={(event) =>
-                    setDirection(event.target.checked ? "rtl" : "ltr")
-                  }
-                />
-                右から左に表示
-              </label>
-              <span data-testid="selection-count" className="shrink-0">
-                {selection.length} 件選択
-              </span>
-              <span
-                className="tabular shrink-0 text-ink-muted"
-                data-testid="split-page-count"
-              >
-                {pageCount} ページ
-              </span>
-              <input
-                type="range"
-                min={CARD_WIDTH_MIN}
-                max={CARD_WIDTH_MAX}
-                step={CARD_WIDTH_STEP}
-                value={cardWidth}
-                title="表示サイズ"
-                aria-label="表示サイズ"
-                data-testid="split-card-width"
-                onChange={(event) => setCardWidth(Number(event.target.value))}
-                className="h-1 w-24 shrink-0 cursor-pointer accent-brand"
-              />
-            </span>
-          }
-        >
-          {/* スクロールするのはこの箱であって窓ではない */}
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragStart={({ active }) => {
-              const name = String(active.id);
-              if (!selection.includes(name)) setSelection([name]);
-            }}
-            onDragEnd={dragEnd}
+          )}
+        </>
+      }
+      hint={
+        <span className="flex h-7 items-center gap-3">
+          <span className="min-w-0 flex-1 truncate">
+            {chosen === "trim"
+              ? "同じ割合で余白を切り取ります ・ 画像をクリックで範囲を拡大確認"
+              : GUIDES[step]}{" "}
+            ・ 取っ手で並べ替え ・ ⋮／右クリックでサムネイル選択 ・
+            Ctrl／Shift＋名前クリックで複数選択
+          </span>
+          <label className="flex shrink-0 items-center gap-1.5">
+            <input
+              type="checkbox"
+              data-testid="show-deleted-pages"
+              checked={showDeleted}
+              onChange={(event) =>
+                setDeletedVisibility(String(event.target.checked))
+              }
+            />
+            削除したページも表示
+          </label>
+          <label className="flex shrink-0 items-center gap-1.5">
+            <input
+              type="checkbox"
+              data-testid="page-direction"
+              checked={direction === "rtl"}
+              onChange={(event) =>
+                setDirection(event.target.checked ? "rtl" : "ltr")
+              }
+            />
+            右から左に表示
+          </label>
+          <span data-testid="selection-count" className="shrink-0">
+            {selection.length} 件選択
+          </span>
+          <span
+            className="tabular shrink-0 text-ink-muted"
+            data-testid="split-page-count"
           >
-            <SortableContext
-              items={pageGroups.map((names) => names[0])}
-              strategy={rectSortingStrategy}
-            >
-              <div
-                data-testid="split-grid"
-                className="min-h-0 flex-1 overflow-y-auto"
-              >
-                {/* 行の高さは中身に合わせる（auto-rows-max）。auto のままだと、
+            {pageCount} ページ
+          </span>
+          <input
+            type="range"
+            min={CARD_WIDTH_MIN}
+            max={CARD_WIDTH_MAX}
+            step={CARD_WIDTH_STEP}
+            value={cardWidth}
+            title="表示サイズ"
+            aria-label="表示サイズ"
+            data-testid="split-card-width"
+            onChange={(event) => setCardWidth(Number(event.target.value))}
+            className="h-1 w-24 shrink-0 cursor-pointer accent-brand"
+          />
+        </span>
+      }
+    >
+      {chosen === "trim" ? <MarginControls job={margin} /> : null}
+      {/* スクロールするのはこの箱であって窓ではない */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={({ active }) => {
+          const name = String(active.id);
+          if (!selection.includes(name)) setSelection([name]);
+        }}
+        onDragEnd={dragEnd}
+      >
+        <SortableContext
+          items={pageGroups.map((names) => names[0])}
+          strategy={rectSortingStrategy}
+        >
+          <div
+            data-testid="split-grid"
+            className="min-h-0 flex-1 overflow-y-auto"
+          >
+            {/* 行の高さは中身に合わせる（auto-rows-max）。auto のままだと、
             高さの決まった格子を行数で割った高さへ押し込められる */}
-                {/* カードのキー操作はここで受ける（onCardKey） */}
-                {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-                <div
-                  ref={gridRef}
-                  dir={direction === "rtl" ? "rtl" : "ltr"}
-                  className="grid auto-rows-max content-start gap-3"
-                  style={{
-                    gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
-                  }}
-                  onKeyDown={onCardKey}
-                >
-                  {columnWidth > 0 ? units.map(renderPage) : null}
-                </div>
-              </div>
-            </SortableContext>
-          </DndContext>
+            {/* カードのキー操作はここで受ける（onCardKey） */}
+            {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+            <div
+              ref={gridRef}
+              dir={direction === "rtl" ? "rtl" : "ltr"}
+              className="grid auto-rows-max content-start gap-3"
+              style={{
+                gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
+              }}
+              onKeyDown={onCardKey}
+            >
+              {columnWidth > 0 ? units.map(renderPage) : null}
+            </div>
+          </div>
+        </SortableContext>
+      </DndContext>
 
-          {zoomed ? (
-            <Dialog open onOpenChange={() => setZoomed(null)}>
-              <DialogContent
-                data-testid="lightbox"
-                className="flex h-[90vh] w-[94vw] max-w-none! flex-col items-center"
-                aria-describedby={undefined}
-              >
-                <DialogTitle>
-                  {rows.find((row) => row.names.includes(zoomed))?.deleted
-                    ? "削除したページ"
-                    : zoomed}
-                  （Esc で閉じる）
-                </DialogTitle>
+      {zoomed ? (
+        <Dialog open onOpenChange={() => setZoomed(null)}>
+          <DialogContent
+            data-testid="lightbox"
+            className="flex h-[90vh] w-[94vw] max-w-none! flex-col items-center"
+            aria-describedby={undefined}
+          >
+            <DialogTitle>
+              {rows.find((row) => row.names.includes(zoomed))?.deleted
+                ? "削除したページ"
+                : zoomed}
+              （Esc で閉じる）
+            </DialogTitle>
+            {chosen === "trim" ? (
+              <div className="relative min-h-0 mx-auto">
                 <img
                   data-testid="lightbox-image"
-                  className="min-h-0 flex-1 object-contain"
                   src={`${client.imageUrl(archive, zoomed)}&v=${reloadKey}`}
                   alt={zoomed}
+                  className="block max-h-[78vh] max-w-[88vw] object-contain"
                 />
-              </DialogContent>
-            </Dialog>
-          ) : null}
+                <MarginFrame margins={margin.margins} />
+              </div>
+            ) : (
+              <img
+                data-testid="lightbox-image"
+                className="min-h-0 flex-1 object-contain"
+                src={`${client.imageUrl(archive, zoomed)}&v=${reloadKey}`}
+                alt={zoomed}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
-          {step === "split" && opened !== null && overlay !== null ? (
-            <SplitDialog
-              label={numberLabel(numbers[overlay])}
-              numbers={numbers[overlay]}
-              checked={opened.checked}
-              x={opened.x}
-              width={opened.width}
-              height={opened.height}
-              imageUrl={imageUrlOf(opened)}
-              partner={
-                openedPartner
-                  ? {
-                      ...pictureOf(openedPartner),
-                      imageUrl: imageUrlOf(openedPartner),
-                    }
-                  : undefined
-              }
-              onToggle={() => {
-                toggleTarget(overlay);
-                if (opened.mergeNext) setOverlay(null);
+      {step === "split" && opened !== null && overlay !== null ? (
+        <SplitDialog
+          label={numberLabel(numbers[overlay])}
+          numbers={numbers[overlay]}
+          checked={opened.checked}
+          x={opened.x}
+          width={opened.width}
+          height={opened.height}
+          imageUrl={imageUrlOf(opened)}
+          partner={
+            openedPartner
+              ? {
+                  ...pictureOf(openedPartner),
+                  imageUrl: imageUrlOf(openedPartner),
+                }
+              : undefined
+          }
+          onToggle={() => {
+            toggleTarget(overlay);
+            if (opened.mergeNext) setOverlay(null);
+          }}
+          onMoveSplit={(x) => setSplit(overlay, x)}
+          onClose={() => setOverlay(null)}
+          onWalk={walk}
+        />
+      ) : null}
+
+      <Dialog
+        open={adjusting !== null}
+        onOpenChange={(open) => {
+          if (!open) setAdjusting(null);
+        }}
+      >
+        <DialogContent
+          className="flex h-[88vh] w-[94vw] max-w-none! flex-col p-3"
+          aria-describedby={undefined}
+        >
+          <div className="flex items-center justify-between">
+            <DialogTitle>サムネイルの画像調整</DialogTitle>
+            <Button variant="ghost" onClick={() => setAdjusting(null)}>
+              キャンセル
+            </Button>
+          </div>
+          {adjusting ? (
+            <CoverEditor
+              key={adjusting}
+              client={client}
+              archive={archive}
+              pageName={adjusting}
+              onDraft={(request) => {
+                chooseCover(request.name);
+                setCoverDraft(request);
+                setAdjusting(null);
               }}
-              onMoveSplit={(x) => setSplit(overlay, x)}
-              onClose={() => setOverlay(null)}
-              onWalk={walk}
             />
           ) : null}
-
-          <Dialog
-            open={adjusting !== null}
-            onOpenChange={(open) => {
-              if (!open) setAdjusting(null);
-            }}
-          >
-            <DialogContent
-              className="flex h-[88vh] w-[94vw] max-w-none! flex-col p-3"
-              aria-describedby={undefined}
-            >
-              <div className="flex items-center justify-between">
-                <DialogTitle>サムネイルの画像調整</DialogTitle>
-                <Button variant="ghost" onClick={() => setAdjusting(null)}>
-                  キャンセル
-                </Button>
-              </div>
-              {adjusting ? (
-                <CoverEditor
-                  key={adjusting}
-                  client={client}
-                  archive={archive}
-                  pageName={adjusting}
-                  onDraft={(request) => {
-                    chooseCover(request.name);
-                    setCoverDraft(request);
-                    setAdjusting(null);
-                  }}
-                />
-              ) : null}
-            </DialogContent>
-          </Dialog>
-        </EditorLayout>
-      </div>
-    </>
+        </DialogContent>
+      </Dialog>
+    </EditorLayout>
   );
 }
