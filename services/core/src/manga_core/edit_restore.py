@@ -6,7 +6,7 @@ from pathlib import Path
 
 from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.edit_reset import BACKUP_ENTRY, reset_edits
-from manga_core.file_times import capture_file_times, restore_file_times
+from manga_core.file_times import capture_file_times
 from manga_core.merge_store import merged_sources
 from manga_core.original_store import (
     content_hash,
@@ -189,8 +189,7 @@ def restore_saved(path: Path, mode: str = "all") -> dict:
         with zipfile.ZipFile(staged) as archive:
             if archive.testzip() is not None:
                 raise ValueError("復元したZIPの検証に失敗しました")
-        replace_archive(staged, path)
-        restore_file_times(path, times)
+        replace_archive(staged, path, times=times)
         return {**preview, "counts": counts}
     finally:
         staged.unlink(missing_ok=True)

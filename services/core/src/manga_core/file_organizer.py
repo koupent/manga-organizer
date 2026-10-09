@@ -6,9 +6,9 @@ from pathlib import Path
 from types import MappingProxyType
 
 from manga_core.archive_handler import ArchiveHandler
-from manga_core.archive_save import create_archive_temp, replace_archive
+from manga_core.archive_save import create_archive_temp, refresh_folder, replace_archive
 from manga_core.edit_reset import BACKUP_ENTRY
-from manga_core.file_times import capture_file_times, restore_file_times
+from manga_core.file_times import FileTimes, capture_file_times
 from manga_core.organized_detector import judge_organized
 from manga_core.original_store import sidecar_members
 from manga_core.volume_detector import SeriesName, VolumeDetector
@@ -208,7 +208,7 @@ class FileOrganizer:
         ページ並べ替えやサムネイル作成と同じく、日付で並べた蔵書の並びを崩さない。
         """
         times = capture_file_times(archive_path)
-        error = self._build_volume_archive(image_dir, archive_path, volume)
+        error = self._build_volume_archive(image_dir, archive_path, volume, times=times)
         if error is not None:
             return ProcessResult(
                 original_path=archive_path,
@@ -216,7 +216,6 @@ class FileOrganizer:
                 success=False,
                 error_message=error,
             )
-        restore_file_times(archive_path, times)
         self._log(f"Rebuilt in place: {archive_path.name}")
         return ProcessResult(
             original_path=archive_path,
@@ -226,7 +225,12 @@ class FileOrganizer:
         )
 
     def _build_volume_archive(
-        self, image_dir: Path, output_path: Path, volume: int | None
+        self,
+        image_dir: Path,
+        output_path: Path,
+        volume: int | None,
+        *,
+        times: FileTimes | None = None,
     ) -> str | None:
         """1 巻ぶんの本を書き出す。失敗したらその理由を返す。
 
@@ -241,7 +245,7 @@ class FileOrganizer:
             if error is None:
                 error = _damaged(temp_path)
             if error is None:
-                replace_archive(temp_path, output_path)
+                replace_archive(temp_path, output_path, times=times)
             return error
         finally:
             temp_path.unlink(missing_ok=True)
@@ -363,6 +367,7 @@ class FileOrganizer:
         ):
             try:
                 archive_path.unlink()
+                refresh_folder(archive_path.parent)
                 self._log(f"Deleted original: {archive_path}")
             except Exception as e:
                 self._log(f"Failed to delete original: {e}", "error")

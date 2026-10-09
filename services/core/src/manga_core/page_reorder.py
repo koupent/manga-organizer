@@ -25,7 +25,7 @@ from PIL import Image
 
 from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.edit_reset import BACKUP_ENTRY, preserve_before_edit
-from manga_core.file_times import capture_file_times, restore_file_times
+from manga_core.file_times import capture_file_times
 from manga_core.naming import natural_sort_key
 from manga_core.viewer_contract import (
     DELETED_PREFIX,
@@ -422,12 +422,13 @@ class ZipPageEditor:
                 self._verify_replacements(temp_path, written)
                 self._verify_extra_entries(temp_path, extras)
                 preserve_before_edit(temp_path, self.zip_path)
-                replace_archive(temp_path, self.zip_path)
+                times_restored = replace_archive(
+                    temp_path, self.zip_path, times=original_times
+                )
             finally:
                 # 置き換えに成功していれば既に消えている
                 temp_path.unlink(missing_ok=True)
 
-            times_restored = restore_file_times(self.zip_path, original_times)
             self._pages = self._load_pages()
             return ReorderResult(
                 changed=True,
