@@ -314,6 +314,17 @@ def plan_edit(
     return extras
 
 
+def plan_clear_edits(archive_path: Path) -> dict[str, bytes]:
+    """一括復元後の編集済みの印を解除し、元画像の復元記録は保持する。"""
+    document = _load_document(Path(archive_path))
+    return {
+        MANIFEST_ENTRY: _dump_document(
+            dict(document.get(_ORIGINALS_KEY, {})),
+            dict(document.get(_DERIVED_KEY, {})),
+        )
+    }
+
+
 def recorded_edits(archive_path: Path) -> tuple[str, ...]:
     """本に施した編集の種類（#143）。記録が無い・読めない本は空"""
     return tuple(_load_document(Path(archive_path)).get(_EDITS_KEY, ()))

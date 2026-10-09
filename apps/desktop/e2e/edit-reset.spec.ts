@@ -68,6 +68,57 @@ test("編集ボタン右隣から全編集を戻し、確認済みの印と開�
   await expect(page.getByTestId("split-confirm")).toBeEnabled();
 });
 
+test("旧版の余白カットを一括復元すると編集済みの印が消え、再読込でも残らない", async ({
+  page,
+}) => {
+  const archive = writeArchive(sidecar.workDir, "[著者] 余白復元 第001巻.zip", [
+    { name: "001.jpg", color: "#112233" },
+  ]);
+  runPython(
+    `
+import sys, zipfile
+from pathlib import Path
+from manga_core.edit_reset import BACKUP_ENTRY
+from manga_core.page_margins import trim_pages
+path = Path(sys.argv[1])
+trim_pages(path, ['001.jpg'], (5, 0, 5, 0))
+staged = path.with_suffix('.tmp')
+with zipfile.ZipFile(path) as source, zipfile.ZipFile(staged, 'w') as dest:
+    for info in source.infolist():
+        if info.filename != BACKUP_ENTRY:
+            dest.writestr(info, source.read(info))
+staged.replace(path)
+`,
+    archive,
+  );
+  await page.route("**/api/library/suggest*", (route) =>
+    route.fulfill({ json: { author: null, candidates: [] } }),
+  );
+  const url = `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "organize", output: sidecar.workDir })}`;
+  const loadArchive = async () => {
+    await page.goto(url);
+    await page.getByTestId("open-browser").click();
+    await page
+      .locator(
+        `[data-testid="browse-entry"][data-name="${basename(archive)}"] .browser-name`,
+      )
+      .click();
+    await page.getByTestId("browse-close").click();
+  };
+  await loadArchive();
+  const edit = page.getByTestId("plan-to-edit");
+  const reset = page.getByTestId("plan-reset");
+  await expect(edit).toHaveAttribute("data-edited", "true");
+  await reset.click();
+  await page.getByTestId("edit-reset-confirm").click();
+  await expect(page.getByTestId("edit-reset-dialog")).toBeHidden();
+  await expect(edit).toHaveAttribute("data-edited", "false");
+  await expect(reset).toBeDisabled();
+  await loadArchive();
+  await expect(edit).toHaveAttribute("data-edited", "false");
+  await expect(reset).toBeDisabled();
+});
+
 test("旧版の編集を完全に戻せない場合は理由を表示し、ファイルを変更しない", async ({
   page,
 }) => {

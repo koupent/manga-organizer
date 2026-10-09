@@ -11,6 +11,7 @@ from manga_core.cover_editor import CoverTransform, apply_to_archive
 from manga_core.edit_reset import BACKUP_ENTRY
 from manga_core.edit_restore import restore_preview, restore_saved
 from manga_core.merge_store import MERGES_ENTRY, plan_merge
+from manga_core.original_store import recorded_edits, stored_step
 from manga_core.page_margins import trim_pages
 from manga_core.page_reorder import ZipPageEditor
 from manga_core.page_splitter import MergeIntent, SplitIntent, SplitPosition, apply_rows
@@ -47,9 +48,13 @@ class EditRestoreTest(unittest.TestCase):
         trim_pages(self.path, ["001.png", "002.png"], (5, 0, 5, 0))
         self.legacy()
         self.assertEqual(2, restore_preview(self.path)["counts"]["trim"])
+        self.assertEqual(("review",), recorded_edits(self.path))
+        trimmed = self.pixels()[0]
         result = restore_saved(self.path)
         self.assertFalse(result["complete"])
         self.assertEqual(self.original, self.pixels())
+        self.assertEqual((), recorded_edits(self.path))
+        self.assertIsNotNone(stored_step(self.path, trimmed))
 
     def test_margin_mode_does_not_restore_cover(self):
         trim_pages(self.path, ["001.png"], (5, 0, 5, 0))
@@ -58,6 +63,7 @@ class EditRestoreTest(unittest.TestCase):
         restore_saved(self.path, "trim")
         self.assertEqual(self.original[0], self.pixels()[0])
         self.assertEqual(cover, self.pixels()[1])
+        self.assertIn("thumbnail", recorded_edits(self.path))
 
     def test_thumbnail_padding_only_can_be_restored(self):
         apply_to_archive(self.path, "002.png", CoverTransform())
