@@ -586,7 +586,7 @@ wheels = [
 
 [[package]]
 name = "manga-core"
-version = "4.24.1"
+version = "4.25.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

@@ -29,6 +29,8 @@ export function EditablePage({
   canDelete,
   deleteLabel,
   onDelete,
+  mergePages,
+  onMergeExclude,
   children,
 }: {
   id: string;
@@ -48,6 +50,8 @@ export function EditablePage({
   canDelete: boolean;
   deleteLabel: string;
   onDelete: () => void;
+  mergePages?: { name: string; excluded: boolean; cover: boolean }[];
+  onMergeExclude?: (name: string) => void;
   children: ReactNode;
 }) {
   const {
@@ -83,6 +87,7 @@ export function EditablePage({
       data-cover={cover}
       data-selected={selected}
       data-deleted={deleted}
+      data-merge-excluded={mergePages?.some((page) => page.excluded)}
       className={cn(
         "relative min-w-0 rounded border",
         cover ? "border-brand ring-1 ring-brand" : "border-transparent",
@@ -123,6 +128,11 @@ export function EditablePage({
         >
           {cover ? "サムネイル" : displayName}
         </Button>
+        {mergePages?.some((page) => page.excluded) ? (
+          <span className="shrink-0 text-[10px] text-amber-400">
+            結合対象外
+          </span>
+        ) : null}
         <Button
           variant="ghost"
           size="icon"
@@ -192,6 +202,23 @@ export function EditablePage({
             >
               {deleted ? "ページを復元" : deleteLabel}
             </Button>
+            {mergePages?.map((page) => (
+              <Button
+                key={page.name}
+                variant="ghost"
+                role="menuitem"
+                className="h-auto justify-start whitespace-normal text-left"
+                disabled={page.cover || deleted}
+                onClick={() => {
+                  onMergeExclude?.(page.name);
+                  setMenu(false);
+                }}
+              >
+                {page.cover
+                  ? "サムネイルは全選択の対象外"
+                  : `${page.name} を結合対象${page.excluded ? "に戻す" : "から除外"}`}
+              </Button>
+            ))}
           </div>
         ) : null}
       </div>

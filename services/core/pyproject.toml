@@ -1,6 +1,6 @@
 [project]
 name = "manga-core"
-version = "4.24.1"
+version = "4.25.0"
 description = "漫画アーカイブの整理とページ順修正を担う GUI 非依存のコアロジック"
 readme = "README.md"
 requires-python = ">=3.11"

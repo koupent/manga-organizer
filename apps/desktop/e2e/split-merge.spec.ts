@@ -296,7 +296,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await expect(page.getByTestId("split-step-merge")).toHaveText(
         "ページを結合1",
       );
-      await expect(page.getByTestId("merge-all")).toBeDisabled();
+      await expect(page.getByTestId("merge-all")).toBeEnabled();
       await page.getByTestId("undo").click();
       await expect(card(page, candidate)).toHaveAttribute(
         "data-kind",
@@ -410,7 +410,7 @@ with zipfile.ZipFile(sys.argv[1], 'a') as z:
     );
   });
 
-  test("送りボタンで候補を指し、Enter で結合する。すべて結合もできる", async ({
+  test("送りボタンで候補を指し、Enter で結合する。自動検出分も選べる", async ({
     page,
   }) => {
     // Arrange
@@ -428,12 +428,12 @@ with zipfile.ZipFile(sys.argv[1], 'a') as z:
 
     // Assert
     await expect(card(page, 0)).toHaveAttribute("data-kind", "joined");
-    await expect(page.getByTestId("merge-all")).toBeDisabled();
+    await expect(page.getByTestId("merge-all")).toBeEnabled();
 
-    // Act - 戻してから、すべて結合
+    // 戻してから、自動検出分だけを結合する。
     await page.getByTestId("split-reset").click();
     await expect(card(page, 0)).toHaveAttribute("data-kind", "candidate");
-    await page.getByTestId("merge-all").click();
+    await page.getByTestId("editor-select-detected").click();
 
     // Assert
     await expect(card(page, 0)).toHaveAttribute("data-kind", "joined");
@@ -598,7 +598,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     await expect(halves).toHaveCount(2);
     await expect(halves.nth(0)).toHaveAttribute("data-kind", "page");
     await expect(halves.nth(1)).toHaveAttribute("data-part", "1");
-    await expect(page.getByTestId("merge-all")).toBeDisabled();
+    await expect(page.getByTestId("merge-all")).toBeEnabled();
 
     // Act - 先の半分の「結合…」を押す
     await halves.nth(0).hover();
@@ -612,7 +612,8 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
 
     await page.getByTestId("editor-select-none").click();
     await expect(halves).toHaveCount(2);
-    await page.getByTestId("merge-all").click();
+    await halves.nth(0).getByTestId("merge-pick").click();
+    await halves.nth(1).getByTestId("merge-partner").click();
 
     // Assert - 割る前の 1 枚へ戻すことになる
     await expect(card(page, 0)).toHaveAttribute("data-kind", "joined");

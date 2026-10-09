@@ -101,6 +101,8 @@ export type SplitRow = {
    * 書き込まない。結合される次の行は、この行に吸い込まれて格子から消える
    */
   mergeNext: boolean;
+  /** この編集画面で、結合の対象から外したページ */
+  mergeExcluded?: boolean;
   /**
    * 次の行との結合を勧める（#149）。継ぎ目の色がつながっている 2 枚。示す
    * だけで保留にはしない。開いた時点で何も選ばないのは分割と同じ（#142）
@@ -273,6 +275,7 @@ export function canMergeNext(rows: SplitRow[], index: number): boolean {
   const single = (row: SplitRow | undefined) =>
     row !== undefined &&
     !row.deleted &&
+    !row.mergeExcluded &&
     row.names.length === 1 &&
     !row.checked &&
     !row.detected &&
@@ -363,6 +366,56 @@ export function mergeAll(rows: SplitRow[]): SplitRow[] {
   return next;
 }
 
+/** 保存済みの分割対を、個別に選択・移動できるページへ展開する。 */
+export function separatePages(items: SplitRow[]): SplitRow[] {
+  return items.flatMap((row) => {
+    if (row.names.length !== 2 || !row.checked || isPending(row)) return [row];
+    return row.names.map((name, part) => ({
+      ...row,
+      names: [name],
+      width: part === 0 ? row.width - row.x : row.x,
+      source: "page",
+      detected: false,
+      checked: false,
+      displaced: false,
+      keptWhole: false,
+      rejoin: false,
+      suggested: false,
+      stored: { checked: false, x: row.x, deleted: row.stored.deleted },
+    }));
+  });
+}
+
+/** 表紙と対象外のページは単独で残し、各区間の先頭から隣同士をペアにする。 */
+export function pairAllPages(rows: SplitRow[]): SplitRow[] {
+  const next = separatePages(
+    rows.map((row) => ({
+      ...row,
+      mergeNext: false,
+      checked: row.stored.checked ? true : row.checked,
+    })),
+  );
+  const cover = next.findIndex((row) => !row.deleted);
+  let first: number | null = null;
+  next.forEach((row, index) => {
+    if (
+      index === cover ||
+      row.deleted ||
+      row.mergeExcluded ||
+      row.checked ||
+      row.names.length !== 1
+    ) {
+      first = null;
+    } else if (first === null) {
+      first = index;
+    } else {
+      next[first] = { ...next[first], mergeNext: true };
+      first = null;
+    }
+  });
+  return next;
+}
+
 /**
  * 両モード共通の格子に並べる 1 枚ぶん。
  *
@@ -413,10 +466,10 @@ export function pageUnits(
         units.push({ key: `${key}:0`, kind: "page", row: index, part: 0 });
         units.push({ key: `${key}:1`, kind: "page", row: index, part: 1 });
       }
-    } else if (isWide(row)) {
-      units.push({ key, kind: "spread", row: index });
     } else if (row.mergeNext) {
       units.push({ key, kind: "joined", row: index, via: "merge" });
+    } else if (isWide(row)) {
+      units.push({ key, kind: "spread", row: index });
     } else if (groupCandidates && isMergeCandidate(rows, index)) {
       units.push({ key, kind: "candidate", row: index, via: "merge" });
     } else {

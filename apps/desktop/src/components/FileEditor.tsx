@@ -41,7 +41,6 @@ import { SplitDialog } from "./SplitDialog";
 import { useSplitJob } from "../lib/split-job";
 import { fitInside, useBoxSize } from "../lib/stage";
 import {
-  canMergeNext,
   isAbsorbed,
   isCandidate,
   isMergeCandidate,
@@ -50,6 +49,8 @@ import {
   isSplitTarget,
   joinedRows,
   mergeAll,
+  pairAllPages,
+  separatePages,
   pageUnits,
   numberLabel,
   pageNumbers,
@@ -131,7 +132,7 @@ export function FileEditor({
   >(null);
   const [restoring, setRestoring] = useState(false);
   const initialSplitSelection = useRef(false);
-  const manualPairs = useRef<[string, string][]>([]);
+  const [bulkMerge, setBulkMerge] = useState(false);
   const [deletedVisibility, setDeletedVisibility] =
     useStoredString("editor.showDeleted");
   const showDeleted = deletedVisibility === "true";
@@ -143,7 +144,7 @@ export function FileEditor({
   const [selection, setSelection] = useState<string[]>([]);
   const lastClicked = useRef<string | null>(null);
   const [history, setHistory] = useState<
-    { rows: SplitRow[]; cover?: CoverRequest }[]
+    { rows: SplitRow[]; cover?: CoverRequest; bulkMerge: boolean }[]
   >([]);
   const [zoomed, setZoomed] = useState<string | null>(null);
   const sensors = useSensors(
@@ -166,7 +167,7 @@ export function FileEditor({
   // 読み直すと行が減ることがある。開いたままの重ね枠が、もう無い行を
   // 指したままにならないよう閉じる
   useEffect(() => {
-    manualPairs.current = [];
+    setBulkMerge(false);
     setOverlay(null);
     setFocus(null);
     setPicking(null);
@@ -220,6 +221,7 @@ export function FileEditor({
     if (!previous || busy) return;
     editRows(previous.rows);
     setCoverDraft(previous.cover);
+    setBulkMerge(previous.bulkMerge);
     setHistory(history.slice(0, -1));
     setPicking(null);
   };
@@ -293,11 +295,7 @@ export function FileEditor({
     .filter((index) => index >= 0);
   const targets = step === "split" ? splitTargets : mergeTargets;
   const canSplitAll = splitTargets.some((index) => !rows[index].stored.checked);
-  const canMergeAll = mergeTargets.some((index) =>
-    isMergeCandidate(rows, index)
-      ? !rows[index].mergeNext
-      : rows[index].checked,
-  );
+  const allMergeRows = pairAllPages(rows);
 
   // 列の幅は auto-fill が決める。同じ規則で数えてから、絵の箱をそこへ合わせる
   const columns = Math.max(
@@ -311,51 +309,31 @@ export function FileEditor({
   const pictureHeight = columnWidth * PICTURE_RATIO;
 
   // 行を変えたら、選びかけの相手は捨てる。並びが変わり、もう選べないことがある
-  const edit = (next: SplitRow[]) => {
+  const edit = (next: SplitRow[], allMerges = false) => {
     if (busy) return;
     setModeNotice("");
     if (chosen !== "trim") setChosen(step);
-    setHistory((past) => [...past, { rows, cover: coverDraft }].slice(-100));
+    setHistory((past) =>
+      [...past, { rows, cover: coverDraft, bulkMerge }].slice(-100),
+    );
+    setBulkMerge(allMerges);
     setPicking(null);
-    next.forEach((row, index) => {
-      const pair: [string, string] | null =
-        row.names.length === 2 && row.stored.checked && !row.checked
-          ? [row.names[0], row.names[1]]
-          : row.mergeNext && !row.suggested && next[index + 1]
-            ? [row.names[0], next[index + 1].names[0]]
-            : null;
-      if (
-        pair &&
-        !manualPairs.current.some(
-          (old) => old[0] === pair[0] && old[1] === pair[1],
-        )
-      )
-        manualPairs.current.push(pair);
-    });
     editRows(next);
   };
-  const selectAllMerges = () => {
-    let selected = rows;
-    for (const [first, second] of manualPairs.current) {
-      const rejoin = selected.findIndex(
-        (row) =>
-          row.names[0] === first &&
-          row.names[1] === second &&
-          row.stored.checked,
-      );
-      if (rejoin >= 0) {
-        selected = replaceRow(selected, rejoin, { checked: false });
-        continue;
-      }
-      const at = selected.findIndex((row) => row.names[0] === first);
-      if (
-        at >= 0 &&
-        selected[at + 1]?.names[0] === second &&
-        canMergeNext(selected, at)
-      )
-        selected = replaceRow(selected, at, { mergeNext: true });
-    }
-    return mergeAll(selected);
+  const toggleMergeExclusion = (name: string) => {
+    const index = rows.findIndex((row) => row.names.includes(name));
+    let next = replaceRow(rows, index, {
+      mergeNext: false,
+      checked: rows[index].stored.checked ? true : rows[index].checked,
+    });
+    if (index > 0 && next[index - 1].mergeNext)
+      next = replaceRow(next, index - 1, { mergeNext: false });
+    next = separatePages(next).map((row) =>
+      row.names.includes(name)
+        ? { ...row, mergeExcluded: !row.mergeExcluded }
+        : row,
+    );
+    edit(bulkMerge ? pairAllPages(next) : next, bulkMerge);
   };
   const select = (name: string, event: MouseEvent) => {
     const names = rows
@@ -411,25 +389,6 @@ export function FileEditor({
     }
   };
 
-  // 分割済みの対を個別に動かすときだけ、保存済みの 2 ページとして扱う。
-  const separatePages = (items: SplitRow[]) =>
-    items.flatMap((row) => {
-      if (row.names.length !== 2 || !row.checked || isPending(row))
-        return [row];
-      return row.names.map((name, part) => ({
-        ...row,
-        names: [name],
-        width: part === 0 ? row.width - row.x : row.x,
-        source: "page",
-        detected: false,
-        checked: false,
-        displaced: false,
-        keptWhole: false,
-        rejoin: false,
-        suggested: false,
-        stored: { checked: false, x: row.x, deleted: row.stored.deleted },
-      }));
-    });
   const chooseCover = (name: string) => {
     const next = separatePages(rows);
     const index = next.findIndex((row) => row.names.includes(name));
@@ -604,7 +563,7 @@ export function FileEditor({
   const manualUnits = pageUnits(rows, false);
   const units = (
     chosen !== "trim" && step === "merge" && picking === null
-      ? pageUnits(rows)
+      ? pageUnits(rows, !bulkMerge)
       : manualUnits
   ).filter((unit) => showDeleted || !rows[unit.row].deleted);
   const pageGroups = units.map((unit) => {
@@ -714,6 +673,23 @@ export function FileEditor({
         canCover={!row.deleted && !isPending(row) && !isAbsorbed(rows, index)}
         onCover={() => chooseCover(row.names[unit.part ?? 0])}
         onAdjust={() => setAdjusting(row.names[unit.part ?? 0])}
+        mergePages={
+          chosen === "merge" && !row.deleted
+            ? (unit.part !== undefined
+                ? [row.names[unit.part]]
+                : partner
+                  ? [...row.names, ...partner.names]
+                  : row.names
+              ).map((name) => ({
+                name,
+                excluded:
+                  rows.find((item) => item.names.includes(name))
+                    ?.mergeExcluded === true,
+                cover: name === rows.find((item) => !item.deleted)?.names[0],
+              }))
+            : undefined
+        }
+        onMergeExclude={toggleMergeExclusion}
       >
         <div
           inert={
@@ -866,7 +842,7 @@ export function FileEditor({
           label: <StepLabel text="ページを結合" count={mergeTargets.length} />,
           testId: "split-step-merge",
           description:
-            "候補と手動指定で結合するペアを選びます。右上の変更を反映を押すまで保存しません。",
+            "全選択はサムネイルを除いて隣同士をペアにします。右クリックで対象外にできます。右上の変更を反映を押すまで保存しません。",
         },
       ]}
       value={chosen === "trim" ? "trim" : step}
@@ -889,21 +865,7 @@ export function FileEditor({
                 ? !margin.scan
                 : step === "split"
                   ? !canSplitAll
-                  : !canMergeAll &&
-                    !manualPairs.current.some(([first, second]) => {
-                      const at = rows.findIndex(
-                        (row) => row.names[0] === first,
-                      );
-                      return (
-                        at >= 0 &&
-                        ((rows[at].names[1] === second &&
-                          rows[at].stored.checked &&
-                          rows[at].checked) ||
-                          (rows[at + 1]?.names[0] === second &&
-                            !rows[at].mergeNext &&
-                            canMergeNext(rows, at)))
-                      );
-                    })
+                  : !allMergeRows.some((row) => row.mergeNext)
             }
             allTestId={
               chosen === "trim"
@@ -918,7 +880,8 @@ export function FileEditor({
                 margin.setSelected(
                   margin.scan?.pages.map((page) => page.name) ?? [],
                 );
-              else edit(step === "split" ? splitAll(rows) : selectAllMerges());
+              else if (step === "split") edit(splitAll(rows));
+              else edit(allMergeRows, true);
             }}
             onDetected={() => {
               setModeNotice("");
@@ -1081,6 +1044,7 @@ export function FileEditor({
               setPicking(null);
               restore();
               setHistory([]);
+              setBulkMerge(false);
               setSelection([]);
               setCoverDraft(undefined);
             }}
@@ -1106,6 +1070,15 @@ export function FileEditor({
             <option value="thumbnail">サムネイルの画像加工を戻す</option>
             <option value="all">本全体の編集を戻す</option>
           </select>
+          {chosen === "merge" ? (
+            <span
+              data-testid="merge-selection-hint"
+              className="shrink-0 text-ink-muted"
+              title="全選択はサムネイルを除いて隣同士をペアにします。右クリックでページを対象外にすると、その後ろからペアを組み直します。"
+            >
+              右クリックで結合対象外にできます
+            </span>
+          ) : null}
           <span
             className="min-w-0 flex-1 truncate"
             role="status"
