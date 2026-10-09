@@ -33,6 +33,7 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   await page.getByTestId("split-step-split").click();
   const cards = page.getByTestId("editable-page");
   await expect(cards).toHaveCount(12);
+  await page.getByTestId("editor-select-none").click();
   await cards
     .nth(1)
     .getByRole("button", { name: /の操作$/ })
@@ -179,34 +180,16 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   await page.getByTestId("split-step-merge").click();
   await expect(page.getByTestId("merge-card")).toHaveCount(3);
   await expect(page.getByTestId("split-confirm")).toBeDisabled();
-  // 閉じて開き直しても、チェックしたページの切り取りだけを復元できる。
+  // 保存済みの加工は選択解除と分け、ヘッダーの共通復元操作から戻す。
   await page.reload();
-  await page.getByTestId("split-step-trim").click();
-  await page.getByTestId("margin-settings").click();
-  await expect(page.getByTestId("margin-restore")).toHaveText(
-    "切り取り前に戻す（2 ページ）",
-  );
+  await expect(page.getByTestId("margin-card")).toHaveCount(3);
   await page
-    .getByRole("button", { name: "範囲を一覧で確認", exact: true })
-    .click();
-  await page
-    .getByRole("checkbox", { name: "3 ページを切り取る", exact: true })
-    .uncheck();
-  await page.getByTestId("margin-settings").click();
-  await expect(page.getByTestId("margin-restore")).toHaveText(
-    "切り取り前に戻す（1 ページ）",
+    .getByRole("combobox", { name: "保存済み編集の復元" })
+    .selectOption("trim");
+  await expect(page.getByTestId("edit-reset-dialog")).toContainText(
+    "余白カット：2 件",
   );
-  await page.getByTestId("margin-restore").click();
-  await expect
-    .poll(() => Object.values(pageSizesOf(archive)))
-    .toEqual([
-      [400, 600],
-      [400, 600],
-      [320, 540],
-    ]);
-  await page.getByTestId("margin-settings").click();
-  await expect(page.getByTestId("margin-restore")).toBeEnabled();
-  await page.getByTestId("margin-restore").click();
+  await page.getByTestId("edit-reset-confirm").click();
   await expect
     .poll(() => Object.values(pageSizesOf(archive)))
     .toEqual([
@@ -214,8 +197,11 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
       [400, 600],
       [400, 600],
     ]);
-  await page.getByTestId("margin-settings").click();
-  await expect(page.getByTestId("margin-restore")).toBeDisabled();
+  await expect(page.getByTestId("edit-reset-dialog")).toBeHidden();
+  await page
+    .getByRole("combobox", { name: "保存済み編集の復元" })
+    .selectOption("trim");
+  await expect(page.getByTestId("edit-reset-confirm")).toBeDisabled();
 });
 
 test("検出中のページ数と進捗、完了結果と失敗を明示し、小さい窓でも一覧を動かさない", async ({
@@ -316,12 +302,12 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   }
   await page.screenshot({ path: test.info().outputPath("margin-small.png") });
   state = "failed";
-  await page.getByRole("button", { name: "余白を再検出", exact: true }).click();
+  await page.getByRole("button", { name: "再検出", exact: true }).click();
   await expect(page.getByTestId("margin-result")).toContainText(
     "検出に失敗しました（テスト）",
   );
   await expect(page.getByTestId("margin-progress")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "余白を再検出", exact: true }),
+    page.getByRole("button", { name: "再検出", exact: true }),
   ).toBeEnabled();
 });

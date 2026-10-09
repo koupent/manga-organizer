@@ -7,7 +7,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from manga_api.split_job import archive_token, refuse_stale_token
-from manga_core.original_store import find_crop_source
+from manga_core.original_store import content_hash, find_crop_source
 from manga_core.page_margins import (
     common_margins,
     restore_margins,
@@ -19,9 +19,11 @@ from manga_core.page_reorder import ZipPageEditor
 
 class MarginScanRequest(BaseModel):
     archive: str
+    detect: bool = True
 
 
-class MarginRestoreRequest(MarginScanRequest):
+class MarginRestoreRequest(BaseModel):
+    archive: str
     token: str
     names: list[str] = Field(min_length=1)
 
@@ -30,7 +32,7 @@ class MarginRequest(MarginRestoreRequest):
     margins: tuple[float, float, float, float]
 
 
-def scan_work(path: Path):
+def scan_work(path: Path, detect: bool = True):
     def work(report):
         editor = ZipPageEditor(path, include_deleted=True)
         try:
@@ -46,7 +48,8 @@ def scan_work(path: Path):
                         "name": page.name,
                         "width": width,
                         "height": height,
-                        "margins": white_margins(data),
+                        "margins": white_margins(data) if detect else [0, 0, 0, 0],
+                        "hash": content_hash(data),
                         "restorable": find_crop_source(path, data) is not None,
                     }
                 )

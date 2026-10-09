@@ -1016,6 +1016,58 @@
         }
       }
     },
+    "/api/jobs/edit-restore": {
+      "post": {
+        "summary": "Submit Edit Reset",
+        "operationId": "submit_edit_reset_api_jobs_edit_restore_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditRestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/edit-reset": {
       "post": {
         "summary": "Submit Edit Reset",
@@ -1039,7 +1091,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MarginScanRequest"
+                "$ref": "#/components/schemas/EditRestoreRequest"
               }
             }
           }
@@ -1051,6 +1103,60 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/edit-restore/preview": {
+      "post": {
+        "summary": "Preview Edit Restore",
+        "operationId": "preview_edit_restore_api_edit_restore_preview_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "使い捨てトークン",
+              "default": "",
+              "title": "Token"
+            },
+            "description": "使い捨てトークン"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditRestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Preview Edit Restore Api Edit Restore Preview Post"
                 }
               }
             }
@@ -1992,6 +2098,31 @@
         "title": "DroppedFile",
         "description": "ドロップされたファイルの手がかり"
       },
+      "EditRestoreRequest": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "title": "Archive"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "all",
+              "trim",
+              "split",
+              "merge",
+              "thumbnail"
+            ],
+            "title": "Mode",
+            "default": "all"
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive"
+        ],
+        "title": "EditRestoreRequest"
+      },
       "EditsRequest": {
         "properties": {
           "paths": {
@@ -2439,6 +2570,11 @@
           "archive": {
             "type": "string",
             "title": "Archive"
+          },
+          "detect": {
+            "type": "boolean",
+            "title": "Detect",
+            "default": true
           }
         },
         "type": "object",

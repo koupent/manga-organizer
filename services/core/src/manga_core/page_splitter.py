@@ -34,6 +34,7 @@ from manga_core.cover_editor import (
     prepare_cover,
     record_review,
 )
+from manga_core.merge_store import plan_merge
 from manga_core.original_store import (
     Derivation,
     Operation,
@@ -922,7 +923,12 @@ def _merge_pages(
     return _RowPlan(
         outputs=(OutputPage(first_name, data),),
         dropped=(second_name,),
-        extras=plan_original(path, data, first_name, planned=extras),
+        extras=plan_merge(
+            path,
+            data,
+            [(name, editor.read_entry(name)) for name in names],
+            plan_original(path, data, first_name, planned=extras),
+        ),
         change=_CHANGE_MERGED,
     )
 

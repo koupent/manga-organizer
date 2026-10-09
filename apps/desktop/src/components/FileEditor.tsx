@@ -7,16 +7,17 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+import { EditorSelection } from "./EditorSelection";
+import { EditRestoreDialog } from "./EditRestoreDialog";
 import { EditablePage } from "./EditablePage";
 import { CoverEditor } from "./CoverEditor";
 import { useStoredNumber, useStoredString } from "../lib/setting";
 import {
   ChevronLeft,
   ChevronRight,
-  Link2,
   Loader2,
+  RotateCcw,
   Save,
-  Scissors,
   Undo2,
 } from "lucide-react";
 import {
@@ -39,8 +40,8 @@ import { MarginCard, MarginFrame } from "./MarginCard";
 import { SplitDialog } from "./SplitDialog";
 import { useSplitJob } from "../lib/split-job";
 import { fitInside, useBoxSize } from "../lib/stage";
-import { cn } from "../lib/utils";
 import {
+  canMergeNext,
   isAbsorbed,
   isCandidate,
   isMergeCandidate,
@@ -80,14 +81,6 @@ const GRID_GAP = 12;
 
 /** 絵の箱の高さ／列の幅。縦長ページ（2:3）がちょうど収まる比 */
 const PICTURE_RATIO = 1.5;
-
-/** ステップごとの説明。見出しの下に 1 行で出す */
-const GUIDES: Record<Step, string> = {
-  split:
-    "画像を 2 ページに分けます ・ 線を掴むと分ける位置を動かせます ・ 画像をクリックで大きく表示",
-  merge:
-    "端の絵がつながる 2 ページを候補にしています ・ 候補に無い 2 ページは「結合…」を押してから相手を押す ・ 保存済みの画像を分けるときは「ページを分割」へ",
-};
 
 type FileEditorProps = {
   client: SidecarClient;
@@ -133,6 +126,12 @@ export function FileEditor({
   // 余白は分割前の画像で揃えるため、最初に余白カットを開く。
   const [chosen, setChosen] = useState<Step | "trim">("trim");
   const [modeNotice, setModeNotice] = useState("");
+  const [restoreMode, setRestoreMode] = useState<
+    "all" | "trim" | "split" | "merge" | "thumbnail" | null
+  >(null);
+  const [restoring, setRestoring] = useState(false);
+  const initialSplitSelection = useRef(false);
+  const manualPairs = useRef<[string, string][]>([]);
   const [deletedVisibility, setDeletedVisibility] =
     useStoredString("editor.showDeleted");
   const showDeleted = deletedVisibility === "true";
@@ -167,6 +166,7 @@ export function FileEditor({
   // 読み直すと行が減ることがある。開いたままの重ね枠が、もう無い行を
   // 指したままにならないよう閉じる
   useEffect(() => {
+    manualPairs.current = [];
     setOverlay(null);
     setFocus(null);
     setPicking(null);
@@ -187,7 +187,19 @@ export function FileEditor({
       refresh();
     },
   });
-  const busy = splitBusy || margin.busy;
+  const busy = splitBusy || margin.busy || restoring;
+  useEffect(() => {
+    if (rows && chosen === "split" && !initialSplitSelection.current) {
+      initialSplitSelection.current = true;
+      editRows(
+        rows.map((row) =>
+          !row.mergeNext && isSplitTarget(row) && !row.checked
+            ? splitRow(row)
+            : row,
+        ),
+      );
+    }
+  }, [rows, chosen, editRows]);
 
   // 相手を選んでいる間は Esc でやめられる
   useEffect(() => {
@@ -200,6 +212,10 @@ export function FileEditor({
   }, [picking]);
 
   const undo = () => {
+    if (chosen === "trim") {
+      margin.undo();
+      return;
+    }
     const previous = history.at(-1);
     if (!previous || busy) return;
     editRows(previous.rows);
@@ -208,7 +224,7 @@ export function FileEditor({
     setPicking(null);
   };
   useEffect(() => {
-    if (!active || busy || chosen === "trim") return;
+    if (!active || busy) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") setZoomed(null);
       const target = event.target as HTMLElement;
@@ -276,9 +292,7 @@ export function FileEditor({
     .map((_, index) => (isMergeTarget(rows, index) ? index : -1))
     .filter((index) => index >= 0);
   const targets = step === "split" ? splitTargets : mergeTargets;
-  const canSplitAll = splitTargets.some(
-    (index) => rows[index].mergeNext || !rows[index].checked,
-  );
+  const canSplitAll = splitTargets.some((index) => !rows[index].stored.checked);
   const canMergeAll = mergeTargets.some((index) =>
     isMergeCandidate(rows, index)
       ? !rows[index].mergeNext
@@ -299,10 +313,35 @@ export function FileEditor({
   // 行を変えたら、選びかけの相手は捨てる。並びが変わり、もう選べないことがある
   const edit = (next: SplitRow[]) => {
     if (busy) return;
+    setModeNotice("");
     if (chosen !== "trim") setChosen(step);
     setHistory((past) => [...past, { rows, cover: coverDraft }].slice(-100));
     setPicking(null);
+    next.forEach((row, index) => {
+      if (row.mergeNext && !row.suggested && next[index + 1]) {
+        const pair: [string, string] = [row.names[0], next[index + 1].names[0]];
+        if (
+          !manualPairs.current.some(
+            (old) => old[0] === pair[0] && old[1] === pair[1],
+          )
+        )
+          manualPairs.current.push(pair);
+      }
+    });
     editRows(next);
+  };
+  const selectAllMerges = () => {
+    let selected = rows;
+    for (const [first, second] of manualPairs.current) {
+      const at = selected.findIndex((row) => row.names[0] === first);
+      if (
+        at >= 0 &&
+        selected[at + 1]?.names[0] === second &&
+        canMergeNext(selected, at)
+      )
+        selected = replaceRow(selected, at, { mergeNext: true });
+    }
+    return mergeAll(selected);
   };
   const select = (name: string, event: MouseEvent) => {
     const names = rows
@@ -352,6 +391,7 @@ export function FileEditor({
     setPicking(null);
   };
   const save = async () => {
+    setModeNotice("");
     if (await confirm(coverDraft)) {
       setReviewed(true);
       if (step === "split" && chosen !== "trim") setChosen("merge");
@@ -483,6 +523,7 @@ export function FileEditor({
   const toggleTarget = (index: number) => {
     const row = rows[index];
     if (step === "split") {
+      if (row.stored.checked) return;
       edit(rows.map((item, at) => (at === index ? splitRow(item) : item)));
     } else if (row.mergeNext || isMergeCandidate(rows, index)) {
       setMerge(index, !row.mergeNext);
@@ -774,6 +815,9 @@ export function FileEditor({
   let marginResult = "余白の検出を開始しています…";
   if (margin.error) marginResult = margin.message;
   else if (margin.busy) marginResult = "余白カットを処理しています…";
+  else if (margin.needsDetection)
+    marginResult =
+      "画像が変わりました。再検出するか切り取り量を確認してください。";
   else if (margin.scan) {
     const detected = margin.scan.margins.some((value) => value > 0);
     if (margin.margins.some((value) => value > 0)) {
@@ -790,16 +834,26 @@ export function FileEditor({
     <Segmented<Step | "trim">
       disabled={busy}
       items={[
-        { id: "trim", label: "余白カット", testId: "split-step-trim" },
+        {
+          id: "trim",
+          label: "余白カット",
+          testId: "split-step-trim",
+          description:
+            "共通余白を提案します。全ページから不要な対象を外し、枠を確認して反映します。",
+        },
         {
           id: "split",
           label: <StepLabel text="ページを分割" count={splitTargets.length} />,
           testId: "split-step-split",
+          description:
+            "分割できるページを最初に選択します。不要な対象を外し、分割線を確認して右上から反映します。",
         },
         {
           id: "merge",
           label: <StepLabel text="ページを結合" count={mergeTargets.length} />,
           testId: "split-step-merge",
+          description:
+            "候補と手動指定で結合するペアを選びます。右上の変更を反映を押すまで保存しません。",
         },
       ]}
       value={chosen === "trim" ? "trim" : step}
@@ -815,49 +869,102 @@ export function FileEditor({
             モード選択
           </span>
           {modes}
-          {modeNotice ? (
-            <span className="text-xs text-amber-400" role="status">
-              {modeNotice}
-            </span>
-          ) : null}
+          <EditorSelection
+            disabled={busy}
+            allDisabled={
+              chosen === "trim"
+                ? !margin.scan
+                : step === "split"
+                  ? !canSplitAll
+                  : !canMergeAll &&
+                    !manualPairs.current.some(([first, second]) => {
+                      const at = rows.findIndex(
+                        (row) => row.names[0] === first,
+                      );
+                      return (
+                        at >= 0 &&
+                        rows[at + 1]?.names[0] === second &&
+                        !rows[at].mergeNext &&
+                        canMergeNext(rows, at)
+                      );
+                    })
+            }
+            allTestId={
+              chosen === "trim"
+                ? "margin-select-all"
+                : step === "split"
+                  ? "split-all"
+                  : "merge-all"
+            }
+            onAll={() => {
+              setModeNotice("");
+              if (chosen === "trim")
+                margin.setSelected(
+                  margin.scan?.pages.map((page) => page.name) ?? [],
+                );
+              else edit(step === "split" ? splitAll(rows) : selectAllMerges());
+            }}
+            onDetected={() => {
+              setModeNotice("");
+              if (chosen === "trim")
+                margin.setSelected(
+                  margin.scan?.pages
+                    .filter((page) => page.margins.some((value) => value > 0))
+                    .map((page) => page.name) ?? [],
+                );
+              else if (step === "split")
+                edit(
+                  rows.map((row) =>
+                    row.stored.checked
+                      ? row
+                      : { ...row, checked: !row.deleted && row.detected },
+                  ),
+                );
+              else
+                edit(
+                  mergeAll(
+                    rows.map((row) => ({
+                      ...row,
+                      mergeNext: false,
+                      checked: row.stored.checked ? true : row.checked,
+                    })),
+                  ),
+                );
+            }}
+            onClear={() => {
+              setModeNotice("");
+              if (chosen === "trim") margin.setSelected([]);
+              else if (step === "split")
+                edit(
+                  rows.map((row) =>
+                    row.stored.checked
+                      ? row
+                      : { ...row, checked: false, x: row.stored.x },
+                  ),
+                );
+              else
+                edit(
+                  rows.map((row) => ({
+                    ...row,
+                    mergeNext: false,
+                    checked: row.stored.checked ? true : row.checked,
+                  })),
+                );
+            }}
+          />
           {chosen === "trim" ? (
             <>
-              <MarginControls job={margin} pending={pending} />
+              <MarginControls job={margin} />
               <Button
                 variant="secondary"
                 disabled={busy}
                 onClick={margin.rescan}
               >
-                余白を再検出
+                再検出
               </Button>
             </>
           ) : (
             <>
-              {step === "split" ? (
-                <Button
-                  variant="secondary"
-                  className="shrink-0"
-                  data-testid="split-all"
-                  title="元から横長の画像と結合・復元した画像を、分割線の位置ですべて分ける"
-                  disabled={!canSplitAll || busy}
-                  onClick={() => edit(splitAll(rows))}
-                >
-                  <Scissors />
-                  すべて分割
-                </Button>
-              ) : step === "merge" ? (
-                <Button
-                  variant="secondary"
-                  className="shrink-0"
-                  data-testid="merge-all"
-                  title="結合の候補を、すべて 1 枚の見開きにする"
-                  disabled={!canMergeAll || busy}
-                  onClick={() => edit(mergeAll(rows))}
-                >
-                  <Link2 />
-                  候補をすべて結合
-                </Button>
-              ) : null}
               <span className="flex shrink-0 items-center gap-1">
                 <Button
                   variant="secondary"
@@ -893,20 +1000,6 @@ export function FileEditor({
             </>
           )}
           <div className="flex-1" />
-          <span
-            role="status"
-            data-testid="split-status"
-            data-state={report.state}
-            title={chosen === "trim" ? margin.message : status}
-            className={cn(
-              "max-w-[420px] truncate text-[12px]",
-              report.state === "error" ? "text-danger" : "text-ink-muted",
-            )}
-          >
-            {chosen === "trim"
-              ? `${margin.selected.length} ページ選択`
-              : status}
-          </span>
           {chosen === "trim" && !pending ? (
             <Button
               variant="primary"
@@ -921,36 +1014,6 @@ export function FileEditor({
             </Button>
           ) : (
             <>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 shrink-0"
-                data-testid="undo"
-                title="直前の編集を元に戻す（Ctrl+Z）"
-                aria-label="直前の編集を元に戻す"
-                disabled={history.length === 0 || busy}
-                onClick={undo}
-              >
-                <Undo2 />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 shrink-0"
-                data-testid="split-reset"
-                title="変更を戻す（開いたときの状態に戻す）"
-                aria-label="変更を戻す"
-                disabled={!pending || busy}
-                onClick={() => {
-                  setPicking(null);
-                  restore();
-                  setHistory([]);
-                  setSelection([]);
-                  setCoverDraft(undefined);
-                }}
-              >
-                <Undo2 />
-              </Button>
               {/* 書き込みが終わって新しい行が並ぶまで押させない。報告が done に
               なった時点で押せるようにすると、読み直しの最中に 2 つ目の指示が
               飛ぶ。着いた順で結果が決まり、利用者は自分が最後に選んだ内容と
@@ -972,26 +1035,74 @@ export function FileEditor({
       }
       hint={
         <span className="flex h-7 items-center gap-3">
-          <span className="min-w-0 flex-1 truncate">
-            {chosen === "trim" ? (
-              <span
-                data-testid="margin-result"
-                role="status"
-                title={margin.message}
-                className={cn(
-                  "font-semibold",
-                  margin.error ? "text-danger" : "text-brand",
-                )}
-              >
-                {marginResult}
-              </span>
-            ) : (
-              <>
-                {GUIDES[step]} ・ 取っ手で並べ替え ・
-                ⋮／右クリックでサムネイル選択 ・
-                Ctrl／Shift＋名前クリックで複数選択
-              </>
-            )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            data-testid="undo"
+            title="直前の編集を元に戻す（Ctrl+Z）"
+            aria-label="直前の編集を元に戻す"
+            disabled={
+              busy ||
+              (chosen === "trim"
+                ? margin.history.length === 0
+                : history.length === 0)
+            }
+            onClick={undo}
+          >
+            <Undo2 />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            data-testid="split-reset"
+            title="未保存の変更をすべて破棄"
+            aria-label="未保存の変更をすべて破棄"
+            disabled={busy || (!pending && chosen !== "trim")}
+            onClick={() => {
+              if (chosen === "trim") margin.discard();
+              setPicking(null);
+              restore();
+              setHistory([]);
+              setSelection([]);
+              setCoverDraft(undefined);
+            }}
+          >
+            <RotateCcw />
+          </Button>
+          <select
+            aria-label="保存済み編集の復元"
+            disabled={busy}
+            value=""
+            onChange={(event) =>
+              setRestoreMode(
+                event.target.value as
+                  "all" | "trim" | "split" | "merge" | "thumbnail",
+              )
+            }
+            className="h-7 rounded border border-line bg-surface px-2 text-xs"
+          >
+            <option value="" disabled>
+              保存済み編集を復元…
+            </option>
+            <option value={chosen}>このモードの加工を戻す</option>
+            <option value="thumbnail">サムネイルの画像加工を戻す</option>
+            <option value="all">本全体の編集を戻す</option>
+          </select>
+          <span
+            className="min-w-0 flex-1 truncate"
+            role="status"
+            data-testid="split-status"
+            data-state={report.state}
+            title={chosen === "trim" ? margin.message : status}
+          >
+            {modeNotice ||
+              (chosen === "trim" ? (
+                <span data-testid="margin-result">{marginResult}</span>
+              ) : (
+                status
+              ))}
           </span>
           <label className="flex shrink-0 items-center gap-1.5">
             <input
@@ -1039,6 +1150,25 @@ export function FileEditor({
         </span>
       }
     >
+      {restoreMode ? (
+        <EditRestoreDialog
+          client={client}
+          archive={archive}
+          mode={restoreMode}
+          onClose={() => setRestoreMode(null)}
+          onBusy={setRestoring}
+          onRestored={(result) => {
+            setReviewed(false);
+            setModeNotice(
+              result.complete
+                ? "編集前の本に戻しました"
+                : "復元できる加工を戻しました。記録のない編集は維持しています。",
+            );
+            onArchiveChanged?.();
+            refresh();
+          }}
+        />
+      ) : null}
       <div
         className="relative flex min-h-0 flex-1 flex-col"
         aria-busy={chosen === "trim" && margin.busy}
@@ -1122,6 +1252,7 @@ export function FileEditor({
           label={numberLabel(numbers[overlay])}
           numbers={numbers[overlay]}
           checked={opened.checked}
+          saved={opened.stored.checked}
           x={opened.x}
           width={opened.width}
           height={opened.height}

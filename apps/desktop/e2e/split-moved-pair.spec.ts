@@ -102,13 +102,12 @@ test.describe("ページ分割: 崩れた対を戻す", () => {
       "離れた見開き 1 組を隣り合わせに戻します",
     );
 
-    // Act - チェックを外して割る前へ戻す
-    await card(page, 2).getByTestId("split-check").click();
-    await page.getByTestId("split-confirm").click();
-    await expect(page.getByTestId("split-status")).toContainText(
-      "1 枚を 1 ページに戻しました",
-      { timeout: 30_000 },
-    );
+    // 保存済み分割の復元は選択解除から独立させる。
+    await page
+      .getByRole("combobox", { name: "保存済み編集の復元" })
+      .selectOption("split");
+    await page.getByTestId("edit-reset-confirm").click();
+    await expect(page.getByTestId("edit-reset-dialog")).toBeHidden();
 
     // Assert - 3 ページ目に元の見開きが戻り、4 ページの本になる
     expect(Object.values(pageSizesOf(archive))).toEqual([

@@ -101,6 +101,7 @@ export function SplitCard({
           title={splitLabel}
           aria-label={splitLabel}
           checked={checked}
+          disabled={applied}
           onCheckedChange={onToggle}
           className={cn(
             "shrink-0",

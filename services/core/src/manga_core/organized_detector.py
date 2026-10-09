@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from manga_core.edit_reset import BACKUP_ENTRY
+from manga_core.merge_store import MERGES_ENTRY
 from manga_core.original_store import MANIFEST_ENTRY, ORIGINALS_PREFIX
 from manga_core.viewer_contract import deleted_position, is_page_source, sequential_name
 from manga_core.volume_detector import format_volume_name
@@ -205,7 +206,7 @@ def _is_bundled(name: str) -> bool:
     しない。``.thumbnails/`` を抱えた本は、この道具が作った物ではない。
     """
     return (
-        name in (MANIFEST_ENTRY, BACKUP_ENTRY)
+        name in (MANIFEST_ENTRY, BACKUP_ENTRY, MERGES_ENTRY)
         or name.startswith(ORIGINALS_PREFIX)
         # 復元用の退避ページは、編集画面と同じ規約で識別する。
         or deleted_position(name) is not None

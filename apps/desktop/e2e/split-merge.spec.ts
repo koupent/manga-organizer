@@ -178,6 +178,7 @@ test.describe("ページ分割・結合: 2 ページを 1 枚の見開きにす�
     // 保存済みの結合画像も、分割モードでは一括分割の対象にする。
     await page.getByTestId("split-step-split").click();
     const spread = page.locator('[data-testid="split-card"][data-index="1"]');
+    await page.getByTestId("editor-select-none").click();
     await expect(spread).toHaveAttribute("data-target", "true");
     await expect(spread.getByTestId("split-kept-whole")).toHaveText(
       "結合・復元済み",
@@ -582,7 +583,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
       "data-checked",
       "true",
     );
-    await expect(page.getByTestId("split-all")).toBeDisabled();
+    await expect(page.getByTestId("split-all")).toBeEnabled();
   });
 
   test("余白を挟んだ 2 枚は単ページとして並び、相手はもう半分だけ", async ({

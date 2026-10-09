@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   sidecarReason,
   type SidecarClient,
@@ -19,6 +19,7 @@ type Scan = {
   margins: MarginRequest["margins"];
   pages: {
     name: string;
+    hash: string;
     width: number;
     height: number;
     margins: number[];
@@ -46,24 +47,34 @@ export function useMarginJob({
   ]);
   const [selected, setSelected] = useState<string[]>([]);
   const [message, setMessage] = useState("");
-  const [phase, setPhase] = useState<"scan" | "save" | "restore" | null>(null);
+  const [phase, setPhase] = useState<"scan" | "refresh" | "save" | null>(null);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState(false);
   const busy = phase !== null;
   const [scanGeneration, setScanGeneration] = useState(-1);
   const [retry, setRetry] = useState(0);
+  const [needsDetection, setNeedsDetection] = useState(false);
+  const [history, setHistory] = useState<
+    { margins: MarginRequest["margins"]; selected: string[] }[]
+  >([]);
+  const remember = () =>
+    setHistory((items) => [...items, { margins, selected }].slice(-100));
+  const previous = useRef({ scan, selected });
+  previous.current = { scan, selected };
   useEffect(() => {
     if (!active || scanGeneration === generation) return;
     let alive = true;
     let jobId: string | null = null;
     const controller = new AbortController();
-    setPhase("scan");
+    const { scan, selected } = previous.current;
+    const detect = scan === null;
+    setPhase(detect ? "scan" : "refresh");
     setProgress({ current: 0, total: 0 });
     setError(false);
     setMessage("全ページの共通余白を調べています…");
     void (async () => {
       try {
-        const accepted = await client.marginScan(archive);
+        const accepted = await client.marginScan(archive, detect);
         jobId = accepted.id;
         if (!alive) {
           await client.cancelJob(jobId);
@@ -86,15 +97,48 @@ export function useMarginJob({
         if (job.state !== "succeeded")
           throw new Error(job.error ?? "余白を調べられませんでした");
         const result = job.result as Scan;
-        setScan(result);
-        setMargins(result.margins);
-        setSelected(result.pages.map((page) => page.name));
-        setScanGeneration(generation);
-        setMessage(
-          result.margins.some((value) => value > 0)
-            ? "共通余白を提案しました。枠と対象ページを確認して保存してください。"
-            : "共通する白い余白は見つかりませんでした。切り取り量を手動で指定できます。",
+        setScan(
+          detect
+            ? result
+            : {
+                ...result,
+                margins: scan?.margins ?? result.margins,
+                pages: result.pages.map((page) => ({
+                  ...page,
+                  margins:
+                    scan?.pages.find((old) => old.hash === page.hash)
+                      ?.margins ?? page.margins,
+                })),
+              },
         );
+        setNeedsDetection(
+          !detect &&
+            result.pages.some(
+              (page) => !scan?.pages.some((old) => old.hash === page.hash),
+            ),
+        );
+        if (detect) {
+          setMargins(result.margins);
+          setSelected(result.pages.map((page) => page.name));
+        } else {
+          const selectedHashes = new Set(
+            scan?.pages
+              .filter((page) => selected.includes(page.name))
+              .map((page) => page.hash),
+          );
+          setSelected(
+            result.pages
+              .filter((page) => selectedHashes.has(page.hash))
+              .map((page) => page.name),
+          );
+        }
+        setScanGeneration(generation);
+        if (detect)
+          setMessage(
+            result.margins.some((value) => value > 0)
+              ? "共通余白を提案しました。枠と対象ページを確認して保存してください。"
+              : "共通する白い余白は見つかりませんでした。切り取り量を手動で指定できます。",
+          );
       } catch (error) {
         if (alive) {
           setError(true);
@@ -113,38 +157,26 @@ export function useMarginJob({
     };
   }, [active, archive, client, generation, scanGeneration, retry]);
 
-  const restorable = selected.filter((name) =>
-    scan?.pages.some((page) => page.name === name && page.restorable),
-  );
-  const save = async (restore = false) => {
+  const save = async () => {
     if (!scan || busy) return;
-    setPhase(restore ? "restore" : "save");
+    setPhase("save");
     setProgress({ current: 0, total: 0 });
     setError(false);
-    setMessage(
-      restore
-        ? "切り取り前の画像に戻しています…"
-        : "余白カットを保存しています…",
-    );
+    setMessage("余白カットを保存しています…");
     try {
       const request = {
         archive,
         token: scan.token,
-        names: restore ? restorable : selected,
+        names: selected,
       };
-      const accepted = restore
-        ? await client.restoreMargins(request)
-        : await client.trimMargins({ ...request, margins });
+      const accepted = await client.trimMargins({ ...request, margins });
       const job = await client.waitForJob(accepted.id, (progress) =>
         setProgress({ current: progress.current, total: progress.total }),
       );
       if (job.state !== "succeeded")
         throw new Error(job.error ?? "保存に失敗しました");
-      setMessage(
-        restore
-          ? `${restorable.length} ページを切り取り前に戻しました`
-          : `${selected.length} ページの余白をカットしました`,
-      );
+      setMessage(`${selected.length} ページの余白をカットしました`);
+      setHistory([]);
       onSaved();
     } catch (error) {
       setError(true);
@@ -161,18 +193,39 @@ export function useMarginJob({
   return {
     scan,
     margins,
-    setMargins,
+    setMargins: (next: MarginRequest["margins"]) => {
+      remember();
+      setMargins(next);
+    },
     selected,
-    setSelected,
+    setSelected: (next: string[]) => {
+      remember();
+      setSelected(next);
+    },
+    history,
+    needsDetection,
+    undo: () => {
+      const prior = history.at(-1);
+      if (!prior || busy) return;
+      setMargins(prior.margins);
+      setSelected(prior.selected);
+      setHistory(history.slice(0, -1));
+    },
+    discard: () => {
+      if (busy) return;
+      setMargins(scan?.margins ?? [0, 0, 0, 0]);
+      setSelected([]);
+      setHistory([]);
+    },
     message,
     busy,
     phase,
     progress,
     error,
     canSave: !busy && !!scan && selected.length > 0 && valid,
-    restorableCount: restorable.length,
     save,
     rescan: () => {
+      setScan(null);
       setScanGeneration(-1);
       setRetry((value) => value + 1);
     },
@@ -181,13 +234,11 @@ export function useMarginJob({
 
 export function MarginControls({
   job,
-  pending,
 }: {
   job: ReturnType<typeof useMarginJob>;
-  pending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const { scan, margins, setMargins, selected, setSelected, busy } = job;
+  const { margins, setMargins, busy } = job;
   return (
     <>
       <Button
@@ -197,7 +248,7 @@ export function MarginControls({
         disabled={busy}
         onClick={() => setOpen(true)}
       >
-        <SlidersHorizontal /> 切り取り量を調整
+        <SlidersHorizontal /> 切り取り量
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
@@ -244,37 +295,6 @@ export function MarginControls({
               </label>
             ))}
           </div>
-          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3 text-xs">
-            <Button
-              variant="secondary"
-              disabled={busy || !scan}
-              onClick={() =>
-                setSelected(scan?.pages.map((page) => page.name) ?? [])
-              }
-            >
-              全ページを選択
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busy}
-              onClick={() => setSelected([])}
-            >
-              選択を解除
-            </Button>
-            <span>{selected.length} ページ選択</span>
-          </div>
-          <Button
-            variant="secondary"
-            data-testid="margin-restore"
-            disabled={busy || pending || job.restorableCount === 0}
-            title="選択したページのうち、直前の画像が保存されている切り取りを戻します。分割・結合や順番は維持します。"
-            onClick={() => {
-              setOpen(false);
-              void job.save(true);
-            }}
-          >
-            切り取り前に戻す（{job.restorableCount} ページ）
-          </Button>
           <Button variant="primary" onClick={() => setOpen(false)}>
             範囲を一覧で確認
           </Button>
@@ -290,7 +310,7 @@ export function MarginProgress({
 }: {
   job: ReturnType<typeof useMarginJob>;
 }) {
-  if (!job.busy) return null;
+  if (!job.busy || job.phase === "refresh") return null;
   const { current, total } = job.progress;
   const percent = total > 0 ? Math.round((current / total) * 100) : 0;
   return (
@@ -305,9 +325,7 @@ export function MarginProgress({
           <Loader2 className="size-6 shrink-0 animate-spin text-brand" />
           {job.phase === "scan"
             ? "全ページの余白を検出しています"
-            : job.phase === "restore"
-              ? "切り取り前の画像に戻しています"
-              : "余白カットを反映しています"}
+            : "余白カットを反映しています"}
         </div>
         <p className="mb-4 text-sm text-ink-muted">
           {job.phase === "scan"
