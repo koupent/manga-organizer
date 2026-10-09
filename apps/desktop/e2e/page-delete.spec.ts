@@ -185,6 +185,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
     "#808080",
   ]);
   // 再び中間のページを削除し、残った隣接ページを結合する。
+  await page.getByTestId("split-step-merge").click();
   await page.getByTestId("show-deleted-pages").uncheck();
   await remove(cards.nth(1));
   await cards.first().hover();
