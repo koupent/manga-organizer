@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 
 from manga_core.archive_save import create_archive_temp, replace_archive
-from manga_core.file_times import capture_file_times, restore_file_times
+from manga_core.file_times import capture_file_times
 from manga_core.original_store import recorded_edits
 
 # 整理時の入れ子アーカイブ展開へ巻き込まれない拡張子にする。
@@ -52,7 +52,6 @@ def reset_edits(path: Path) -> None:
                 raise ValueError("編集前の本が壊れているため復元できません")
         if recorded_edits(temp):
             raise ValueError("編集前の本の記録が不正です")
-        replace_archive(temp, path)
-        restore_file_times(path, times)
+        replace_archive(temp, path, times=times)
     finally:
         temp.unlink(missing_ok=True)

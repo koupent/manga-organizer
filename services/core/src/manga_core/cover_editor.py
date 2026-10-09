@@ -24,7 +24,7 @@ from PIL import Image, ImageStat
 
 from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.edit_reset import BACKUP_ENTRY, preserve_before_edit
-from manga_core.file_times import capture_file_times, restore_file_times
+from manga_core.file_times import capture_file_times
 from manga_core.original_store import (
     Operation,
     OriginalStoreError,
@@ -299,10 +299,9 @@ def record_review(path: Path) -> None:
         _write_replacement(path, temp, "", "", b"", extras)
         _verify(temp, "", 0, extras)
         preserve_before_edit(temp, path)
-        replace_archive(temp, path)
+        replace_archive(temp, path, times=times)
     finally:
         temp.unlink(missing_ok=True)
-    restore_file_times(path, times)
 
 
 def _source_pixels(archive_path: Path, stored: bytes, from_original: bool) -> bytes:
@@ -376,11 +375,10 @@ def _replace_in_place(
         _write_replacement(archive_path, temp_path, name, new_name, produced, extras)
         _verify(temp_path, new_name, len(produced), extras)
         preserve_before_edit(temp_path, archive_path)
-        replace_archive(temp_path, archive_path)
+        replace_archive(temp_path, archive_path, times=times)
     finally:
         temp_path.unlink(missing_ok=True)
 
-    restore_file_times(archive_path, times)
     with Image.open(io.BytesIO(produced)) as written:
         size = written.size
     return CoverResult(

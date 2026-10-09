@@ -8,7 +8,15 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from manga_core.file_times import FileTimes, restore_file_times
+
 logger = logging.getLogger(__name__)
+
+_SHCNE_ATTRIBUTES = 0x800
+_SHCNE_UPDATEDIR = 0x1000
+_SHCNE_UPDATEITEM = 0x2000
+_SHCNF_PATHW = 0x5
+_SHCNF_FLUSH = 0x1000
 
 
 def create_archive_temp() -> Path:
@@ -18,9 +26,14 @@ def create_archive_temp() -> Path:
     return Path(name)
 
 
-def replace_archive(prepared: Path, destination: Path) -> None:
-    """検証済みZIPを保存する。別ドライブでも元を直接上書きしない。"""
+def replace_archive(
+    prepared: Path, destination: Path, *, times: FileTimes | None = None
+) -> bool:
+    """日時まで整えたZIPを公開し、表示を更新する。日時の復元結果を返す。"""
+    times_restored = True
     try:
+        if times is not None:
+            times_restored = restore_file_times(prepared, times)
         os.replace(prepared, destination)
     except OSError as error:
         if error.errno != errno.EXDEV:
@@ -37,14 +50,19 @@ def replace_archive(prepared: Path, destination: Path) -> None:
                 shutil.copyfileobj(source, output, length=1024 * 1024)
                 output.flush()
                 os.fsync(output.fileno())
+            # コピー先の日時も公開前に確定する。公開後に書き換えると、同期側が
+            # 置き換えと日時変更を別々の更新として扱い、表示通知も早すぎる。
+            if times is not None:
+                times_restored = restore_file_times(pending, times)
             os.replace(pending, destination)
         finally:
             pending.unlink(missing_ok=True)
 
-    _refresh_folder(destination.parent)
+    refresh_folder(destination.parent)
+    return times_restored
 
 
-def _refresh_folder(folder: Path) -> None:
+def refresh_folder(folder: Path) -> None:
     """保存済みフォルダの古い同期アイコンをExplorerに読み直させる。"""
     if os.name != "nt":
         return
@@ -57,10 +75,12 @@ def _refresh_folder(folder: Path) -> None:
             ctypes.c_void_p,
         ]
         notify.restype = None
-        # SHCNE_UPDATEDIR | SHCNE_UPDATEITEM / SHCNF_PATHW | SHCNF_FLUSHNOWAIT。
-        # 本のフォルダと、その親に残ったアイコンも更新する。処理は待たない。
+        # 属性・アイコンと一覧の更新はそれぞれ通知する。SHCNF_PATHW |
+        # SHCNF_FLUSH で配信完了まで待ち、直後のアプリ終了でも通知を落とさない。
+        folder = folder.absolute()
         for changed in (folder, *folder.parents):
-            notify(0x3000, 0x2005, str(changed), None)
+            for event in (_SHCNE_ATTRIBUTES, _SHCNE_UPDATEITEM, _SHCNE_UPDATEDIR):
+                notify(event, _SHCNF_PATHW | _SHCNF_FLUSH, str(changed), None)
     except (AttributeError, OSError):
         # データの保存は完了している。表示だけの失敗で保存失敗とはしない。
         logger.warning("フォルダ表示の更新通知に失敗しました: %s", folder)

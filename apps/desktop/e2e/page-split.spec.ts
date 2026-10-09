@@ -523,8 +523,8 @@ test.describe("ページ分割: 配置", () => {
     // Act - 確定する
     await confirmSplit(page);
 
-    // 保存後も分割モードのまま、分割済みの対を含む一覧の縁を維持する。
-    await expect(cardsOf(page)).toHaveCount(5, {
+    // 保存後も分割モードのまま、分割した2ページを個別に表示して格子の縁を維持する。
+    await expect(cardsOf(page)).toHaveCount(6, {
       timeout: 30_000,
     });
     const saved = await gridEdges(page);
