@@ -10,7 +10,7 @@ from PIL import Image
 from manga_core.cover_editor import CoverTransform, apply_to_archive
 from manga_core.edit_reset import BACKUP_ENTRY
 from manga_core.edit_restore import restore_preview, restore_saved
-from manga_core.merge_store import MERGES_ENTRY
+from manga_core.merge_store import MERGES_ENTRY, plan_merge
 from manga_core.page_margins import trim_pages
 from manga_core.page_reorder import ZipPageEditor
 from manga_core.page_splitter import MergeIntent, SplitIntent, SplitPosition, apply_rows
@@ -59,6 +59,15 @@ class EditRestoreTest(unittest.TestCase):
         self.assertEqual(self.original[0], self.pixels()[0])
         self.assertEqual(cover, self.pixels()[1])
 
+    def test_thumbnail_padding_only_can_be_restored(self):
+        apply_to_archive(self.path, "002.png", CoverTransform())
+        self.legacy()
+        self.assertEqual(
+            1, restore_preview(self.path, "thumbnail")["counts"]["thumbnail"]
+        )
+        restore_saved(self.path, "thumbnail")
+        self.assertEqual(self.original, self.pixels())
+
     def test_saved_merge_restores_both_exact_originals(self):
         apply_rows(
             self.path,
@@ -68,6 +77,21 @@ class EditRestoreTest(unittest.TestCase):
         self.assertEqual(1, restore_preview(self.path, "merge")["counts"]["merge"])
         restore_saved(self.path, "merge")
         self.assertEqual(self.original, self.pixels())
+
+    def test_merge_restore_preserves_mixed_image_formats_without_recompression(self):
+        stream = io.BytesIO()
+        Image.new("RGB", (250, 400), "red").save(stream, "JPEG")
+        with zipfile.ZipFile(self.path, "w") as archive:
+            archive.writestr("001.jpg", stream.getvalue())
+            archive.writestr("002.png", self.original[2])
+        original = self.pixels()
+        apply_rows(self.path, [MergeIntent(("001.jpg", "002.png"))])
+        self.legacy()
+        restore_saved(self.path, "merge")
+        self.assertEqual(original, self.pixels())
+        with zipfile.ZipFile(self.path) as archive:
+            self.assertIn("001.jpg", archive.namelist())
+            self.assertIn("002.png", archive.namelist())
 
     def test_split_restore_and_full_restore_share_saved_originals(self):
         apply_rows(
@@ -94,7 +118,7 @@ class EditRestoreTest(unittest.TestCase):
         self.assertEqual(2, result["counts"]["trim"])
         self.assertEqual(self.original, self.pixels())
 
-    def test_mode_restore_preserves_deleted_pages_and_other_edits(self):
+    def test_combined_restore_preserves_deleted_pages(self):
         from manga_core.page_reorder import OutputPage
 
         trim_pages(self.path, ["002.png"], (5, 0, 5, 0))
@@ -109,7 +133,7 @@ class EditRestoreTest(unittest.TestCase):
         finally:
             editor.close()
         self.legacy()
-        restore_saved(self.path, "trim")
+        restore_saved(self.path)
         self.assertEqual(self.original, self.pixels())
         editor = ZipPageEditor(self.path, include_deleted=True)
         try:
@@ -129,6 +153,21 @@ class EditRestoreTest(unittest.TestCase):
         ):
             with self.assertRaises(RuntimeError):
                 restore_saved(self.path)
+        self.assertEqual(before, self.path.read_bytes())
+
+    def test_cyclic_merge_history_cannot_expand_the_archive_indefinitely(self):
+        extras = plan_merge(
+            self.path,
+            self.original[0],
+            [("001.png", self.original[0]), ("002.png", self.original[1])],
+            {},
+        )
+        with zipfile.ZipFile(self.path, "a") as archive:
+            for name, data in extras.items():
+                archive.writestr(name, data)
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "循環"):
+            restore_saved(self.path)
         self.assertEqual(before, self.path.read_bytes())
 
     def test_invalid_merge_record_cannot_restore_arbitrary_members(self):

@@ -8,12 +8,11 @@ from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.edit_reset import BACKUP_ENTRY, reset_edits
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.merge_store import merged_sources
-from manga_core.original_store import read_original, stored_step
+from manga_core.original_store import content_hash, read_original, stored_step
 from manga_core.page_margins import restore_margins
 from manga_core.page_reorder import OutputPage, ZipPageEditor
 from manga_core.page_splitter import (
     SplitIntent,
-    _bytes_matching_suffix,
     apply_rows,
     scan_rows,
 )
@@ -41,10 +40,7 @@ def _pixel_restore(path: Path, mode: str, apply: bool = False) -> int:
                         and operations[0].params.get("purpose") in (None, "margin")
                     )
                     cover = (
-                        bool(operations)
-                        and all(
-                            op.kind in ("crop", "rotate", "split") for op in operations
-                        )
+                        all(op.kind in ("crop", "rotate", "split") for op in operations)
                         and not margin
                         and all(
                             op.params.get("purpose") != "margin"
@@ -53,16 +49,19 @@ def _pixel_restore(path: Path, mode: str, apply: bool = False) -> int:
                         )
                     )
                     if (mode == "trim" and margin) or (mode == "thumbnail" and cover):
-                        replacements = [read_original(path, ref)]
+                        replacements = [
+                            (read_original(path, ref), Path(ref.entry).suffix)
+                        ]
             if replacements:
                 count += 1
                 outputs.extend(
                     OutputPage(
                         page.name,
-                        _bytes_matching_suffix(data, page.name),
+                        data,
                         deleted=page.deleted,
+                        suffix=suffix,
                     )
-                    for data in replacements
+                    for data, suffix in replacements
                 )
             else:
                 outputs.append(OutputPage(page.name, deleted=page.deleted))
@@ -148,12 +147,14 @@ def restore_saved(path: Path, mode: str = "all") -> dict:
         # 加工の重なりは外側から戻す。対象本は全処理の検証後に一度だけ置換する。
         seen = set()
         while True:
-            with zipfile.ZipFile(staged) as archive:
-                signature = tuple(
-                    (info.filename, info.CRC)
-                    for info in archive.infolist()
-                    if not info.filename.startswith(".manga-organizer/")
+            editor = ZipPageEditor(staged, include_deleted=True)
+            try:
+                # 名前・枚数が増える循環も検出し、削除済みページの復元も追跡する。
+                signature = frozenset(
+                    content_hash(editor.read_entry(page.name)) for page in editor.pages
                 )
+            finally:
+                editor.close()
             if signature in seen:
                 raise ValueError("復元記録が循環しているため処理を中止しました")
             seen.add(signature)

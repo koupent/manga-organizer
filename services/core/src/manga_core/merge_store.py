@@ -50,7 +50,7 @@ def plan_merge(
     return extras
 
 
-def merged_sources(path: Path, data: bytes) -> list[bytes] | None:
+def merged_sources(path: Path, data: bytes) -> list[tuple[bytes, str]] | None:
     entries = _records(path).get(content_hash(data))
     if entries is None:
         return None
@@ -65,6 +65,6 @@ def merged_sources(path: Path, data: bytes) -> list[bytes] | None:
     ):
         raise ValueError("結合の元画像の記録が不正です")
     return [
-        read_original(path, OriginalRef(hash=digest, entry=entry))
+        (read_original(path, OriginalRef(hash=digest, entry=entry)), Path(entry).suffix)
         for digest, entry in entries
     ]

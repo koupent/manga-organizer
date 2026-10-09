@@ -609,6 +609,10 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     // Act - 結合する
     await halves.nth(1).getByTestId("merge-partner").click();
 
+    await page.getByTestId("editor-select-none").click();
+    await expect(halves).toHaveCount(2);
+    await page.getByTestId("merge-all").click();
+
     // Assert - 割る前の 1 枚へ戻すことになる
     await expect(card(page, 0)).toHaveAttribute("data-kind", "joined");
     await expect(page.getByTestId("split-status")).toHaveText(

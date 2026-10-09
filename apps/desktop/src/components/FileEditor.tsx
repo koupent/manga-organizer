@@ -318,21 +318,35 @@ export function FileEditor({
     setHistory((past) => [...past, { rows, cover: coverDraft }].slice(-100));
     setPicking(null);
     next.forEach((row, index) => {
-      if (row.mergeNext && !row.suggested && next[index + 1]) {
-        const pair: [string, string] = [row.names[0], next[index + 1].names[0]];
-        if (
-          !manualPairs.current.some(
-            (old) => old[0] === pair[0] && old[1] === pair[1],
-          )
+      const pair: [string, string] | null =
+        row.names.length === 2 && row.stored.checked && !row.checked
+          ? [row.names[0], row.names[1]]
+          : row.mergeNext && !row.suggested && next[index + 1]
+            ? [row.names[0], next[index + 1].names[0]]
+            : null;
+      if (
+        pair &&
+        !manualPairs.current.some(
+          (old) => old[0] === pair[0] && old[1] === pair[1],
         )
-          manualPairs.current.push(pair);
-      }
+      )
+        manualPairs.current.push(pair);
     });
     editRows(next);
   };
   const selectAllMerges = () => {
     let selected = rows;
     for (const [first, second] of manualPairs.current) {
+      const rejoin = selected.findIndex(
+        (row) =>
+          row.names[0] === first &&
+          row.names[1] === second &&
+          row.stored.checked,
+      );
+      if (rejoin >= 0) {
+        selected = replaceRow(selected, rejoin, { checked: false });
+        continue;
+      }
       const at = selected.findIndex((row) => row.names[0] === first);
       if (
         at >= 0 &&
@@ -883,9 +897,12 @@ export function FileEditor({
                       );
                       return (
                         at >= 0 &&
-                        rows[at + 1]?.names[0] === second &&
-                        !rows[at].mergeNext &&
-                        canMergeNext(rows, at)
+                        ((rows[at].names[1] === second &&
+                          rows[at].stored.checked &&
+                          rows[at].checked) ||
+                          (rows[at + 1]?.names[0] === second &&
+                            !rows[at].mergeNext &&
+                            canMergeNext(rows, at)))
                       );
                     })
             }
