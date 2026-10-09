@@ -9,7 +9,7 @@ import io
 import logging
 import secrets
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,7 +65,7 @@ from manga_api.split_job import (
     scan_work,
 )
 from manga_core.cover_editor import COVER_ASPECT_RATIO, is_spread
-from manga_core.edit_reset import reset_edits
+from manga_core.edit_restore import restore_preview, restore_saved
 from manga_core.input_expander import ARCHIVE_SUFFIXES
 from manga_core.manga_database import MangaDatabase
 from manga_core.naming import natural_sort_key
@@ -239,6 +239,11 @@ class HealthView(BaseModel):
 
     status: str
     version: str
+
+
+class EditRestoreRequest(BaseModel):
+    archive: str
+    mode: Literal["all", "trim", "split", "merge", "thumbnail"] = "all"
 
 
 def create_app(
@@ -763,19 +768,32 @@ def create_app(
         status_code=status.HTTP_202_ACCEPTED,
         response_model=JobAccepted,
     )
-    def submit_edit_reset(request: margin_job.MarginScanRequest) -> JobAccepted:
+    @app.post(
+        "/api/jobs/edit-restore",
+        dependencies=guarded,
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def submit_edit_reset(request: EditRestoreRequest) -> JobAccepted:
         editor = path_guard.open_editor(request.archive, include_deleted=True)
         path = editor.zip_path
         editor.close()
 
         def work(report):
-            reset_edits(path)
+            result = restore_saved(path, request.mode)
             app.state.thumbnails.discard(str(path))
-            return {"reset": True}
+            return {"reset": True, **result}
 
         job_id = app.state.jobs.submit("edit-reset", {"archive": str(path)})
         start_job(app, job_id, work)
         return JobAccepted(id=job_id)
+
+    @app.post("/api/edit-restore/preview", dependencies=guarded)
+    def preview_edit_restore(request: EditRestoreRequest) -> dict:
+        editor = path_guard.open_editor(request.archive, include_deleted=True)
+        path = editor.zip_path
+        editor.close()
+        return restore_preview(path, request.mode)
 
     @app.post(
         "/api/jobs/margin-scan",
@@ -788,7 +806,7 @@ def create_app(
         path = editor.zip_path
         editor.close()
         job_id = app.state.jobs.submit("margin-scan", {"archive": str(path)})
-        start_job(app, job_id, margin_job.scan_work(path))
+        start_job(app, job_id, margin_job.scan_work(path, request.detect))
         return JobAccepted(id=job_id)
 
     @app.post(

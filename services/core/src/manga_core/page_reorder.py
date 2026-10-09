@@ -82,6 +82,8 @@ class OutputPage:
     source: str
     content: bytes | None = None
     deleted: bool = False
+    # 復元する元画像の形式が結合後と異なる場合、再圧縮せず元の拡張子へ戻す。
+    suffix: str | None = None
 
 
 @dataclass(frozen=True)
@@ -227,7 +229,7 @@ def _output_names(outputs: Sequence[OutputPage]) -> tuple[str, ...]:
     names: list[str] = []
     visible = 0
     for position, output in enumerate(outputs, 1):
-        suffix = Path(output.source).suffix
+        suffix = output.suffix or Path(output.source).suffix
         if output.deleted:
             name = sequential_name(position, len(outputs), suffix)
             names.append(f"{DELETED_PREFIX}{Path(name).stem}/.page{Path(name).suffix}")

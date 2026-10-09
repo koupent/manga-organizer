@@ -394,6 +394,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/jobs/edit-restore": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Submit Edit Reset */
+    post: operations["submit_edit_reset_api_jobs_edit_restore_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/jobs/edit-reset": {
     parameters: {
       query?: never;
@@ -405,6 +422,23 @@ export interface paths {
     put?: never;
     /** Submit Edit Reset */
     post: operations["submit_edit_reset_api_jobs_edit_reset_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/edit-restore/preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Preview Edit Restore */
+    post: operations["preview_edit_restore_api_edit_restore_preview_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -852,6 +886,17 @@ export interface components {
        */
       size: number;
     };
+    /** EditRestoreRequest */
+    EditRestoreRequest: {
+      /** Archive */
+      archive: string;
+      /**
+       * Mode
+       * @default all
+       * @enum {string}
+       */
+      mode: "all" | "trim" | "split" | "merge" | "thumbnail";
+    };
     /**
      * EditsRequest
      * @description 編集済みの種類を知りたい本の一覧（#143）
@@ -1044,6 +1089,11 @@ export interface components {
     MarginScanRequest: {
       /** Archive */
       archive: string;
+      /**
+       * Detect
+       * @default true
+       */
+      detect: boolean;
     };
     /**
      * OperationView
@@ -2114,6 +2164,42 @@ export interface operations {
       };
     };
   };
+  submit_edit_reset_api_jobs_edit_restore_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EditRestoreRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   submit_edit_reset_api_jobs_edit_reset_post: {
     parameters: {
       query?: {
@@ -2126,7 +2212,7 @@ export interface operations {
     };
     requestBody: {
       content: {
-        "application/json": components["schemas"]["MarginScanRequest"];
+        "application/json": components["schemas"]["EditRestoreRequest"];
       };
     };
     responses: {
@@ -2137,6 +2223,44 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["JobAccepted"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  preview_edit_restore_api_edit_restore_preview_post: {
+    parameters: {
+      query?: {
+        /** @description 使い捨てトークン */
+        token?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EditRestoreRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
         };
       };
       /** @description Validation Error */

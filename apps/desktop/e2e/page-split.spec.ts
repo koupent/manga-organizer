@@ -240,7 +240,7 @@ async function confirmSplit(page: Page) {
 }
 
 test.describe("ページ分割: 開いた直後と確定", () => {
-  test("開いた時点では何も選ばず、すべて分割すると見開きだけが分かれる", async ({
+  test("分割できるページを最初に選び、全解除・全選択してから保存できる", async ({
     page,
   }) => {
     // Arrange - 縦長・比 1.333 の見開き・比 1.15 の横長が混ざった本
@@ -260,22 +260,14 @@ test.describe("ページ分割: 開いた直後と確定", () => {
       await page.locator('[data-testid^="mode-"]').allTextContents(),
     ).toEqual(["ディレクトリ整理", "ファイル編集"]);
 
-    // Assert - まだ分けていない横長があるので①「単ページにする」から開く
-    // （#153）。開いた時点では何も選ばない（#142）。黙ってチェックを入れて
-    // おくと、気づかずに確定した見開きが割れる
     await expect(page.getByTestId("split-step-split")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    await expect(page.getByTestId("split-step-split")).toHaveText(
-      "ページを分割1",
-    );
+    expect(await checkedIndexes(page)).toEqual([1]);
+    await page.getByTestId("editor-select-none").click();
     expect(await checkedIndexes(page)).toEqual([]);
-    await expect(cardAt(page, 1)).toHaveAttribute("data-target", "true");
     await expect(page.getByTestId("split-page-count")).toHaveText("5 ページ");
-    await expect(page.getByTestId("split-status")).toHaveText(
-      "変更はありません",
-    );
     await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // Assert - 2 列ぶんを占めるのは横長の 1 枚だけ。準見開きは列をまたがない
@@ -510,7 +502,8 @@ test.describe("ページ分割: 配置", () => {
       "読み込み中と読み込み後で、作業面の下端がずれる",
     ).toBeLessThanOrEqual(SLACK);
 
-    // Act - チェックを入れる。状態欄の文が入れ替わる
+    // 初期選択を一度解除し、選び直して状態欄の変化を測る。
+    await page.getByTestId("editor-select-none").click();
     await toggle(page, 1);
     await expect(page.getByTestId("split-status")).toHaveText(
       "1 枚を 2 ページに分けます → 全 6 ページ",

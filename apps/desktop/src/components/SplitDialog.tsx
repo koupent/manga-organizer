@@ -18,6 +18,7 @@ type SplitDialogProps = {
   /** この行が占めるページ番号。隅に出して、どちらが先かを示す */
   numbers: number[];
   checked: boolean;
+  saved?: boolean;
   x: number;
   width: number;
   height: number;
@@ -50,6 +51,7 @@ export function SplitDialog({
   label,
   numbers,
   checked,
+  saved = false,
   x,
   width,
   height,
@@ -97,9 +99,14 @@ export function SplitDialog({
               data-testid="split-dialog-check"
               aria-label={partner ? "結合を分ける" : "2 ページに分ける"}
               checked={checked}
+              disabled={saved}
               onCheckedChange={onToggle}
             />
-            {partner ? "結合を分ける" : "2 ページに分ける"}
+            {saved
+              ? "分割済み（復元はヘッダーから）"
+              : partner
+                ? "結合を分ける"
+                : "2 ページに分ける"}
           </span>
           <div className="flex-1" />
           <Button

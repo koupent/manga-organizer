@@ -380,6 +380,21 @@ def find_crop_source(archive_path: Path, image: bytes) -> OriginalRef | None:
     return OriginalRef(hash=digest, entry=entry) if entry else None
 
 
+def stored_step(
+    archive_path: Path, image: bytes
+) -> tuple[OriginalRef, tuple[Operation, ...]] | None:
+    """直前の加工と、その入力画像が実際に保存されている場合だけ返す。"""
+    document = _load_document(Path(archive_path))
+    record = document.get(_DERIVED_KEY, {}).get(content_hash(image))
+    if record is None:
+        return None
+    digest = record.get(_SOURCE_KEY)
+    entry = document.get(_ORIGINALS_KEY, {}).get(digest)
+    if not entry or digest == content_hash(image):
+        return None
+    return OriginalRef(hash=digest, entry=entry), tuple(_operations_from_json(record))
+
+
 def stored_original_hashes(archive_path: Path) -> frozenset[str]:
     """同梱してある元画像の中身のハッシュ。
 

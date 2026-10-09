@@ -376,6 +376,12 @@ class AllowedRootsTest(ApiTestBase):
                 "POST", "/api/jobs/edit-reset", "archive", body(), "archive", 202
             ),
             GuardedCase(
+                "POST", "/api/jobs/edit-restore", "archive", body(), "archive", 202
+            ),
+            GuardedCase(
+                "POST", "/api/edit-restore/preview", "archive", body(), "archive", 200
+            ),
+            GuardedCase(
                 "POST", "/api/jobs/margin-scan", "archive", body(), "archive", 202
             ),
             GuardedCase(

@@ -1,3 +1,4 @@
+import { EditRestoreDialog } from "./EditRestoreDialog";
 import { BookMarked, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -218,7 +219,6 @@ export function OrganizePanel({
   // ごみ箱へ移そうとしている本のファイル。確かめる窓が開いている間だけ在る（#164）
   const [resetting, setResetting] = useState<string | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
-  const [resetError, setResetError] = useState("");
   const [trashing, setTrashing] = useState<TrashTarget | null>(null);
 
   // 整理できなかったアーカイブと、その理由。ジョブは失敗しても succeeded で
@@ -993,28 +993,6 @@ export function OrganizePanel({
     }
   };
 
-  const reset = async () => {
-    if (!resetting || resetBusy) return;
-    setResetBusy(true);
-    setResetError("");
-    try {
-      const accepted = await client.resetEdits(resetting);
-      const job = await client.waitForJob(accepted.id);
-      if (job.state !== "succeeded")
-        throw new Error(job.error ?? "復元に失敗しました");
-      setStatus(`${baseName(resetting)} の編集を元に戻しました`);
-      setEdits((current) => ({ ...current, [resetting]: [] }));
-      setAnalysisRound((round) => round + 1);
-      setOutputRound((round) => round + 1);
-      onEditsReset?.(resetting);
-      setResetting(null);
-    } catch (error) {
-      setResetError(sidecarReason(error));
-    } finally {
-      setResetBusy(false);
-    }
-  };
-
   /**
    * 確かめた本のファイルをごみ箱へ移し、一覧から外す（#164）。
    *
@@ -1344,7 +1322,6 @@ export function OrganizePanel({
                 sameVolume={sameVolume}
                 onTrash={setTrashing}
                 onReset={(path) => {
-                  setResetError("");
                   setResetting(path);
                 }}
                 // 整理済みの行の近道は、いまディスク上に在るファイルを渡す。
@@ -1376,55 +1353,27 @@ export function OrganizePanel({
         <OrganizeLog lines={log} />
       </div>
 
-      <Dialog
-        open={resetting !== null}
-        onOpenChange={(open) => {
-          if (!open && !resetBusy) setResetting(null);
-        }}
-      >
-        <DialogContent
-          data-testid="edit-reset-dialog"
-          className="w-[min(32rem,92vw)] gap-3 p-4"
-        >
-          <DialogTitle className="text-[14px] font-semibold">
-            編集をすべて元に戻しますか
-          </DialogTitle>
-          <DialogDescription className="text-[12.5px] text-ink-muted">
-            {resetting ? baseName(resetting) : ""}{" "}
-            の画像加工・ページ順・削除状態・確認済みの印を、最初のファイル編集前に戻します。ファイル名と保存場所は変わりません。この操作は取り消せません。
-          </DialogDescription>
-          <p className="text-xs text-ink-muted">
-            旧版で編集した本には復元用の記録がないため、戻せない場合があります。復元できない場合はファイルを変更しません。
-          </p>
-          {resetError ? (
-            <p role="alert" className="text-xs text-danger">
-              {resetError}
-            </p>
-          ) : null}
-          {resetBusy ? (
-            <p role="status" className="text-xs text-brand">
-              編集前の本を復元しています…
-            </p>
-          ) : null}
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              disabled={resetBusy}
-              onClick={() => setResetting(null)}
-            >
-              やめる
-            </Button>
-            <Button
-              variant="danger"
-              data-testid="edit-reset-confirm"
-              disabled={resetBusy}
-              onClick={() => void reset()}
-            >
-              すべて元に戻す
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {resetting ? (
+        <EditRestoreDialog
+          client={client}
+          archive={resetting}
+          mode="all"
+          onClose={() => setResetting(null)}
+          onBusy={setResetBusy}
+          onRestored={(result) => {
+            setStatus(
+              result.complete
+                ? `${baseName(resetting)} の編集を元に戻しました`
+                : `${baseName(resetting)} の復元できる加工を戻しました。記録のない編集は残ります。`,
+            );
+            if (result.complete)
+              setEdits((current) => ({ ...current, [resetting]: [] }));
+            setAnalysisRound((round) => round + 1);
+            setOutputRound((round) => round + 1);
+            onEditsReset?.(resetting);
+          }}
+        />
+      ) : null}
 
       {/* 消す前に確かめる（#164）。押し間違えても取り戻せるよう、消すのでは
           なくごみ箱へ移す */}

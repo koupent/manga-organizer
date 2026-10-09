@@ -178,8 +178,8 @@ export class SidecarClient {
     return this.post<JobAccepted>("/api/jobs/split-scan", { archive });
   }
 
-  marginScan(archive: string): Promise<JobAccepted> {
-    return this.post<JobAccepted>("/api/jobs/margin-scan", { archive });
+  marginScan(archive: string, detect = true): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/margin-scan", { archive, detect });
   }
 
   trimMargins(request: MarginRequest): Promise<JobAccepted> {
@@ -269,6 +269,17 @@ export class SidecarClient {
   /** ファイルをごみ箱へ移す（#164）。消す前の確認は呼び出す側が済ませる */
   resetEdits(archive: string): Promise<JobAccepted> {
     return this.post<JobAccepted>("/api/jobs/edit-reset", { archive });
+  }
+
+  restorePreview(archive: string, mode: RestoreMode): Promise<RestorePreview> {
+    return this.post<RestorePreview>("/api/edit-restore/preview", {
+      archive,
+      mode,
+    });
+  }
+
+  restoreSaved(archive: string, mode: RestoreMode): Promise<JobAccepted> {
+    return this.post<JobAccepted>("/api/jobs/edit-restore", { archive, mode });
   }
 
   trashFile(path: string): Promise<Trashed> {
@@ -361,3 +372,10 @@ export class SidecarClient {
     }
   }
 }
+
+export type RestoreMode = "all" | "trim" | "split" | "merge" | "thumbnail";
+export type RestorePreview = {
+  complete: boolean;
+  counts: Partial<Record<RestoreMode, number>>;
+  message: string;
+};

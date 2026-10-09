@@ -4,6 +4,12 @@ export async function openCoverTools(page: Page, name?: string) {
   if (await page.getByRole("dialog").count())
     await page.keyboard.press("Escape");
   await page.getByTestId("split-step-split").click();
+  if (
+    await page
+      .locator('[data-testid="split-check"][data-state="checked"]:enabled')
+      .count()
+  )
+    await page.getByTestId("editor-select-none").click();
   const cards = page.getByTestId("editable-page");
   await expect(cards.first()).toBeVisible({ timeout: 30_000 });
   const card = name

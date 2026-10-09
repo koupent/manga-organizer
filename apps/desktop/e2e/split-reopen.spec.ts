@@ -412,20 +412,19 @@ test.describe("ページ分割: 割った本を開き直す", () => {
     await page.context().close();
   });
 
-  test("チェックを外して確定すると、1 枚の横長ページに戻る", async ({
-    browser,
-  }) => {
+  test("保存済み加工の復元で、1 枚の横長ページに戻る", async ({ browser }) => {
     // Arrange
     const archive = writeSplitArchive("割る前へ戻す.zip");
     const page = await reopen(browser, archive, 5);
 
-    // Act - 畳んだ行のチェックを外す
-    await cardAt(page, 2).getByTestId("split-check").click();
-    await expect(cardAt(page, 2).getByTestId("split-number")).toHaveText("3");
-    await expect(page.getByTestId("split-status")).toHaveText(
-      "1 枚を 1 ページに戻します → 全 4 ページ",
-    );
-    await confirmSplit(page);
+    await expect(cardAt(page, 2).getByTestId("split-check")).toBeDisabled();
+    await page.getByTestId("editor-select-none").click();
+    expect(pageEntriesOf(archive)).toHaveLength(5);
+    await page
+      .getByRole("combobox", { name: "保存済み編集の復元" })
+      .selectOption("split");
+    await page.getByTestId("edit-reset-confirm").click();
+    await expect(page.getByTestId("edit-reset-dialog")).toBeHidden();
 
     // Assert - ページが 1 枚減った
     const entries = pageEntriesOf(archive);
@@ -439,25 +438,20 @@ test.describe("ページ分割: 割った本を開き直す", () => {
       "戻したページが、取ってあった割る前の画像と同じバイト列でない",
     ).toBeTruthy();
 
-    // Assert - 読み直した画面でも、戻した見開きにチェックは入り直さない
-    // （#138）。入り直すと「割る」が保留になり、戻せなかったように見える。
-    // 保存すると②へ進むので、①へ戻って確かめる（#153）
+    // 復元は選択解除と独立しており、分割モードに留まる。
     await expect(page.getByTestId("split-page-count")).toHaveText("4 ページ");
-    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
     await showSplitStep(page);
     await expect(cardAt(page, 2)).toHaveAttribute("data-checked", "false");
     await expect(cardAt(page, 2).getByTestId("split-number")).toHaveAttribute(
       "data-pending",
       "false",
     );
-    await expect(page.getByTestId("split-confirm")).toBeDisabled();
+    await expect(page.getByTestId("split-confirm")).toBeEnabled();
 
     // 開き直しても見開きのまま残り、分割対象として扱える。
     await page.reload();
     await showSplitStep(page);
+    await page.getByTestId("editor-select-none").click();
     await expect(page.getByTestId("split-step-split")).toHaveAttribute(
       "aria-pressed",
       "true",

@@ -93,8 +93,10 @@ test("旧版の編集を完全に戻せない場合は理由を表示し、フ�
     .click();
   await page.getByTestId("browse-close").click();
   await page.getByTestId("plan-reset").click();
-  await page.getByTestId("edit-reset-confirm").click();
-  await expect(page.getByRole("alert")).toContainText("旧版で編集した本");
+  await expect(page.getByTestId("edit-reset-confirm")).toBeDisabled();
+  await expect(page.getByTestId("edit-reset-dialog")).toContainText(
+    "記録のない旧版の編集",
+  );
   expect(readFileSync(archive)).toEqual(before);
   await page.getByRole("button", { name: "やめる", exact: true }).click();
   await expect(page.getByTestId("plan-reset")).toBeEnabled();
