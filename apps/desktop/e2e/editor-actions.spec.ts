@@ -53,6 +53,10 @@ with zipfile.ZipFile(sys.argv[1],'w') as z:
   await expect(page.getByTestId("margin-result")).toContainText(
     "画像が変わりました",
   );
+  await expect(page.getByTestId("split-step-trim")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   expect(scans).toEqual([true, false]);
   for (const mode of ["merge", "trim"])
     await page.getByTestId(`split-step-${mode}`).click();
