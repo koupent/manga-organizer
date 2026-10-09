@@ -66,7 +66,7 @@ with zipfile.ZipFile(sys.argv[1],'w') as z:
   expect(scans).toEqual([true, false, true]);
 });
 
-test("手動ペアも全解除・全選択でき、説明はツールチップに集約する", async ({
+test("手動ペアを全解除でき、全選択では表紙を除いてペアを作る", async ({
   page,
 }) => {
   const archive = writeArchive(sidecar.workDir, "manual-selection.zip", [
@@ -88,12 +88,22 @@ test("手動ペアも全解除・全選択でき、説明はツールチップ�
   await expect(
     page.locator('[data-testid="merge-card"][data-kind="joined"]'),
   ).toHaveCount(1);
+  await expect(
+    page.locator(
+      '[data-testid="editable-page"]:has([data-testid="merge-card"][data-kind="joined"])',
+    ),
+  ).toHaveAttribute("data-name", "001.jpg");
   await page.getByTestId("editor-select-none").click();
   await expect(cards).toHaveCount(3);
   await page.getByTestId("merge-all").click();
   await expect(
     page.locator('[data-testid="merge-card"][data-kind="joined"]'),
   ).toHaveCount(1);
+  await expect(
+    page.locator(
+      '[data-testid="editable-page"]:has([data-testid="merge-card"][data-kind="joined"])',
+    ),
+  ).toHaveAttribute("data-name", "002.jpg");
   expect(readFileSync(archive)).toEqual(before);
   await page.getByTestId("editor-select-detected").click();
   await expect(cards).toHaveCount(3);
