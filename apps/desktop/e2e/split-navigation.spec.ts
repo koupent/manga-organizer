@@ -107,19 +107,18 @@ test.describe("ページ分割: 候補へ送る・割った印・左から右の
     const second = await card(page, 1).boundingBox();
     expect(first!.x, "1 枚目が 2 枚目より左に無い").toBeLessThan(second!.x);
 
-    // Act - すべて分割して保存する。保存すると②へ進むので、①へ戻る（#153）
+    // すべて分割して保存しても、分割モードを維持する。
     await page.getByTestId("split-all").click();
     await page.getByTestId("split-confirm").click();
     await expect(page.getByTestId("split-status")).toContainText(
       "2 枚を分割しました",
       { timeout: 30_000 },
     );
-    await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
+    await expect(page.getByTestId("split-step-split")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     await expect(page.getByTestId("split-page-count")).toHaveText("9 ページ");
-    await page.getByTestId("split-step-split").click();
 
     // Assert - 割った 2 行に印が出る。絵は割る前の見開きのままなので、
     // 印が無いと割れたかどうかが分からない

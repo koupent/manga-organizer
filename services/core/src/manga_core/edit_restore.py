@@ -8,7 +8,12 @@ from manga_core.archive_save import create_archive_temp, replace_archive
 from manga_core.edit_reset import BACKUP_ENTRY, reset_edits
 from manga_core.file_times import capture_file_times, restore_file_times
 from manga_core.merge_store import merged_sources
-from manga_core.original_store import content_hash, read_original, stored_step
+from manga_core.original_store import (
+    content_hash,
+    plan_clear_edits,
+    read_original,
+    stored_step,
+)
 from manga_core.page_margins import restore_margins
 from manga_core.page_reorder import OutputPage, ZipPageEditor
 from manga_core.page_splitter import (
@@ -169,6 +174,18 @@ def restore_saved(path: Path, mode: str = "all") -> dict:
                 changed += count
             if not changed or mode != "all":
                 break
+        if mode == "all":
+            editor = ZipPageEditor(staged, include_deleted=True)
+            try:
+                editor.apply_pages(
+                    [
+                        OutputPage(page.name, deleted=page.deleted)
+                        for page in editor.pages
+                    ],
+                    extra_entries=plan_clear_edits(staged),
+                )
+            finally:
+                editor.close()
         with zipfile.ZipFile(staged) as archive:
             if archive.testzip() is not None:
                 raise ValueError("復元したZIPの検証に失敗しました")

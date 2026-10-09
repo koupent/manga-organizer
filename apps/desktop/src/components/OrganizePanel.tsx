@@ -1366,8 +1366,7 @@ export function OrganizePanel({
                 ? `${baseName(resetting)} の編集を元に戻しました`
                 : `${baseName(resetting)} の復元できる加工を戻しました。記録のない編集は残ります。`,
             );
-            if (result.complete)
-              setEdits((current) => ({ ...current, [resetting]: [] }));
+            setEdits((current) => ({ ...current, [resetting]: [] }));
             setAnalysisRound((round) => round + 1);
             setOutputRound((round) => round + 1);
             onEditsReset?.(resetting);

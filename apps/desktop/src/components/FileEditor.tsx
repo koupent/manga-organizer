@@ -408,7 +408,6 @@ export function FileEditor({
     setModeNotice("");
     if (await confirm(coverDraft)) {
       setReviewed(true);
-      if (step === "split" && chosen !== "trim") setChosen("merge");
     }
   };
 

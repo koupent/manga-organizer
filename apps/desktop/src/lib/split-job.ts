@@ -56,7 +56,7 @@ export type SplitJob = {
   editRows: (next: SplitRow[]) => void;
   /** 保留を全部捨て、開いたときの姿へ戻す */
   restore: () => void;
-  /** 保留を書き込む。書き込めたかを返す（①から②へ進むかを決める） */
+  /** 保留を書き込む。書き込めたかを返す */
   confirm: (cover?: CoverRequest) => Promise<boolean>;
   reordered: boolean;
   refresh: () => void;

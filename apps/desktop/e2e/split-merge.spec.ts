@@ -510,7 +510,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
   return target;
 }
 
-/** 開いて①で全部を分け、保存して②へ進む */
+/** 分割を保存してもモードは維持し、手動で結合へ切り替える */
 async function splitEverything(page: Page, archive: string) {
   await page.setViewportSize({ width: 1280, height: 860 });
   await page.goto(
@@ -523,10 +523,11 @@ async function splitEverything(page: Page, archive: string) {
   await expect(page.getByTestId("split-page-count")).toHaveText("3 ページ", {
     timeout: 30_000,
   });
-  await expect(page.getByTestId("split-step-merge")).toHaveAttribute(
+  await expect(page.getByTestId("split-step-split")).toHaveAttribute(
     "aria-pressed",
     "true",
   );
+  await page.getByTestId("split-step-merge").click();
 }
 
 test.describe("ページ分割・結合: ①で割った 2 枚を②で扱う（#154）", () => {

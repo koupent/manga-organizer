@@ -237,6 +237,10 @@ async function confirmSplit(page: Page) {
     "done",
     { timeout: 30_000 },
   );
+  await expect(page.getByTestId("split-step-split")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 }
 
 test.describe("ページ分割: 開いた直後と確定", () => {
@@ -519,10 +523,8 @@ test.describe("ページ分割: 配置", () => {
     // Act - 確定する
     await confirmSplit(page);
 
-    // Assert - 書き込んだ後の文（枚数とページ数）でも縁は同じ。
-    // 保存すると②「見開きにする」へ進む（#153）。割った 2 枚は②では
-    // 2 枚の単ページとして並ぶ（#154）
-    await expect(page.locator('[data-testid="merge-card"]')).toHaveCount(6, {
+    // 保存後も分割モードのまま、分割済みの対を含む一覧の縁を維持する。
+    await expect(cardsOf(page)).toHaveCount(5, {
       timeout: 30_000,
     });
     const saved = await gridEdges(page);
