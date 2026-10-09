@@ -148,6 +148,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await page.getByTestId("merge-all").click();
   expect(await joined(page)).toEqual(["002.png"]);
   await page.getByTestId("split-confirm").click();
+  await expect(page.getByTestId("split-page-count")).toHaveText("3 ページ");
   await expect(page.getByTestId("split-confirm")).toBeDisabled();
   expect(Object.values(pageSizesOf(archive))).toEqual([
     [600, 900],
@@ -163,6 +164,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
   await page.getByTestId("merge-all").click();
   expect(await joined(page)).toHaveLength(2);
   await page.getByTestId("split-confirm").click();
+  await expect(page.getByTestId("split-page-count")).toHaveText("3 ページ");
   await expect(page.getByTestId("split-confirm")).toBeDisabled();
   expect(Object.values(pageSizesOf(archive))).toEqual([
     [600, 900],
