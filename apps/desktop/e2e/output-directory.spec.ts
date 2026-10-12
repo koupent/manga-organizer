@@ -170,3 +170,34 @@ test.describe("出力先の守り", () => {
     );
   });
 });
+
+test("深いフォルダやドライブ直下からも別ドライブを選んで出力先を指定できる", async ({
+  page,
+}) => {
+  const initial = "D:\\books\\nested";
+  await page.route("**/api/browse?*", async (route) => {
+    const path =
+      new URL(route.request().url()).searchParams.get("path") || initial;
+    await route.fulfill({
+      json: {
+        path,
+        parent: path === initial ? "D:\\" : null,
+        roots: ["C:\\", "D:\\"],
+        entries:
+          path === "C:\\"
+            ? [{ name: "output", path: "C:\\output", is_directory: true }]
+            : [],
+      },
+    });
+  });
+  await openOrganize(page, initial);
+  await page.getByTestId("browse-output").click();
+  await expect(page.getByTestId("output-browser-path")).toHaveValue(initial);
+  await page.getByTestId("output-up").click();
+  await expect(page.getByTestId("output-up")).toBeDisabled();
+  await page.getByTestId("output-drive").selectOption("C:\\");
+  await page.screenshot({ path: test.info().outputPath("drive-picker.png") });
+  await page.getByTestId("output-entry").filter({ hasText: "output" }).click();
+  await page.getByTestId("use-this-directory").click();
+  await expect(page.getByTestId("output-directory")).toHaveValue("C:\\output");
+});

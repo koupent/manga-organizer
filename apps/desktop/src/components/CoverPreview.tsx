@@ -10,7 +10,7 @@ import {
 /** 縁の色を拾う帯の太さ。manga_core.cover_editor.EDGE_STRIP_FRACTION と同じ */
 const EDGE_STRIP_FRACTION = 0.01;
 
-type CoverPreviewProps = {
+export type CoverPreviewProps = {
   /** 原稿の URL。加工前の 1 枚をそのまま指す */
   src: string;
   /** 原稿の寸法（元画像の画素） */

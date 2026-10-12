@@ -73,6 +73,7 @@ with zipfile.ZipFile(sys.argv[1],'w') as archive:
   await expect(page.getByTestId("margin-result")).toContainText("共通余白なし");
   await expect(page.getByTestId("margin-result")).toContainText("指定できます");
   await expect(page.getByTestId("margin-save")).toBeDisabled();
+  await expect(page.getByTestId("margin-save")).toHaveText("確認済みにする");
   expect(await layout()).toEqual(splitLayout);
   expect((await page.getByTestId("split-grid").boundingBox())!.y).toBe(gridTop);
   await page.getByTestId("margin-settings").click();

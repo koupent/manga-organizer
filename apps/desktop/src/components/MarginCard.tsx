@@ -80,7 +80,7 @@ export function MarginCard({
         imageTestId="margin-image"
         partnerTestId="margin-partner-image"
       >
-        {() => <MarginFrame margins={margins} />}
+        {() => (page.preview ? null : <MarginFrame margins={margins} />)}
       </PagePicture>
     </PageCard>
   );

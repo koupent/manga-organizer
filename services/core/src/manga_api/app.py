@@ -8,6 +8,7 @@ Tauri シェル（#22）が子プロセスとして起動し、127.0.0.1 での�
 import io
 import logging
 import secrets
+import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -178,6 +179,19 @@ class BrowseResult(BaseModel):
     path: str
     parent: str | None = None
     entries: list[BrowseEntry]
+    roots: list[str] = Field(default_factory=list)
+
+
+def browse_roots(allowed: list[Path]) -> list[str]:
+    """選択できる起点。制限付きで起動した場合は、その範囲だけを返す。"""
+    if allowed:
+        return [str(root) for root in allowed]
+    if sys.platform == "win32":
+        import ctypes
+
+        drives = ctypes.windll.kernel32.GetLogicalDrives()
+        return [f"{chr(65 + index)}:\\" for index in range(26) if drives & (1 << index)]
+    return ["/"]
 
 
 class DroppedFile(BaseModel):
@@ -505,6 +519,7 @@ def create_app(
             path=str(target),
             parent=str(parent) if inside and parent != target else None,
             entries=entries,
+            roots=browse_roots(roots),
         )
 
     @app.get(
