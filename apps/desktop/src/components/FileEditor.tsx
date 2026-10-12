@@ -1116,12 +1116,11 @@ export function FileEditor({
             data-state={report.state}
             title={chosen === "trim" ? margin.message : status}
           >
-            {modeNotice ||
-              (chosen === "trim" ? (
-                <span data-testid="margin-result">{marginResult}</span>
-              ) : (
-                status
-              ))}
+            {chosen === "trim" ? (
+              <span data-testid="margin-result">{marginResult}</span>
+            ) : (
+              modeNotice || status
+            )}
           </span>
           <label className="flex shrink-0 items-center gap-1.5">
             <input
