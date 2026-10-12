@@ -202,18 +202,32 @@ export function App() {
     changeMode(next);
   };
 
-  // 起動したときに 1 回だけ、新しい版があるか確かめる
+  // 起動時と、その後は 1 時間ごとに更新を確認する。インストールは利用者が選ぶ。
   useEffect(() => {
     let cancelled = false;
-    findUpdate()
-      .then((found) => {
-        if (!cancelled && found) setUpdate(found);
-      })
-      // 確かめられなくても今の版は使い続けられる。オフラインのたびに
-      // 失敗を知らせても、利用者にできることが無い
-      .catch(() => {});
+    let timer: ReturnType<typeof setTimeout>;
+    let notifiedVersion: string | undefined;
+    const check = async () => {
+      try {
+        const found = await findUpdate();
+        if (found) {
+          if (!cancelled && found.version !== notifiedVersion) {
+            notifiedVersion = found.version;
+            setUpdate(found);
+          } else {
+            await found.close();
+          }
+        }
+      } catch {
+        // オフラインでも使い続けられる。次の確認時に再試行する。
+      } finally {
+        if (!cancelled) timer = setTimeout(check, 60 * 60 * 1000);
+      }
+    };
+    void check();
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, []);
 

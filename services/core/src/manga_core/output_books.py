@@ -11,10 +11,12 @@
 import re
 import time
 import uuid
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from manga_core.naming import natural_sort_key
+from manga_core.viewer_contract import is_page_source
 from manga_core.volume_detector import format_series_dir
 
 OUTPUT_SUFFIX = ".zip"
@@ -34,6 +36,7 @@ class OutputBook:
     # 巻数。``Unknown`` の本は None
     volume: int | None
     size: int
+    image_count: int | None = None
 
 
 def list_output_books(
@@ -61,11 +64,17 @@ def list_output_books(
         found = pattern.fullmatch(path.name)
         if found is None or not path.is_file():
             continue
+        try:
+            with zipfile.ZipFile(path) as archive:
+                image_count = sum(is_page_source(name) for name in archive.namelist())
+        except (OSError, zipfile.BadZipFile):
+            image_count = None
         books.append(
             OutputBook(
                 path=path,
                 volume=int(found.group(1)) if found.group(1) else None,
                 size=path.stat().st_size,
+                image_count=image_count,
             )
         )
     return sorted(books, key=lambda book: natural_sort_key(book.path.name))

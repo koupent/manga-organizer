@@ -2709,13 +2709,26 @@
             "type": "integer",
             "title": "Size",
             "description": "ファイルの大きさ（バイト）"
+          },
+          "image_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Count",
+            "description": "画像枚数。読み取れない場合は null"
           }
         },
         "type": "object",
         "required": [
           "path",
           "volume",
-          "size"
+          "size",
+          "image_count"
         ],
         "title": "OutputBookView",
         "description": "出力先にある、整理の規則どおりの名前の本 1 冊"

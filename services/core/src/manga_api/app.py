@@ -136,6 +136,7 @@ class OutputBookView(BaseModel):
     path: str = Field(description="本のファイルの絶対パス")
     volume: int | None = Field(description="巻数。Unknown の本は null")
     size: int = Field(description="ファイルの大きさ（バイト）")
+    image_count: int | None = Field(description="画像枚数。読み取れない場合は null")
 
 
 class OutputBooksView(BaseModel):
@@ -1014,7 +1015,12 @@ def create_app(
         directory = resolve_output_directory(request.output_directory)
         return OutputBooksView(
             books=[
-                OutputBookView(path=str(book.path), volume=book.volume, size=book.size)
+                OutputBookView(
+                    path=str(book.path),
+                    volume=book.volume,
+                    size=book.size,
+                    image_count=book.image_count,
+                )
                 for book in list_output_books(directory, request.author, request.title)
             ]
         )

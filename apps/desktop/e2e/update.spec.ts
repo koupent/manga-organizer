@@ -16,6 +16,8 @@ type Scenario = {
   update: { version: string; body: string } | null;
   /** download を失敗させる理由。無ければ成功する */
   downloadError?: string;
+  checkErrorOnce?: boolean;
+  updateAfterStartup?: boolean;
 };
 
 let sidecar: Sidecar;
@@ -32,6 +34,7 @@ async function openAsTauri(page: Page, scenario: Scenario) {
     ({ scenario, connection }) => {
       const callbacks = new Map<number, (message: unknown) => void>();
       let nextId = 1;
+      let checks = 0;
       const calls: string[] = [];
       (window as unknown as { __updateCalls: string[] }).__updateCalls = calls;
       (
@@ -51,16 +54,21 @@ async function openAsTauri(page: Page, scenario: Scenario) {
             case "sidecar_connection":
               return connection;
             case "plugin:updater|check":
-              return scenario.update
-                ? {
-                    rid: 1,
-                    currentVersion: "4.1.0",
-                    version: scenario.update.version,
-                    date: "2026-10-04T00:00:00Z",
-                    body: scenario.update.body,
-                    rawJson: {},
-                  }
-                : null;
+              checks += 1;
+              if (scenario.checkErrorOnce && checks === 1)
+                throw "ネットワークに届きません";
+              return scenario.updateAfterStartup && checks === 1
+                ? null
+                : scenario.update
+                  ? {
+                      rid: 1,
+                      currentVersion: "4.1.0",
+                      version: scenario.update.version,
+                      date: "2026-10-04T00:00:00Z",
+                      body: scenario.update.body,
+                      rawJson: {},
+                    }
+                  : null;
             case "plugin:updater|download": {
               if (scenario.downloadError) throw scenario.downloadError;
               const channel = args.onEvent as { id: number };
@@ -255,3 +263,33 @@ test.describe("設定から更新を確かめ直す（#136）", () => {
     );
   });
 });
+
+for (const checkErrorOnce of [false, true]) {
+  test(`1時間後に更新を検出し、自動インストールしない（初回通信失敗: ${checkErrorOnce}）`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await openAsTauri(page, {
+      update: { version: "4.99.0", body: "新しい版" },
+      updateAfterStartup: true,
+      checkErrorOnce,
+    });
+    await expect.poll(() => calls(page)).toContain("plugin:updater|check");
+    await expect(page.getByTestId("update-notice")).toHaveCount(0);
+    await page.clock.fastForward(60 * 60 * 1000 + 1000);
+    const notice = page.getByTestId("update-notice");
+    await expect(notice).toContainText("v4.99.0");
+    await notice.getByRole("button", { name: "あとで" }).click();
+    await page.clock.fastForward(60 * 60 * 1000 + 1000);
+    await expect
+      .poll(
+        async () =>
+          (await calls(page)).filter((call) => call === "plugin:updater|check")
+            .length,
+      )
+      .toBe(3);
+    await expect(notice).toHaveCount(0);
+    expect(await calls(page)).not.toContain("plugin:updater|download");
+    expect(await calls(page)).not.toContain("plugin:updater|install");
+  });
+}

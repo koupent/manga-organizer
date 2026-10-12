@@ -88,7 +88,7 @@ Windows ランナーは分数が 2 倍に数えられるため、画面だけの
 
 ### 自動更新
 
-アプリは起動時に `https://github.com/koupent/manga-organizer/releases/latest/download/latest.json` を読み、新しい版があれば知らせます（tauri-plugin-updater）。入れ替える前に、インストーラの署名を `tauri.conf.json` の `plugins.updater.pubkey` で確かめます。アプリはログインせずに落とすので、このリポジトリは public にしておく必要があります。Release はジョブの `GITHUB_TOKEN` で作ります。
+アプリは起動時と、その後1時間ごとに `https://github.com/koupent/manga-organizer/releases/latest/download/latest.json` を読み、新しい版があれば知らせます（tauri-plugin-updater）。「あとで」で閉じた同じ版は、その起動中には再通知しません。通信に失敗した場合は次回に再試行し、インストールは利用者が「更新する」を押したときだけ行います。入れ替える前に、インストーラの署名を `tauri.conf.json` の `plugins.updater.pubkey` で確かめます。アプリはログインせずに落とすので、このリポジトリは public にしておく必要があります。Release はジョブの `GITHUB_TOKEN` で作ります。
 
 `release.yml` が使う Secrets（`manga-organizer` の Settings → Secrets and variables → Actions）:
 

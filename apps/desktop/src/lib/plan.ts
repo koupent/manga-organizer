@@ -385,7 +385,12 @@ function sortName(book: PlannedBook): string {
 }
 
 /** 出力先に既にある、整理の規則どおりの名前の本 1 冊（#178） */
-export type OutputBook = { path: string; volume: number | null; size: number };
+export type OutputBook = {
+  path: string;
+  volume: number | null;
+  size: number;
+  image_count?: number | null;
+};
 
 /**
  * 出力先に既にある本の行を、一覧へ差し込む（#178）。
@@ -462,7 +467,7 @@ function outputRow(
     title: "",
     author: "",
     size: book.size,
-    imageCount: null,
+    imageCount: book.image_count ?? null,
     ancestors,
     leaves: [id],
     existing: true,

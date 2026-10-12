@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -61,6 +62,28 @@ class ListOutputBooksTest(OutputBooksTestBase):
         )
         self.assertEqual([None, 3, 3, 10], [book.volume for book in books])
         self.assertEqual(6, books[1].size)
+
+    def test_counts_pages_without_including_hidden_edit_originals(self):
+        path = self.series / f"{SERIES} 第001巻.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name in (
+                "001.jpg",
+                "002.png",
+                "003.webp",
+                ".manga-organizer/originals/page.jpg",
+                ".manga-organizer/deleted/page.png",
+                "__MACOSX/001.jpg",
+                "notes.txt",
+            ):
+                archive.writestr(name, b"metadata-only fixture")
+        books = list_output_books(self.output, "著者", "作品")
+        self.assertEqual(3, books[0].image_count)
+        # 同じパスを編集した後も、古い枚数を使わない。
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("001.jpg", b"updated")
+        self.assertEqual(
+            1, list_output_books(self.output, "著者", "作品")[0].image_count
+        )
 
     def test_returns_nothing_when_the_folder_is_missing(self):
         # Act / Assert
@@ -178,11 +201,13 @@ class OutputBooksApiTest(OutputBooksTestBase):
                     "path": str(self.series / f"{SERIES} 第001巻.zip"),
                     "volume": 1,
                     "size": 3,
+                    "image_count": None,
                 },
                 {
                     "path": str(self.series / f"{SERIES} 第001巻_1.zip"),
                     "volume": 1,
                     "size": 5,
+                    "image_count": None,
                 },
             ],
             response.json()["books"],
