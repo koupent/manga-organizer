@@ -11,6 +11,80 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => sidecar?.stop());
 
+for (const [mode, selection] of [
+  ["split", "all"],
+  ["split", "detected"],
+  ["split", "initial"],
+  ["split", "manual"],
+  ["merge", "all"],
+]) {
+  test(`未保存のサムネイル調整と${mode}の${selection}選択を一緒に反映できる`, async ({
+    page,
+  }) => {
+    const archive = join(sidecar.workDir, `cover-with-${mode}.zip`);
+    runPython(
+      `
+import io,sys,zipfile
+from PIL import Image
+with zipfile.ZipFile(sys.argv[1],'w') as z:
+    for name,color,size in [('001.png','red',(1200,900)),('002.png','blue',${mode === "split" ? "(1200,900)" : "(600,900)"}),('003.png','green',${mode === "split" ? "(1200,900)" : "(600,900)"})]:
+        image=Image.new('RGB',size,color)
+        data=io.BytesIO();image.save(data,'PNG');z.writestr(name,data.getvalue())
+`,
+      archive,
+    );
+    await page.goto(
+      `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
+    );
+    await expect(page.getByTestId("margin-progress")).toHaveCount(0);
+    const cover = page.getByTestId("editable-page").first();
+    await expect(cover).toBeVisible();
+    await cover.getByRole("button", { name: /の操作/ }).click();
+    await cover.getByRole("menuitem", { name: "サムネイルの画像調整" }).click();
+    await page.getByTestId("apply-thumbnail").click();
+    await page.getByTestId(`split-step-${mode}`).click();
+    if (selection === "manual") {
+      await page.getByTestId("editor-select-none").click();
+      for (const name of ["002.png", "003.png"])
+        await page
+          .locator(`[data-testid="editable-page"][data-name="${name}"]`)
+          .getByTestId("split-check")
+          .click();
+    } else if (selection !== "initial")
+      await page
+        .getByTestId(
+          selection === "detected"
+            ? "editor-select-detected"
+            : mode === "split"
+              ? "split-all"
+              : "merge-all",
+        )
+        .click();
+    await page.getByTestId("split-confirm").click();
+    await expect(page.getByTestId("split-status")).toHaveAttribute(
+      "data-state",
+      "done",
+    );
+    await expect(page.getByTestId("editor-notice")).toContainText(
+      mode === "split" ? "分割しました" : "結合しました",
+    );
+    const sizes = JSON.parse(
+      runPython(
+        `
+import io,json,sys,zipfile
+from PIL import Image
+with zipfile.ZipFile(sys.argv[1]) as z:
+    print(json.dumps([Image.open(io.BytesIO(z.read(n))).size for n in z.namelist() if not n.startswith('.') and n.endswith(('.jpg','.png'))]))
+`,
+        archive,
+      ),
+    );
+    expect(sizes).toHaveLength(mode === "split" ? 5 : 2);
+    expect(sizes[0][0]).toBeLessThan(sizes[0][1]);
+    if (mode === "merge") expect(sizes[1]).toEqual([1200, 900]);
+  });
+}
+
 for (const mode of ["trim", "split", "merge"]) {
   test(`${mode}: 変更なしの確認も保存中を表示し、確認後は全モードで押し直せない`, async ({
     page,

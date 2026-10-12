@@ -202,13 +202,16 @@ export function FileEditor({
       initialSplitSelection.current = true;
       editRows(
         rows.map((row) =>
-          !row.mergeNext && isSplitTarget(row) && !row.checked
+          !row.names.includes(coverDraft?.request.name ?? "") &&
+          !row.mergeNext &&
+          isSplitTarget(row) &&
+          !row.checked
             ? splitRow(row)
             : row,
         ),
       );
     }
-  }, [rows, chosen, editRows]);
+  }, [rows, chosen, editRows, coverDraft]);
 
   // 相手を選んでいる間は Esc でやめられる
   useEffect(() => {
@@ -297,7 +300,11 @@ export function FileEditor({
   // 数えるので、選んでも減らない
   const splitTargets = rows
     .map((row, index) =>
-      !isAbsorbed(rows, index) && isSplitTarget(row) ? index : -1,
+      !row.names.includes(coverDraft?.request.name ?? "") &&
+      !isAbsorbed(rows, index) &&
+      isSplitTarget(row)
+        ? index
+        : -1,
     )
     .filter((index) => index >= 0);
   const mergeTargets = rows
@@ -458,7 +465,11 @@ export function FileEditor({
   // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ
   const candidates = rows
     .map((row, index) =>
-      !isAbsorbed(rows, index) && isCandidate(row) ? index : -1,
+      !row.names.includes(coverDraft?.request.name ?? "") &&
+      !isAbsorbed(rows, index) &&
+      isCandidate(row)
+        ? index
+        : -1,
     )
     .filter((index) => index >= 0);
 
@@ -765,7 +776,10 @@ export function FileEditor({
               applied={row.stored.checked && row.checked}
               focused={focus === index && unit.part === undefined}
               checked={row.checked}
-              target={isSplitTarget(row)}
+              target={
+                !row.names.includes(coverDraft?.request.name ?? "") &&
+                isSplitTarget(row)
+              }
               keptWhole={row.keptWhole}
               wide={wide}
               span={span}
@@ -904,7 +918,8 @@ export function FileEditor({
                 margin.setSelected(
                   margin.scan?.pages.map((page) => page.name) ?? [],
                 );
-              else if (step === "split") edit(splitAll(rows));
+              else if (step === "split")
+                edit(splitAll(rows, coverDraft?.request.name));
               else edit(allMergeRows, true);
             }}
             onDetected={() => {
@@ -918,7 +933,8 @@ export function FileEditor({
               else if (step === "split")
                 edit(
                   rows.map((row) =>
-                    row.stored.checked
+                    row.stored.checked ||
+                    row.names.includes(coverDraft?.request.name ?? "")
                       ? row
                       : { ...row, checked: !row.deleted && row.detected },
                   ),
