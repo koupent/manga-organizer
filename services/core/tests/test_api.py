@@ -1295,6 +1295,25 @@ class BrowseTest(ApiTestBase):
     def test_requires_a_token(self):
         self.assertEqual(401, self.client.get("/api/browse").status_code)
 
+    def test_lists_only_allowed_roots_as_navigation_choices(self):
+        other = self.work_dir / "other"
+        other.mkdir()
+        self.app.state.allowed_roots = [self.folder, other]
+        listed = self.client.get("/api/browse", params=self.auth()).json()
+        self.assertEqual([str(self.folder), str(other)], listed["roots"])
+
+    def test_windows_navigation_includes_each_logical_drive(self):
+        from manga_api.app import browse_roots
+
+        with (
+            mock.patch("manga_api.app.sys.platform", "win32"),
+            mock.patch("ctypes.windll", create=True) as windows,
+        ):
+            windows.kernel32.GetLogicalDrives.return_value = (
+                (1 << 2) | (1 << 3) | (1 << 6)
+            )
+            self.assertEqual(["C:\\", "D:\\", "G:\\"], browse_roots([]))
+
 
 class ResolveTest(ApiTestBase):
     """ドロップされたファイルを実パスに結びつける。

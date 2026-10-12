@@ -11,6 +11,7 @@ import { EditorSelection } from "./EditorSelection";
 import { EditRestoreDialog } from "./EditRestoreDialog";
 import { EditablePage } from "./EditablePage";
 import { CoverEditor } from "./CoverEditor";
+import { CoverPreview, type CoverPreviewProps } from "./CoverPreview";
 import { useStoredNumber, useStoredString } from "../lib/setting";
 import {
   ChevronLeft,
@@ -33,6 +34,7 @@ import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { Empty } from "./ui/empty";
 import { Segmented } from "./ui/segmented";
 import { EditorLayout } from "./EditorLayout";
+import { EditorProgress } from "./EditorProgress";
 import { MergeCard, type PickRole } from "./MergeCard";
 import { SplitCard } from "./SplitCard";
 import { MarginControls, MarginProgress, useMarginJob } from "./MarginControls";
@@ -82,6 +84,11 @@ const GRID_GAP = 12;
 
 /** 絵の箱の高さ／列の幅。縦長ページ（2:3）がちょうど収まる比 */
 const PICTURE_RATIO = 1.5;
+
+type CoverDraft = {
+  request: CoverRequest;
+  preview: Omit<CoverPreviewProps, "width">;
+};
 
 type FileEditorProps = {
   client: SidecarClient;
@@ -139,12 +146,12 @@ export function FileEditor({
   // 表示方向はページ順を変えず、画面の並びだけに適用する
   const [direction, setDirection] = useStoredString("editor.direction");
   const [adjusting, setAdjusting] = useState<string | null>(null);
-  const [coverDraft, setCoverDraft] = useState<CoverRequest | undefined>();
+  const [coverDraft, setCoverDraft] = useState<CoverDraft | undefined>();
   const [reviewed, setReviewed] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   const lastClicked = useRef<string | null>(null);
   const [history, setHistory] = useState<
-    { rows: SplitRow[]; cover?: CoverRequest; bulkMerge: boolean }[]
+    { rows: SplitRow[]; cover?: CoverDraft; bulkMerge: boolean }[]
   >([]);
   const [zoomed, setZoomed] = useState<string | null>(null);
   const sensors = useSensors(
@@ -184,6 +191,7 @@ export function FileEditor({
     generation: reloadKey,
     onSaved: () => {
       setReviewed(true);
+      setModeNotice("余白カットを保存しました");
       onArchiveChanged?.();
       refresh();
     },
@@ -194,13 +202,16 @@ export function FileEditor({
       initialSplitSelection.current = true;
       editRows(
         rows.map((row) =>
-          !row.mergeNext && isSplitTarget(row) && !row.checked
+          !row.names.includes(coverDraft?.request.name ?? "") &&
+          !row.mergeNext &&
+          isSplitTarget(row) &&
+          !row.checked
             ? splitRow(row)
             : row,
         ),
       );
     }
-  }, [rows, chosen, editRows]);
+  }, [rows, chosen, editRows, coverDraft]);
 
   // 相手を選んでいる間は Esc でやめられる
   useEffect(() => {
@@ -272,6 +283,8 @@ export function FileEditor({
   const step = chosen === "trim" ? "split" : chosen;
   const numbers = pageNumbers(rows);
   const pending = rows.some(isPending) || reordered || Boolean(coverDraft);
+  const trimming = chosen === "trim" && !pending && margin.canSave;
+  const hasChanges = pending || trimming;
   const status =
     report.state === "idle"
       ? [
@@ -287,7 +300,11 @@ export function FileEditor({
   // 数えるので、選んでも減らない
   const splitTargets = rows
     .map((row, index) =>
-      !isAbsorbed(rows, index) && isSplitTarget(row) ? index : -1,
+      !row.names.includes(coverDraft?.request.name ?? "") &&
+      !isAbsorbed(rows, index) &&
+      isSplitTarget(row)
+        ? index
+        : -1,
     )
     .filter((index) => index >= 0);
   const mergeTargets = rows
@@ -384,7 +401,11 @@ export function FileEditor({
   };
   const save = async () => {
     setModeNotice("");
-    if (await confirm(coverDraft)) {
+    if (trimming) {
+      await margin.save();
+      return;
+    }
+    if (await confirm(coverDraft?.request)) {
       setReviewed(true);
     }
   };
@@ -444,7 +465,11 @@ export function FileEditor({
   // 拡大表示は 1 枚を割る道具なので、そこで辿るのは分割の候補だけ
   const candidates = rows
     .map((row, index) =>
-      !isAbsorbed(rows, index) && isCandidate(row) ? index : -1,
+      !row.names.includes(coverDraft?.request.name ?? "") &&
+      !isAbsorbed(rows, index) &&
+      isCandidate(row)
+        ? index
+        : -1,
     )
     .filter((index) => index >= 0);
 
@@ -545,8 +570,12 @@ export function FileEditor({
                 window.devicePixelRatio,
             ),
           )}&v=${reloadKey}`,
-    width: row.width,
-    height: row.height,
+    width: coverDraft?.request.name === row.names[0] ? 2 : row.width,
+    height: coverDraft?.request.name === row.names[0] ? 3 : row.height,
+    preview:
+      coverDraft?.request.name === row.names[0]
+        ? coverDraft.preview
+        : undefined,
   });
 
   /**
@@ -600,7 +629,8 @@ export function FileEditor({
         ? rows[index + 1]
         : null;
     const wide =
-      unit.kind === "spread" || partner !== null || unit.via === "rejoin";
+      coverDraft?.request.name !== row.names[unit.part ?? 0] &&
+      (unit.kind === "spread" || partner !== null || unit.via === "rejoin");
     const span = wide && columns >= 2;
     const boxWidth = span ? columnWidth * 2 + GRID_GAP : columnWidth;
     // 保存後の見開きも、描画する幅に合う解像度で取得する。
@@ -655,7 +685,7 @@ export function FileEditor({
                 : item,
             ),
           );
-          if (coverDraft && names.includes(coverDraft.name))
+          if (coverDraft && names.includes(coverDraft.request.name))
             setCoverDraft(undefined);
           setSelection([]);
           setOverlay(null);
@@ -665,7 +695,10 @@ export function FileEditor({
         selected={selection.includes(row.names[unit.part ?? 0])}
         onSelect={(event) => select(row.names[unit.part ?? 0], event)}
         onZoom={() =>
-          chosen !== "trim" && step === "split" && !row.deleted
+          chosen !== "trim" &&
+          step === "split" &&
+          !row.deleted &&
+          coverDraft?.request.name !== row.names[unit.part ?? 0]
             ? setOverlay(index)
             : setZoomed(row.names[unit.part ?? 0])
         }
@@ -695,12 +728,14 @@ export function FileEditor({
           inert={
             busy ||
             row.deleted ||
-            coverDraft?.name === row.names[unit.part ?? 0]
+            coverDraft?.request.name === row.names[unit.part ?? 0]
           }
           className={
-            row.deleted || coverDraft?.name === row.names[unit.part ?? 0]
+            row.deleted
               ? "pointer-events-none opacity-70"
-              : undefined
+              : coverDraft?.request.name === row.names[unit.part ?? 0]
+                ? "pointer-events-none"
+                : undefined
           }
         >
           {chosen === "trim" ? (
@@ -741,7 +776,10 @@ export function FileEditor({
               applied={row.stored.checked && row.checked}
               focused={focus === index && unit.part === undefined}
               checked={row.checked}
-              target={isSplitTarget(row)}
+              target={
+                !row.names.includes(coverDraft?.request.name ?? "") &&
+                isSplitTarget(row)
+              }
               keptWhole={row.keptWhole}
               wide={wide}
               span={span}
@@ -880,7 +918,8 @@ export function FileEditor({
                 margin.setSelected(
                   margin.scan?.pages.map((page) => page.name) ?? [],
                 );
-              else if (step === "split") edit(splitAll(rows));
+              else if (step === "split")
+                edit(splitAll(rows, coverDraft?.request.name));
               else edit(allMergeRows, true);
             }}
             onDetected={() => {
@@ -894,7 +933,8 @@ export function FileEditor({
               else if (step === "split")
                 edit(
                   rows.map((row) =>
-                    row.stored.checked
+                    row.stored.checked ||
+                    row.names.includes(coverDraft?.request.name ?? "")
                       ? row
                       : { ...row, checked: !row.deleted && row.detected },
                   ),
@@ -979,37 +1019,27 @@ export function FileEditor({
             </>
           )}
           <div className="flex-1" />
-          {chosen === "trim" && !pending ? (
-            <Button
-              variant="primary"
-              size="lg"
-              className="shrink-0"
-              data-testid="margin-save"
-              disabled={busy || !margin.canSave}
-              onClick={() => void margin.save()}
-            >
-              <Save />
-              余白カットを反映
-            </Button>
-          ) : (
-            <>
-              {/* 書き込みが終わって新しい行が並ぶまで押させない。報告が done に
+          {/* 書き込みが終わって新しい行が並ぶまで押させない。報告が done に
               なった時点で押せるようにすると、読み直しの最中に 2 つ目の指示が
               飛ぶ。着いた順で結果が決まり、利用者は自分が最後に選んだ内容と
               違う本を手にする */}
-              <Button
-                variant="primary"
-                size="lg"
-                className="shrink-0"
-                data-testid="split-confirm"
-                disabled={busy || (reviewed && !pending)}
-                onClick={() => void save()}
-              >
-                <Save />
-                {pending ? "変更を反映" : "確認済みにする"}
-              </Button>
-            </>
-          )}
+          <Button
+            variant="primary"
+            size="lg"
+            className="shrink-0"
+            data-testid={
+              chosen === "trim" && !pending ? "margin-save" : "split-confirm"
+            }
+            disabled={busy || (reviewed && !hasChanges)}
+            onClick={() => void save()}
+          >
+            <Save />
+            {trimming
+              ? "余白カットを反映"
+              : pending
+                ? "変更を反映"
+                : "確認済みにする"}
+          </Button>
         </>
       }
       hint={
@@ -1086,12 +1116,11 @@ export function FileEditor({
             data-state={report.state}
             title={chosen === "trim" ? margin.message : status}
           >
-            {modeNotice ||
-              (chosen === "trim" ? (
-                <span data-testid="margin-result">{marginResult}</span>
-              ) : (
-                status
-              ))}
+            {chosen === "trim" ? (
+              <span data-testid="margin-result">{marginResult}</span>
+            ) : (
+              modeNotice || status
+            )}
           </span>
           <label className="flex shrink-0 items-center gap-1.5">
             <input
@@ -1160,7 +1189,9 @@ export function FileEditor({
       ) : null}
       <div
         className="relative flex min-h-0 flex-1 flex-col"
-        aria-busy={chosen === "trim" && margin.busy}
+        aria-busy={
+          (splitBusy && report.state !== "error") || margin.busy || restoring
+        }
       >
         {/* スクロールするのはこの箱であって窓ではない */}
         <DndContext
@@ -1198,7 +1229,36 @@ export function FileEditor({
             </div>
           </SortableContext>
         </DndContext>
-        {chosen === "trim" ? <MarginProgress job={margin} /> : null}
+        {(splitBusy && report.state !== "error") || restoring ? (
+          <EditorProgress
+            title={
+              restoring
+                ? "保存済みの編集を復元しています"
+                : report.state === "running"
+                  ? "変更を保存しています"
+                  : "保存した内容を読み直しています"
+            }
+          />
+        ) : chosen === "trim" ? (
+          <MarginProgress job={margin} />
+        ) : null}
+        {(coverDraft ||
+          modeNotice ||
+          report.state === "done" ||
+          report.state === "error") &&
+        (!busy || report.state === "error") ? (
+          <div
+            role={report.state === "error" ? "alert" : "status"}
+            data-testid={coverDraft ? "editor-draft-notice" : "editor-notice"}
+            className="absolute bottom-3 left-1/2 z-10 w-max max-w-[90%] -translate-x-1/2 rounded-card border border-brand/50 bg-surface px-4 py-3 text-sm shadow-lg"
+          >
+            {report.state === "error"
+              ? report.message
+              : coverDraft
+                ? "調整後のサムネイルを表示しています。右上の「変更を反映」で保存します。"
+                : modeNotice || report.message}
+          </div>
+        ) : null}
       </div>
 
       {zoomed ? (
@@ -1214,7 +1274,25 @@ export function FileEditor({
                 : zoomed}
               （Esc で閉じる）
             </DialogTitle>
-            {chosen === "trim" ? (
+            {coverDraft?.request.name === zoomed ? (
+              <div
+                className="aspect-2/3 min-h-0"
+                style={{
+                  width: Math.min(
+                    window.innerWidth * 0.88,
+                    (window.innerHeight * 0.78 * 2) / 3,
+                  ),
+                }}
+              >
+                <CoverPreview
+                  {...coverDraft.preview}
+                  width={Math.min(
+                    window.innerWidth * 0.88,
+                    (window.innerHeight * 0.78 * 2) / 3,
+                  )}
+                />
+              </div>
+            ) : chosen === "trim" ? (
               <div className="relative min-h-0 mx-auto">
                 <img
                   data-testid="lightbox-image"
@@ -1286,9 +1364,14 @@ export function FileEditor({
               client={client}
               archive={archive}
               pageName={adjusting}
-              onDraft={(request) => {
+              draft={
+                coverDraft?.request.name === adjusting
+                  ? coverDraft.preview
+                  : undefined
+              }
+              onDraft={(request, preview) => {
                 chooseCover(request.name);
-                setCoverDraft(request);
+                setCoverDraft({ request, preview });
                 setAdjusting(null);
               }}
             />

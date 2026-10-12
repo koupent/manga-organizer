@@ -1,8 +1,14 @@
 import type { ReactNode } from "react";
 import { fitInside } from "../lib/stage";
 import { cn } from "../lib/utils";
+import { CoverPreview, type CoverPreviewProps } from "./CoverPreview";
 
-export type Picture = { imageUrl: string; width: number; height: number };
+export type Picture = {
+  imageUrl: string;
+  width: number;
+  height: number;
+  preview?: Omit<CoverPreviewProps, "width">;
+};
 
 type PagePictureProps = {
   label: string;
@@ -58,14 +64,18 @@ export function PagePicture({
           loading="lazy"
         />
       ) : null}
-      <img
-        data-testid={imageTestId}
-        className="block h-full object-contain"
-        style={{ width: ownWidth * scale }}
-        src={page.imageUrl}
-        alt={`${label} ページ`}
-        loading="lazy"
-      />
+      {page.preview ? (
+        <CoverPreview {...page.preview} width={ownWidth * scale} />
+      ) : (
+        <img
+          data-testid={imageTestId}
+          className="block h-full object-contain"
+          style={{ width: ownWidth * scale }}
+          src={page.imageUrl}
+          alt={`${label} ページ`}
+          loading="lazy"
+        />
+      )}
       {children?.({ ...display, seam: partnerWidth * scale })}
     </div>
   );

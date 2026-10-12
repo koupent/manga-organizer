@@ -806,6 +806,8 @@ export interface components {
       parent?: string | null;
       /** Entries */
       entries: components["schemas"]["BrowseEntry"][];
+      /** Roots */
+      roots?: string[];
     };
     /**
      * CoverRequest

@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { CoverPreview } from "./CoverPreview";
+import { CoverPreview, type CoverPreviewProps } from "./CoverPreview";
 import {
   CropFrame,
   TARGET_RATIO,
@@ -89,7 +89,11 @@ type CoverEditorProps = {
   client: SidecarClient;
   archive: string;
   pageName: string;
-  onDraft: (request: CoverRequest) => void;
+  draft?: Omit<CoverPreviewProps, "width">;
+  onDraft: (
+    request: CoverRequest,
+    preview: Omit<CoverPreviewProps, "width">,
+  ) => void;
 };
 
 /**
@@ -107,6 +111,7 @@ export function CoverEditor({
   client,
   archive,
   pageName,
+  draft,
   onDraft,
 }: CoverEditorProps) {
   const selected = pageName;
@@ -160,6 +165,10 @@ export function CoverEditor({
         // 別の絵になれば加工の意味も変わる。持ち越さず、その 1 枚の初期状態から
         // 始める。確定した直後もここを通り、書き込み済みの加工が二重に残らない
         startFrom(next);
+        if (draft) {
+          setCrop(draft.crop);
+          setAngle(draft.angle);
+        }
       })
       .catch((reason) => {
         if (alive) setStatus(String(reason.message ?? reason));
@@ -167,7 +176,7 @@ export function CoverEditor({
     return () => {
       alive = false;
     };
-  }, [client, archive, selected, reloadKey]);
+  }, [client, archive, selected, reloadKey, draft]);
 
   /**
    * 溜めた加工をまとめて 1 回だけ書き込む。
@@ -180,15 +189,18 @@ export function CoverEditor({
     const source = sourceOf(cover);
     const shown = rotatedSize(source, turn);
     const upright = rotateCrop(frame, shown, oppositeTurn(turn));
-    onDraft({
-      archive,
-      name: cover.name,
-      split: null,
-      crop: toCropBox(upright, source),
-      rotate: turn,
-      make_first: true,
-      from_original: Boolean(cover.original),
-    });
+    onDraft(
+      {
+        archive,
+        name: cover.name,
+        split: null,
+        crop: toCropBox(upright, source),
+        rotate: turn,
+        make_first: true,
+        from_original: Boolean(cover.original),
+      },
+      { src: imageUrl, image: source, angle: turn, crop: frame },
+    );
   };
 
   if (!cover) {

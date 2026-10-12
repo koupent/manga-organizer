@@ -339,10 +339,14 @@ export function isMergeTarget(rows: SplitRow[], index: number): boolean {
   );
 }
 
-/** すべての分割対象を分ける */
-export function splitAll(rows: SplitRow[]): SplitRow[] {
+/** すべての分割対象を選ぶ。画像調整中のサムネイルには分割を重ねない。 */
+export function splitAll(rows: SplitRow[], excludedName?: string): SplitRow[] {
   return rows.map((row) =>
-    isSplitTarget(row) && (row.mergeNext || !row.checked) ? splitRow(row) : row,
+    (excludedName === undefined || !row.names.includes(excludedName)) &&
+    isSplitTarget(row) &&
+    (row.mergeNext || !row.checked)
+      ? splitRow(row)
+      : row,
   );
 }
 

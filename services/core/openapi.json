@@ -1944,6 +1944,13 @@
             },
             "type": "array",
             "title": "Entries"
+          },
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roots"
           }
         },
         "type": "object",

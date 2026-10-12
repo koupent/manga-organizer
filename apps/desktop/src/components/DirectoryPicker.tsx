@@ -45,6 +45,7 @@ export function DirectoryPicker({
     parent: null,
   });
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [roots, setRoots] = useState<string[]>([]);
   const [address, setAddress] = useState("");
   const [error, setError] = useState("");
   const browseRequest = useRef(0);
@@ -89,6 +90,7 @@ export function DirectoryPicker({
           if (request !== browseRequest.current) return;
           setLocation({ path: result.path, parent: result.parent ?? null });
           setAddress(result.path);
+          setRoots(result.roots ?? []);
           setEntries(
             (result.entries as Entry[]).filter((entry) => entry.is_directory),
           );
@@ -147,6 +149,22 @@ export function DirectoryPicker({
             フォルダを辿って、整理後のファイルを置く場所を決めます。
           </DialogDescription>
           <CardHeader>
+            <select
+              aria-label="ドライブ・場所を選ぶ"
+              data-testid="output-drive"
+              className="h-7 max-w-40 rounded border border-line bg-surface px-2 text-xs"
+              value=""
+              onChange={(event) => load(event.target.value)}
+            >
+              <option value="" disabled>
+                ドライブ・場所
+              </option>
+              {roots.map((root) => (
+                <option key={root} value={root}>
+                  {root}
+                </option>
+              ))}
+            </select>
             <Button
               variant="ghost"
               data-testid="output-up"
@@ -178,7 +196,6 @@ export function DirectoryPicker({
                 移動
               </Button>
             </form>
-            <div className="flex-1" />
             <Button
               variant="primary"
               data-testid="use-this-directory"

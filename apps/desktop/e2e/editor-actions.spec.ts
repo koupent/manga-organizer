@@ -50,6 +50,9 @@ with zipfile.ZipFile(sys.argv[1],'w') as z:
   expect(readFileSync(archive)).toEqual(before);
   expect(scans).toEqual([true]);
   await page.getByTestId("margin-save").click();
+  await expect(page.getByTestId("editor-notice")).toContainText(
+    "余白カットを保存しました",
+  );
   await expect(page.getByTestId("margin-result")).toContainText(
     "画像が変わりました",
   );

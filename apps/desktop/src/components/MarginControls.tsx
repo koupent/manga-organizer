@@ -11,8 +11,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from "./ui/dialog";
-import { Progress } from "./ui/progress";
-import { Loader2, SlidersHorizontal, X } from "lucide-react";
+import { EditorProgress } from "./EditorProgress";
+import { SlidersHorizontal, X } from "lucide-react";
 
 type Scan = {
   token: string;
@@ -222,7 +222,7 @@ export function useMarginJob({
     phase,
     progress,
     error,
-    canSave: !busy && !!scan && selected.length > 0 && valid,
+    canSave: !!scan && selected.length > 0 && valid,
     save,
     rescan: () => {
       setScan(null);
@@ -310,42 +310,24 @@ export function MarginProgress({
 }: {
   job: ReturnType<typeof useMarginJob>;
 }) {
-  if (!job.busy || job.phase === "refresh") return null;
-  const { current, total } = job.progress;
-  const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+  if (!job.busy) return null;
   return (
-    <div
-      data-testid="margin-progress"
-      className="absolute inset-0 z-20 flex items-center justify-center bg-canvas/80 p-4"
-      role="status"
-      aria-live="polite"
-    >
-      <div className="w-full max-w-md rounded-card border border-brand/50 bg-surface p-6 shadow-xl">
-        <div className="mb-3 flex items-center gap-3 text-lg font-semibold">
-          <Loader2 className="size-6 shrink-0 animate-spin text-brand" />
-          {job.phase === "scan"
-            ? "全ページの余白を検出しています"
-            : "余白カットを反映しています"}
-        </div>
-        <p className="mb-4 text-sm text-ink-muted">
-          {job.phase === "scan"
-            ? "共通する白い余白を調べています。完了後、切り取り範囲を一覧に表示します。"
-            : "処理が終わるまでお待ちください。"}
-        </p>
-        <div className="mb-2 flex justify-between text-sm tabular">
-          <span>
-            {total > 0
-              ? `${current} / ${total} ページ`
-              : "処理を準備しています…"}
-          </span>
-          <span>{total > 0 ? `${percent}%` : ""}</span>
-        </div>
-        <Progress
-          aria-label="余白カットの進捗"
-          value={percent}
-          className="h-2"
-        />
-      </div>
-    </div>
+    <EditorProgress
+      testId="margin-progress"
+      title={
+        job.phase === "scan"
+          ? "全ページの余白を検出しています"
+          : job.phase === "save"
+            ? "余白カットを反映しています"
+            : "ページ一覧を更新しています"
+      }
+      description={
+        job.phase === "scan"
+          ? "共通する白い余白を調べています。完了後、切り取り範囲を一覧に表示します。"
+          : undefined
+      }
+      progress={job.progress}
+      progressLabel="余白カットの進捗"
+    />
   );
 }
