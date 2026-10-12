@@ -1498,6 +1498,91 @@ class OrganizeProgressTest(ApiTestBase):
         self.assertEqual((4, 4), (job["current"], job["total"]), job)
 
 
+class OrganizeThumbnailRefreshTest(ApiTestBase):
+    def test_reused_output_path_serves_new_pages_without_restarting(self):
+        from manga_api.thumbnails import render
+
+        # 本の選択指定が無い依頼でも、出来た本のキャッシュを更新する。
+        for selected in (False, True):
+            with self.subTest(selected=selected):
+                base = self.work_dir / str(selected)
+                old_source = base / "旧版_02"
+                new_source = base / "新版_02"
+                for source, colours in (
+                    (old_source, ("red", "green", "blue")),
+                    (new_source, ("yellow", "purple")),
+                ):
+                    source.mkdir(parents=True)
+                    for index, colour in enumerate(colours, 1):
+                        (source / f"{index:03}.jpg").write_bytes(make_page(colour))
+
+                def organize(source, base=base, selected=selected):
+                    body = {
+                        "archives": [str(source)],
+                        "output_directory": str(base / "out"),
+                        "title": "作品",
+                        "author": "著者",
+                        "keep_originals": True,
+                    }
+                    if selected:
+                        body["books"] = [{"source": str(source), "entry": ""}]
+                    accepted = self.client.post(
+                        "/api/jobs/organize", params=self.auth(), json=body
+                    )
+                    self.assertEqual(202, accepted.status_code, accepted.text)
+                    job = self.client.get(
+                        f"/api/jobs/{accepted.json()['id']}", params=self.auth()
+                    ).json()
+                    self.assertEqual("succeeded", job["state"], job)
+                    self.assertEqual([], job["result"]["failed"])
+                    return Path(job["result"]["produced"][0])
+
+                def thumb(path, name, width, headers=None):
+                    return self.client.get(
+                        "/api/thumb",
+                        params=self.auth(
+                            {"archive": str(path), "name": name, "width": width}
+                        ),
+                        headers=headers,
+                    )
+
+                old_path = organize(old_source)
+                other_path = organize(new_source)
+                self.assertNotEqual(old_path, other_path)
+                old_thumbs = {}
+                for name in ("001.jpg", "002.jpg"):
+                    for width in (160, 240):
+                        response = thumb(old_path, name, width)
+                        self.assertEqual(200, response.status_code)
+                        old_thumbs[name, width] = response
+                other_thumb = thumb(other_path, "001.jpg", 240).content
+                with zipfile.ZipFile(other_path) as archive:
+                    expected = {name: archive.read(name) for name in archive.namelist()}
+
+                # 旧版を削除すると、新版に旧版と同じ出力名が割り当てられる。
+                old_path.unlink()
+                replacement = organize(new_source)
+                self.assertEqual(old_path, replacement)
+                with zipfile.ZipFile(replacement) as archive:
+                    self.assertEqual(
+                        expected,
+                        {name: archive.read(name) for name in archive.namelist()},
+                    )
+                for (name, width), old_thumb in old_thumbs.items():
+                    response = thumb(
+                        replacement,
+                        name,
+                        width,
+                        {"If-None-Match": old_thumb.headers["etag"]},
+                    )
+                    self.assertEqual(200, response.status_code)
+                    self.assertNotEqual(
+                        old_thumb.headers["etag"], response.headers["etag"]
+                    )
+                    self.assertEqual(render(expected[name], width), response.content)
+                self.assertEqual(other_thumb, thumb(other_path, "001.jpg", 240).content)
+
+
 class OrganizeFolderExpansionTest(ApiTestBase):
     """フォルダを投入したときの、件数とリンクの扱いを見る（#70）。
 

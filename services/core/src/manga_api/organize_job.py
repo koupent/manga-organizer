@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from manga_api.analysis_job import file_size
 from manga_api.jobs import ProgressReporter
+from manga_api.thumbnails import ThumbnailCache
 from manga_core.cancellation import OperationCancelled
 from manga_core.file_identity import file_key
 from manga_core.organized_detector import judge_organized
@@ -319,6 +320,7 @@ def organize_work(
     archives: list[Path],
     request: OrganizeRequest,
     wanted: dict[Hashable, _Wanted] | None,
+    thumbnails: ThumbnailCache,
 ) -> Callable[[ProgressReporter], dict[str, Any]]:
     """整理ジョブの中身を組み立てる。
 
@@ -366,6 +368,10 @@ def organize_work(
 
         def made_in(archive: Path, plan: _ArchivePlan) -> BookDone:
             def tell(result: ProcessResult, location: str | None) -> None:
+                # 完成した本を画面へ渡す前に、同じ出力パスの古い画像を捨てる。
+                # 削除した別版の名前を再利用した場合も、新しいZIPの画像を返す。
+                if result.success and result.output_path:
+                    thumbnails.discard(str(result.output_path.resolve()))
                 entry = plan.entries.get(location) if location is not None else None
                 if result.success and result.output_path and entry is not None:
                     finished.append(

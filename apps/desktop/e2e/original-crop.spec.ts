@@ -1,3 +1,4 @@
+import { editorStorage } from "./editor-storage";
 import { openCoverTools, saveCoverTools } from "./cover-tools";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import {
@@ -75,7 +76,7 @@ async function openCover(page: Page, archive: string) {
  * いま実際にサイドカーから届く絵だけを見ることになる。
  */
 async function reopen(browser: Browser, archive: string): Promise<Page> {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ storageState: editorStorage });
   const page = await context.newPage();
   await openCover(page, archive);
   return page;

@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { editorStorage } from "./e2e/editor-storage";
 
 /**
  * Tauri は WebView にビルド済みのフロントエンドを読み込む。同じものを
@@ -26,6 +27,7 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   use: {
+    storageState: editorStorage,
     baseURL,
     trace: "retain-on-failure",
   },

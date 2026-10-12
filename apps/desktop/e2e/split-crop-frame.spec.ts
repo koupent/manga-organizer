@@ -1,3 +1,4 @@
+import { editorStorage } from "./editor-storage";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { derivedRecordsOf, runPython } from "./archive";
 import { startSidecar, type Sidecar } from "./sidecar";
@@ -98,7 +99,7 @@ async function openCover(page: Page, archive: string) {
  * 区別が付かなくなる。利用者が後日また開くときにその持ち越しは無い。
  */
 async function reopen(browser: Browser, archive: string): Promise<Page> {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ storageState: editorStorage });
   const page = await context.newPage();
   await openCover(page, archive);
   return page;
