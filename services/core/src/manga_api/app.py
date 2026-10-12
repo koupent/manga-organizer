@@ -369,10 +369,19 @@ def create_app(
             archive, include_deleted=deleted_position(name) is not None
         )
         resolved = thumbnails.nearest_width(width)
+
+        def generate() -> bytes:
+            try:
+                data = editor.read_entry(name)
+            finally:
+                # 重い画像変換中に ZIP を開いたままだと Windows の保存が失敗する。
+                editor.close()
+            return thumbnails.render(data, resolved)
+
         try:
             body = app.state.thumbnails.get_or_create(
                 (str(editor.zip_path), name, resolved),
-                lambda: thumbnails.render(editor.read_entry(name), resolved),
+                generate,
             )
         except PageReorderError as error:
             raise HTTPException(
@@ -1002,6 +1011,7 @@ def create_app(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"ごみ箱へ移せませんでした: {error}",
             ) from error
+        app.state.thumbnails.discard(str(path))
         return TrashedView(path=str(path))
 
     @app.post("/api/output/books", dependencies=guarded, response_model=OutputBooksView)
@@ -1058,6 +1068,9 @@ def create_app(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"名前を付け替えられませんでした: {error}",
             ) from error
+        # 移動先には消した本、移動元には移す前の本の画像が残っている。
+        for path in {path for pair in renames for path in pair}:
+            app.state.thumbnails.discard(str(path))
         return RenamedView(
             renames=[
                 RenameItem(source=str(source), target=str(target))

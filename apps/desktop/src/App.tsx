@@ -78,6 +78,7 @@ export function App() {
   const [update, setUpdate] = useState<Update | null>(null);
   const [resetVersion, setResetVersion] = useState(0);
   const [editsVersion, setEditsVersion] = useState(0);
+  const [editedArchive, setEditedArchive] = useState("");
   const [guideDismissed, setGuideDismissed] = useState(false);
   const [hideEditorGuide, storeHideEditorGuide] =
     useStoredString("editor.hideGuide");
@@ -169,7 +170,14 @@ export function App() {
   const addSourcesRef = useRef(addSources);
   addSourcesRef.current = addSources;
 
-  const archiveChanged = () => setEditsVersion((version) => version + 1);
+  const archiveChanged = (path: string) => {
+    setEditedArchive(path);
+    setEditsVersion((version) => version + 1);
+  };
+  // 同じ名前が別の本になったときは、隠して保持した編集一覧も作り直す。
+  const filesChanged = (paths: string[]) => {
+    if (paths.includes(archive)) setResetVersion((version) => version + 1);
+  };
 
   /** 画面を移る。移った先は初回だけ作り、以後は隠すだけで捨てない */
   const changeMode = (next: Mode) => {
@@ -393,8 +401,10 @@ export function App() {
               onOutputDirectoryChange={setOutputDirectory}
               onOpenProduced={openArchiveIn}
               editsVersion={editsVersion}
+              editedArchive={editedArchive}
+              onFilesChanged={filesChanged}
               onEditsReset={(path) => {
-                archiveChanged();
+                archiveChanged(path);
                 if (path === archive) setResetVersion((value) => value + 1);
               }}
               onAddSources={addSources}
@@ -411,7 +421,7 @@ export function App() {
               client={client}
               archive={archive}
               active={mode === "edit"}
-              onArchiveChanged={archiveChanged}
+              onArchiveChanged={() => archiveChanged(archive)}
             />
           </Panel>
         ) : null}
