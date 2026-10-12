@@ -1,3 +1,4 @@
+import { editorStorage } from "./editor-storage";
 import {
   expect,
   test,
@@ -108,7 +109,7 @@ async function reopen(
   archive: string,
   cards: number,
 ): Promise<Page> {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ storageState: editorStorage });
   const page = await context.newPage();
   await page.goto(
     `/?api=${encodeURIComponent(sidecar.baseUrl)}&token=${sidecar.token}` +

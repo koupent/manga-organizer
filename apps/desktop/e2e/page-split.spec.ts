@@ -1,3 +1,4 @@
+import { editorStorage } from "./editor-storage";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { coloursOf, pageEntriesOf, pageSizesOf, runPython } from "./archive";
 import { startSidecar, type Sidecar } from "./sidecar";
@@ -142,7 +143,7 @@ async function openIn(
   archive: string,
   cards: number,
 ): Promise<Page> {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ storageState: editorStorage });
   const page = await context.newPage();
   await openSplit(page, archive, cards);
   return page;

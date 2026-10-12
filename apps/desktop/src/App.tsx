@@ -7,6 +7,7 @@ import { SidecarClient } from "./api/client";
 import { FilePicker } from "./components/FilePicker";
 import { OrganizePanel } from "./components/OrganizePanel";
 import { FileEditor } from "./components/FileEditor";
+import { EditorGuide } from "./components/EditorGuide";
 import type { HandoffMode } from "./components/EditShortcuts";
 import {
   onFilesDragging,
@@ -77,6 +78,9 @@ export function App() {
   const [update, setUpdate] = useState<Update | null>(null);
   const [resetVersion, setResetVersion] = useState(0);
   const [editsVersion, setEditsVersion] = useState(0);
+  const [guideDismissed, setGuideDismissed] = useState(false);
+  const [hideEditorGuide, storeHideEditorGuide] =
+    useStoredString("editor.hideGuide");
 
   /**
    * 一度でも開いた画面。開いた画面は隠すだけで捨てず、状態を残す。
@@ -410,6 +414,18 @@ export function App() {
           />
         ) : null}
       </div>
+      {client &&
+      archive &&
+      mode === "edit" &&
+      !guideDismissed &&
+      hideEditorGuide !== "true" ? (
+        <EditorGuide
+          onClose={(hide) => {
+            if (hide) storeHideEditorGuide("true");
+            setGuideDismissed(true);
+          }}
+        />
+      ) : null}
     </main>
   );
 }

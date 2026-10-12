@@ -1096,7 +1096,11 @@ def create_app(
             },
         )
         start_job(
-            app, job_id, organize_work(output_directory, archives, request, wanted)
+            app,
+            job_id,
+            organize_work(
+                output_directory, archives, request, wanted, app.state.thumbnails
+            ),
         )
         return JobAccepted(id=job_id)
 
