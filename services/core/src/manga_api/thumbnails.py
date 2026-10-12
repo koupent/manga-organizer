@@ -42,16 +42,21 @@ class ThumbnailCache:
         self._limit = limit
         self._lock = threading.Lock()
         self._entries: dict[tuple[str, str, int], bytes] = {}
+        self._generation = 0
 
     def get_or_create(self, key: tuple[str, str, int], factory) -> bytes:
         """キャッシュを引き、無ければ生成して登録する"""
         with self._lock:
             cached = self._entries.get(key)
+            generation = self._generation
         if cached is not None:
             return cached
 
         created = factory()
         with self._lock:
+            # 保存中に破棄された画像を、生成完了後に登録し直さない。
+            if generation != self._generation:
+                return created
             if len(self._entries) >= self._limit:
                 self._entries.pop(next(iter(self._entries)), None)
             self._entries[key] = created
@@ -60,5 +65,6 @@ class ThumbnailCache:
     def discard(self, archive: str) -> None:
         """書き換えたアーカイブのサムネイルを捨てる"""
         with self._lock:
+            self._generation += 1
             for key in [k for k in self._entries if k[0] == archive]:
                 self._entries.pop(key, None)

@@ -1,5 +1,6 @@
 """出力先に既にある本と、番号の詰め直し（#178）"""
 
+import io
 import sys
 import unittest
 import zipfile
@@ -8,10 +9,12 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from manga_api.app import create_app  # noqa: E402
+from manga_api.thumbnails import render  # noqa: E402
 from manga_core.output_books import list_output_books, rename_files  # noqa: E402
 
 SERIES = "[著者] 作品"
@@ -267,6 +270,155 @@ class OutputBooksApiTest(OutputBooksTestBase):
         # Assert
         self.assertEqual(400, response.status_code)
         self.assertIn("既にあります", response.json()["detail"])
+
+
+class FileMutationThumbnailsTest(OutputBooksTestBase):
+    """番号の詰め直し・削除で同じ名前を再利用しても画像を取り違えない。"""
+
+    def setUp(self):
+        super().setUp()
+        self.app = create_app(
+            state_dir=self.work_dir / "state", allowed_roots=[self.work_dir]
+        )
+        self.client = TestClient(self.app)
+        self.addCleanup(self.client.close)
+        self.params = {"token": self.app.state.token}
+
+    def page(self, color: str) -> bytes:
+        buffer = io.BytesIO()
+        Image.new("RGB", (40, 60), color).save(buffer, "PNG")
+        return buffer.getvalue()
+
+    def archive(self, name: str, *pages: bytes) -> Path:
+        path = self.series / name
+        with zipfile.ZipFile(path, "w") as archive:
+            for index, page in enumerate(pages, 1):
+                archive.writestr(f"{index:03}.png", page)
+        return path
+
+    def thumbnail(self, path: Path, width=160, name="001.png", etag=None):
+        return self.client.get(
+            "/api/thumb",
+            params={**self.params, "archive": str(path), "name": name, "width": width},
+            headers={"If-None-Match": etag} if etag else {},
+        )
+
+    def rename(self, *pairs: tuple[Path, Path]):
+        return self.client.post(
+            "/api/files/rename",
+            params=self.params,
+            json={
+                "renames": [
+                    {"source": str(source), "target": str(target)}
+                    for source, target in pairs
+                ]
+            },
+        )
+
+    def trash(self, path: Path):
+        return self.client.post(
+            "/api/files/trash", params=self.params, json={"path": str(path)}
+        )
+
+    def test_chain_rename_refreshes_multiple_widths_and_drops_removed_pages(self):
+        red, green, blue = [self.page(color) for color in ("red", "green", "blue")]
+        first = self.archive("book.zip", red, red)
+        second = self.archive("book_1.zip", green)
+        third = self.archive("book_2.zip", blue)
+        unrelated = self.archive("other.zip", red)
+        before = {
+            (path, width): self.thumbnail(path, width)
+            for path in (first, second, third, unrelated)
+            for width in (160, 240)
+        }
+        self.assertEqual(200, self.thumbnail(first, name="002.png").status_code)
+        first.unlink()
+
+        self.assertEqual(200, self.rename((second, first), (third, second)).status_code)
+
+        for path, page in ((first, green), (second, blue)):
+            for width in (160, 240):
+                with self.subTest(path=path.name, width=width):
+                    response = self.thumbnail(
+                        path, width, etag=before[path, width].headers["etag"]
+                    )
+                    self.assertEqual(200, response.status_code)
+                    self.assertEqual(render(page, width), response.content)
+        self.assertEqual(404, self.thumbnail(first, name="002.png").status_code)
+        # 空いた移動元の名前を再利用しても、以前の本の画像は残さない。
+        self.archive(third.name, red)
+        self.assertEqual(render(red, 160), self.thumbnail(third).content)
+        self.assertEqual(
+            304,
+            self.thumbnail(
+                unrelated, etag=before[unrelated, 160].headers["etag"]
+            ).status_code,
+        )
+
+    def test_trash_refreshes_reused_name(self):
+        red, green = self.page("red"), self.page("green")
+        path = self.archive("book.zip", red)
+        before = self.thumbnail(path)
+        with mock.patch("manga_api.app.send2trash", side_effect=lambda p: p.unlink()):
+            self.assertEqual(200, self.trash(path).status_code)
+        self.archive(path.name, green)
+        response = self.thumbnail(path, etag=before.headers["etag"])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(render(green, 160), response.content)
+
+    def test_refused_mutations_preserve_files_and_cache(self):
+        red, green = self.page("red"), self.page("green")
+        first = self.archive("book.zip", red)
+        second = self.archive("book_1.zip", green)
+        before = {
+            path: (path.read_bytes(), self.thumbnail(path)) for path in (first, second)
+        }
+        with mock.patch.object(self.app.state.thumbnails, "discard") as discard:
+            self.assertEqual(400, self.rename((second, first)).status_code)
+            with mock.patch(
+                "manga_api.app.send2trash", side_effect=PermissionError("held")
+            ):
+                self.assertEqual(409, self.trash(first).status_code)
+            discard.assert_not_called()
+        for path, (body, response) in before.items():
+            self.assertEqual(body, path.read_bytes())
+            self.assertEqual(
+                304, self.thumbnail(path, etag=response.headers["etag"]).status_code
+            )
+
+    def test_failed_chain_rename_rolls_back_without_invalidating_cache(self):
+        from manga_core import output_books
+
+        first = self.archive("book.zip", self.page("red"))
+        second = self.archive("book_1.zip", self.page("green"))
+        targets = [self.series / "new.zip", self.series / "new_1.zip"]
+        before = {
+            path: (path.read_bytes(), self.thumbnail(path)) for path in (first, second)
+        }
+        real_rename = output_books._rename
+        failed = False
+
+        def fail_second(source, target):
+            nonlocal failed
+            if target == targets[1] and not failed:
+                failed = True
+                raise OSError("controlled failure")
+            real_rename(source, target)
+
+        with (
+            mock.patch.object(output_books, "_rename", side_effect=fail_second),
+            mock.patch.object(self.app.state.thumbnails, "discard") as discard,
+        ):
+            self.assertEqual(
+                409, self.rename((first, targets[0]), (second, targets[1])).status_code
+            )
+            discard.assert_not_called()
+        for path, (body, response) in before.items():
+            self.assertEqual(body, path.read_bytes())
+            self.assertEqual(
+                304, self.thumbnail(path, etag=response.headers["etag"]).status_code
+            )
+        self.assertTrue(all(not path.exists() for path in targets))
 
 
 if __name__ == "__main__":

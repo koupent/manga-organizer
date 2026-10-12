@@ -1,6 +1,6 @@
 import { EditRestoreDialog } from "./EditRestoreDialog";
 import { BookMarked, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   sidecarReason,
   type LibraryImportResult,
@@ -103,7 +103,9 @@ type OrganizePanelProps = {
    * 出す編集済みの印を読み直す（#143）
    */
   editsVersion?: number;
+  editedArchive?: string;
   onEditsReset?: (path: string) => void;
+  onFilesChanged?: (paths: string[]) => void;
   /** 投入に足す。既に入っているものは増やさず光らせる（App が決める） */
   onAddSources: (paths: string[]) => void;
   /** エクスプローラーから窓の上へ持ってきている最中か（Tauri のドラッグ） */
@@ -155,11 +157,55 @@ export function OrganizePanel({
   onOpenSettings,
   onOpenProduced,
   editsVersion = 0,
+  editedArchive,
   onEditsReset,
+  onFilesChanged,
   onAddSources,
   nativeDragging = false,
   flashing = new Set<string>(),
 }: OrganizePanelProps) {
+  // 完成した本の枚数は、入力側ではなく編集後の ZIP を正とする。
+  const [editedCounts, setEditedCounts] = useState<ReadonlyMap<string, number>>(
+    new Map(),
+  );
+  const countRequests = useRef(new Map<string, number>());
+  const nextCountRequest = useRef(0);
+  useEffect(() => {
+    const requests = countRequests.current;
+    return () => requests.clear();
+  }, [client]);
+  const refreshCount = useCallback(
+    (archive: string) => {
+      const request = ++nextCountRequest.current;
+      countRequests.current.set(archive, request);
+      void client
+        .listPages(archive)
+        .then((result) => {
+          if (countRequests.current.get(archive) !== request) return;
+          countRequests.current.delete(archive);
+          setEditedCounts((current) =>
+            new Map(current).set(archive, result.pages.length),
+          );
+        })
+        .catch(() => {
+          if (countRequests.current.get(archive) === request)
+            countRequests.current.delete(archive);
+        });
+    },
+    [client],
+  );
+  useEffect(() => {
+    if (editedArchive) refreshCount(editedArchive);
+  }, [refreshCount, editedArchive, editsVersion]);
+
+  const forgetCounts = (paths: string[]) => {
+    for (const path of paths) countRequests.current.delete(path);
+    setEditedCounts((current) => {
+      const next = new Map(current);
+      for (const path of paths) next.delete(path);
+      return next;
+    });
+  };
   const [libraryOpen, setLibraryOpen] = useState(false);
   // 利用者が直した巻数。本の鍵で覚え、解析をやり直しても消さない（段階 5）
   const [customNames, setCustomNames] = useState<ReadonlyMap<string, string>>(
@@ -549,16 +595,31 @@ export function OrganizePanel({
     [finished, shownOutput],
   );
   // 直した巻数を当てた行。名前・印・依頼・冊数は全部こちらから作る
-  const rows = useMemo(
-    () =>
-      withOutputBooks(
-        applyVolumes(analyzedRows, volumes),
-        shownOutput,
-        author,
-        title,
-      ),
-    [analyzedRows, volumes, shownOutput, author, title],
-  );
+  const rows = useMemo(() => {
+    const madePaths = new Map(
+      finished.map((book) => [bookId(book), book.path]),
+    );
+    return withOutputBooks(
+      applyVolumes(analyzedRows, volumes),
+      shownOutput,
+      author,
+      title,
+    ).map((row) => {
+      const path = madePaths.get(row.id) ?? row.source;
+      const count = editedCounts.get(path);
+      return count === undefined || count === row.imageCount
+        ? row
+        : { ...row, imageCount: count };
+    });
+  }, [
+    analyzedRows,
+    volumes,
+    shownOutput,
+    author,
+    title,
+    finished,
+    editedCounts,
+  ]);
 
   // 近道に出す編集済みの印（#143）。相手は近道を置く本、つまり整理済みの行と
   // 出来たファイル。並びが変わったときと、1 冊を編集する画面が本を書き換えた
@@ -884,6 +945,8 @@ export function OrganizePanel({
       // 状態の produced / failures を隠さないよう別名にする。ここで扱うのは
       // 「今回の実行で返ってきたもの」で、画面に出ている一覧とは別物
       const outcome = organizeResult(job.result);
+      forgetCounts(outcome.produced);
+      onFilesChanged?.(outcome.produced);
       setFinished([...earlierFinished.current, ...outcome.finished]);
       setFailures(outcome.failed);
       // 投入した本そのものが作り直された（行き先が自分自身だった）なら、
@@ -1011,6 +1074,8 @@ export function OrganizePanel({
       setStatus(sidecarReason(error));
       return;
     }
+    forgetCounts([target.path]);
+    onFilesChanged?.([target.path]);
     const madeBook = finished.find((book) => book.path === target.path);
     if (madeBook) {
       setDecisions((current) =>
@@ -1071,6 +1136,28 @@ export function OrganizePanel({
       const renames = compaction(paths);
       if (renames.length === 0) return "unchanged";
       await client.renameFiles(renames);
+      const pendingCounts = renames.filter(({ source }) =>
+        countRequests.current.has(source),
+      );
+      for (const { source, target } of renames) {
+        countRequests.current.delete(source);
+        countRequests.current.delete(target);
+      }
+      setEditedCounts((current) => {
+        const next = new Map(current);
+        for (const { source, target } of renames) {
+          next.delete(source);
+          next.delete(target);
+          const count = current.get(source);
+          if (count !== undefined) next.set(target, count);
+        }
+        return next;
+      });
+      // 改名前の読み取りが未着なら、改名後の ZIP から取り直す。
+      for (const { target } of pendingCounts) refreshCount(target);
+      onFilesChanged?.(
+        renames.flatMap(({ source, target }) => [source, target]),
+      );
       const moved = new Map(
         renames.map((rename) => [rename.source, rename.target]),
       );
