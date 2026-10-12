@@ -124,6 +124,8 @@ test("出力先にある同じ巻を先着として一覧に出し、次の番�
   // 番号付きは同じ巻の重複として警告する
   const plain = row(page, `${VOLUME_3}.zip`, true);
   const numbered = row(page, `${VOLUME_3}_1.zip`, true);
+  await expect(plain.getByTestId("plan-row-image-count")).toHaveText("2枚");
+  await expect(numbered.getByTestId("plan-row-image-count")).toHaveText("3枚");
   for (const existing of [plain, numbered]) {
     await expect(existing.getByTestId("plan-row-path")).toHaveText("");
     await expect(existing.getByTestId("plan-check")).toHaveCount(0);

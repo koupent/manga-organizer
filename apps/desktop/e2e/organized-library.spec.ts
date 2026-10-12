@@ -350,6 +350,7 @@ apply_rows(archive, [replace(row, deleted=i == 1) for i, row in enumerate(scan_r
     const row = bookRow(page, source);
     await expect(row).toHaveAttribute("data-organized", "true");
     await expect(row.getByTestId("plan-row-state")).toHaveText("整理済み");
+    await expect(row.getByTestId("plan-row-image-count")).toHaveText("2枚");
     await expect(checkOf(row)).toHaveAttribute("aria-checked", "false");
     await expect(row.getByTestId("plan-row-name")).toHaveText(fileName);
     await expect(row.getByTestId("plan-row-path")).toHaveAttribute(

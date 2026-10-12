@@ -1182,6 +1182,11 @@ export interface components {
        * @description ファイルの大きさ（バイト）
        */
       size: number;
+      /**
+       * Image Count
+       * @description 画像枚数。読み取れない場合は null
+       */
+      image_count: number | null;
     };
     /**
      * OutputBooksRequest

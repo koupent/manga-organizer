@@ -11,7 +11,7 @@ type Phase = "offered" | "downloading" | "installing" | "failed";
 /**
  * 新しい版があるか確かめる。無ければ null。
  *
- * 最新の Release の latest.json を読むのは updater プラグイン。起動したときと、
+ * 最新の Release の latest.json を読むのは updater プラグイン。起動時・起動中の定期確認と、
  * 設定の「更新を確認」（#136）から呼ぶ。ブラウザ（開発と e2e）では確かめない。
  */
 export async function findUpdate(): Promise<Update | null> {
