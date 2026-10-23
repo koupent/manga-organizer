@@ -58,6 +58,8 @@ import {
   pageNumbers,
   partnersOf,
   replaceRow,
+  revertAutomaticSplits,
+  selectInitialSplits,
   splitAll,
   splitRow,
   summaryOf,
@@ -139,6 +141,8 @@ export function FileEditor({
   >(null);
   const [restoring, setRestoring] = useState(false);
   const initialSplitSelection = useRef(false);
+  // ページ分割を開いたときの自動選択は、手でチェックを変えるまで編集に数えない
+  const splitTouched = useRef(false);
   const [bulkMerge, setBulkMerge] = useState(false);
   const [deletedVisibility, setDeletedVisibility] =
     useStoredString("editor.showDeleted");
@@ -182,6 +186,7 @@ export function FileEditor({
     setHistory([]);
     setSelection([]);
     setZoomed(null);
+    splitTouched.current = false;
   }, [reloadKey]);
 
   const margin = useMarginJob({
@@ -200,16 +205,7 @@ export function FileEditor({
   useEffect(() => {
     if (rows && chosen === "split" && !initialSplitSelection.current) {
       initialSplitSelection.current = true;
-      editRows(
-        rows.map((row) =>
-          !row.names.includes(coverDraft?.request.name ?? "") &&
-          !row.mergeNext &&
-          isSplitTarget(row) &&
-          !row.checked
-            ? splitRow(row)
-            : row,
-        ),
-      );
+      editRows(selectInitialSplits(rows, coverDraft?.request.name));
     }
   }, [rows, chosen, editRows, coverDraft]);
 
@@ -328,6 +324,7 @@ export function FileEditor({
   // 行を変えたら、選びかけの相手は捨てる。並びが変わり、もう選べないことがある
   const edit = (next: SplitRow[], allMerges = false) => {
     if (busy) return;
+    splitTouched.current = true;
     setModeNotice("");
     if (chosen !== "trim") setChosen(step);
     setHistory((past) =>
@@ -390,8 +387,19 @@ export function FileEditor({
   const requestStep = (next: Step | "trim") => {
     if (busy) return;
     if (next === "trim" && pending) {
-      setModeNotice("余白カットの前に、編集中の変更を反映してください。");
-      return;
+      const reverted = revertAutomaticSplits(rows);
+      const automaticOnly =
+        !splitTouched.current &&
+        !coverDraft &&
+        !reordered &&
+        !reverted.some(isPending);
+      if (!automaticOnly) {
+        setModeNotice("余白カットの前に、編集中の変更を反映してください。");
+        return;
+      }
+      // 開いたときの選択は、手で変えていなければ余白カットへ戻るときに捨てる
+      initialSplitSelection.current = false;
+      editRows(reverted);
     }
     setModeNotice("");
     setChosen(next);
@@ -873,7 +881,7 @@ export function FileEditor({
           label: <StepLabel text="ページを分割" count={splitTargets.length} />,
           testId: "split-step-split",
           description:
-            "分割できるページを最初に選択します。不要な対象を外し、分割線を確認して右上から反映します。",
+            "サムネイル以外の分割できるページを最初に選択します。不要な対象を外し、分割線を確認して右上から反映します。",
         },
         {
           id: "merge",
