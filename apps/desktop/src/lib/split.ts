@@ -339,6 +339,46 @@ export function isMergeTarget(rows: SplitRow[], index: number): boolean {
   );
 }
 
+/** いまサムネイルにしているページ。削除済みと、結合で隠れている行は飛ばす。 */
+export function coverName(rows: SplitRow[]): string | undefined {
+  const index = rows.findIndex(
+    (row, at) => !row.deleted && !isAbsorbed(rows, at),
+  );
+  return index < 0 ? undefined : rows[index].names[0];
+}
+
+/**
+ * ページ分割を開いたときの選択。
+ *
+ * サムネイルと、調整中の画像は選ばない。ここへチェックを入れると、
+ * そのページの画像調整が「先に保存してください」で止まり、
+ * 余白カットへ戻る操作も未保存の変更として止まる。
+ */
+export function selectInitialSplits(
+  rows: SplitRow[],
+  draftName?: string,
+): SplitRow[] {
+  const cover = coverName(rows);
+  return rows.map((row) =>
+    (draftName === undefined || !row.names.includes(draftName)) &&
+    (cover === undefined || !row.names.includes(cover)) &&
+    !row.mergeNext &&
+    isSplitTarget(row) &&
+    !row.checked
+      ? splitRow(row)
+      : row,
+  );
+}
+
+/** 手で触っていない自動選択を、開いたときのチェックへ戻す。 */
+export function revertAutomaticSplits(rows: SplitRow[]): SplitRow[] {
+  return rows.map((row) =>
+    row.checked === row.stored.checked && !row.mergeNext
+      ? row
+      : { ...row, checked: row.stored.checked, mergeNext: false },
+  );
+}
+
 /** すべての分割対象を選ぶ。画像調整中のサムネイルには分割を重ねない。 */
 export function splitAll(rows: SplitRow[], excludedName?: string): SplitRow[] {
   return rows.map((row) =>

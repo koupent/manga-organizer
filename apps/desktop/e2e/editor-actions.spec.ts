@@ -115,3 +115,77 @@ test("手動ペアを全解除でき、全選択では表紙を除いてペア�
   await expect(page.getByTestId("split-confirm")).toBeInViewport();
   await page.screenshot({ path: test.info().outputPath("editor-header.png") });
 });
+
+/** 見開きだけの本。先頭ページも分割対象になる */
+function writeSpreads(name: string) {
+  const archive = join(sidecar.workDir, name);
+  runPython(
+    `import io,sys,zipfile
+from PIL import Image
+with zipfile.ZipFile(sys.argv[1],'w') as z:
+ for name,color in [('001.png','red'),('002.png','green'),('003.png','blue')]:
+  im=Image.new('RGB',(1200,900),color); b=io.BytesIO(); im.save(b,'PNG'); z.writestr(name,b.getvalue())`,
+    archive,
+  );
+  return archive;
+}
+
+test("ページ分割を開いただけではサムネイルを調整でき、余白カットへ戻れる", async ({
+  page,
+}) => {
+  const archive = writeSpreads("untouched-split.zip");
+  const before = readFileSync(archive);
+  await page.goto(
+    `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
+  );
+  await expect(page.getByTestId("margin-card")).toHaveCount(3);
+  await page.getByTestId("split-step-split").click();
+  await expect(
+    page.locator('[data-testid="split-card"][data-checked="true"]'),
+  ).toHaveCount(2);
+  const cover = page.getByTestId("editable-page").first();
+  await expect(cover).toHaveAttribute("data-name", "001.png");
+  await cover.getByRole("button", { name: /の操作/ }).click();
+  await expect(
+    cover.getByRole("menuitem", { name: "サムネイルの画像調整" }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("split-step-merge").click();
+  await cover.getByRole("button", { name: /の操作/ }).click();
+  await expect(
+    cover.getByRole("menuitem", { name: "サムネイルの画像調整" }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("split-step-trim").click();
+  await expect(page.getByTestId("split-step-trim")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("editor-notice")).toHaveCount(0);
+  expect(readFileSync(archive)).toEqual(before);
+});
+
+test("ページ分割のチェックを手で変えると、余白カットへは戻さない", async ({
+  page,
+}) => {
+  const archive = writeSpreads("touched-split.zip");
+  const before = readFileSync(archive);
+  await page.goto(
+    `/?${new URLSearchParams({ api: sidecar.baseUrl, token: sidecar.token, mode: "edit", archive })}`,
+  );
+  await expect(page.getByTestId("margin-card")).toHaveCount(3);
+  await page.getByTestId("split-step-split").click();
+  await page
+    .locator('[data-testid="split-card"][data-index="1"]')
+    .getByTestId("split-check")
+    .click();
+  await page.getByTestId("split-step-trim").click();
+  await expect(page.getByTestId("editor-notice")).toContainText(
+    "余白カットの前に、編集中の変更を反映してください。",
+  );
+  await expect(page.getByTestId("split-step-split")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(readFileSync(archive)).toEqual(before);
+});
