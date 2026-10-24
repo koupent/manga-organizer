@@ -31,6 +31,10 @@ else
 fi
 cd "$repo_root"
 
+# 版だけの差分で検査を省く判定が壊れると、ソースの変更を通してしまう。
+# 重い検査の前に、その判定だけ確かめる。
+bash "$repo_root/scripts/test_ci_scope.sh"
+
 core_dir="$repo_root/services/core"
 if [[ ! -f "$core_dir/pyproject.toml" ]]; then
   echo "services/core が見つかりません" >&2

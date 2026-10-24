@@ -5,6 +5,11 @@ name: CI
 #
 # paths で絞らない。必須チェックが走らないと「待ち」のまま残り、文書だけの
 # 変更でもマージできなくなる。
+#
+# ただし、直前のコミットから版の番号だけが変わった追記は、ソースの検査を
+# やり直さない。宣言が 4 箇所で一致することだけ確かめる。必須チェックの
+# 名前（Merge Gate / Core (Windows)）は成功のまま残す。合流先の main が
+# 進んでいたときは、組み合わせが変わっているので全部回す。
 on:
   pull_request:
 
@@ -16,35 +21,74 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    name: 変更の範囲
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.decide.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 範囲の判定を確かめる
+        run: bash scripts/test_ci_scope.sh
+
+      - id: decide
+        env:
+          BEFORE: ${{ github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          scope=$(bash scripts/ci_scope.sh "$BEFORE" "$HEAD" "$BASE")
+          if [[ "$scope" == "version" ]]; then
+            echo "full=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "full=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "判定: $scope"
+
   merge-gate:
     name: Merge Gate
+    needs: scope
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
+      - name: 版の宣言を突き合わせる
+        if: needs.scope.outputs.full != 'true'
+        run: bash scripts/check_versions.sh
+
       - uses: actions/setup-node@v4
+        if: needs.scope.outputs.full == 'true'
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
       - uses: astral-sh/setup-uv@v6
+        if: needs.scope.outputs.full == 'true'
         with:
           python-version: "3.11"
 
       - uses: Swatinem/rust-cache@v2
+        if: needs.scope.outputs.full == 'true'
         with:
           workspaces: apps/desktop/src-tauri
 
       # Tauri v2 の Linux でのビルドに要るもの（clippy と test がリンクする）
       - name: Tauri のビルドに要るライブラリを入れる
+        if: needs.scope.outputs.full == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev
 
       - name: Playwright のブラウザを入れる
+        if: needs.scope.outputs.full == 'true'
         working-directory: apps/desktop
         run: |
           npm ci --no-fund --no-audit
@@ -53,19 +97,23 @@ jobs:
       # tauri.conf.json の resources はサイドカーの置き場を glob で指す。
       # 空だと cargo のビルドが失敗するので、印だけ置く（gitignore 済みの場所）
       - name: サイドカーの置き場を用意する
+        if: needs.scope.outputs.full == 'true'
         run: |
           mkdir -p apps/desktop/src-tauri/resources/sidecar
           touch apps/desktop/src-tauri/resources/sidecar/.keep
 
       - name: Merge Gate
+        if: needs.scope.outputs.full == 'true'
         run: bash scripts/run_merge_gate.sh
 
   # ファイルの扱いは OS で振る舞いが違う（読み取り専用で開いたものへの
   # fsync が Windows だけ EBADF になる、など）。配る先は Windows なので、
-  # コアのテストは Windows でも回す
+  # コアのテストは Windows でも回す。版の番号だけの追記では起動しない
+  # （Windows は分数が 2 倍）。チェック名は成功として残す。
   core-windows:
     name: Core (Windows)
-    runs-on: windows-latest
+    needs: scope
+    runs-on: "${{ needs.scope.outputs.full == 'true' && 'windows-latest' || 'ubuntu-latest' }}"
     timeout-minutes: 20
     defaults:
       run:
@@ -73,10 +121,18 @@ jobs:
         working-directory: services/core
     steps:
       - uses: actions/checkout@v4
+        if: needs.scope.outputs.full == 'true'
 
       - uses: astral-sh/setup-uv@v6
+        if: needs.scope.outputs.full == 'true'
         with:
           python-version: "3.11"
 
       - name: コアのテスト
+        if: needs.scope.outputs.full == 'true'
         run: uv run python -m unittest discover -s tests
+
+      - name: 版の番号だけなので Windows では回さない
+        if: needs.scope.outputs.full != 'true'
+        working-directory: ${{ github.workspace }}
+        run: echo "直前のコミットから版の番号だけが変わったので、Windows のテストは回さない"
