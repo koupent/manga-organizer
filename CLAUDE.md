@@ -8,7 +8,7 @@ Windows 向け漫画アーカイブ整理アプリです。Tauri シェル + Rea
 
 ## 品質ゲート（CI）
 
-PR ごとに GitHub Actions（`.github/workflows/ci.yml`）が `Merge Gate`（ubuntu）と `Core (Windows)`（コアのテストを Windows で）を回し、main への合流は `Merge Gate` の合格が条件です。中身は `scripts/run_merge_gate.sh` が正本で、セッション内でも同じものを回せます。
+PR ごとに GitHub Actions（`.github/workflows/ci.yml`）が `Merge Gate`（ubuntu）と `Core (Windows)`（コアのテストを Windows で）を回し、main への合流は `Merge Gate` の合格が条件です。中身は `scripts/run_merge_gate.sh` が正本で、セッション内でも同じものを回せます。直前のコミットから版の番号だけが変わった追記は、宣言の一致だけ確かめてこの 2 つは回しません。
 
 ```bash
 bash scripts/run_merge_gate.sh

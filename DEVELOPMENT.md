@@ -24,6 +24,8 @@ PR ごとに GitHub Actions（`.github/workflows/ci.yml`、ubuntu）が `scripts
 
 同じ PR で `Core (Windows)` も回ります。配る先は Windows で、ファイルの扱いは OS で振る舞いが違う（読み取り専用で開いたものへの fsync が Windows だけ失敗する、など）ため、コアのテストを Windows でも回します。
 
+直前のコミットから版の番号だけが変わった追記（4 箇所の version と、それを写した lock）は、宣言が一致することだけ確かめて、上の検査と Windows は回しません。合流先の main がそのあいだに進んでいたときは、組み合わせが変わっているので全部回します。
+
 実行内容:
 
 - `services/core/` — `uv lock --check`・`ruff`・`compileall`・`unittest`
@@ -80,8 +82,8 @@ gh workflow run release.yml --ref <ブランチ名>   # または Actions の画
 
 インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。作ったインストーラを黙って入れ、同梱のサイドカーが応答すること、並べ替え・分割・サムネイルの保存が通ること（`scripts/smoke_saves.py`）、アプリを閉じるとサイドカーも止まることまで確かめます。
 
-- `v*` タグの push: 作って確かめたうえで、このリポジトリに Release を作り、インストーラと `latest.json` を載せる。確かめに失敗すると Release は作られない
-- 手動（`workflow_dispatch`）: 作って確かめ、インストーラを Artifacts に残すだけ
+- `v*` タグの push: 作って確かめたうえで、このリポジトリに Release を作り、インストーラと `latest.json` を載せる。確かめに失敗すると Release は作られない。タグ名がファイルの版と違うときは Ubuntu で止め、Windows は起動しない。同じタグを打ち直すと、先のビルドは止まる
+- 手動（`workflow_dispatch`）: 作って確かめ、インストーラを Artifacts に残すだけ。版の宣言が食い違うときと、署名鍵が無いときは、Windows の前に止める
 
 Windows ランナーは分数が 2 倍に数えられるため、プルリクエストでは作りません。画面の確認は Merge Gate で足ります。
 
