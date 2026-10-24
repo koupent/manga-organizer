@@ -1,13 +1,23 @@
 /**
- * ページ一覧の各カードを、どの列に置くか。
+ * ページ一覧の各カードを、どの行・列に置くか。
  *
- * カードの幅は表示サイズのままにする。列数だけ、検出済みの見開きを基準に
- * 組んだ 2 枚が行をまたがないよう、入る数に一番近いものから選ぶ。
- * 割れない列数が無ければ、入る数のままにする。
+ * 人が結合や見開きを目で確かめるとき、組になる 2 枚が行の末尾と次の行の
+ * 先頭に分かれると見比べにくい。検出済みの見開きを基準に前後のページを
+ * 2 枚ずつ組み、行ごとに「組・見開き・余りの 1 枚」を入るだけ詰める。
+ * 列数を本全体で 1 つに決めると、どこかの組を揃えるために全部の行が
+ * 縮み、左に広い空きが出る。行ごとに詰めれば、空くのは行末の 1 枠までで済む。
  *
  * 右から左のときは各行を右端から詰める。格子に direction: rtl を付けると、
  * 1 行目は右に寄るが 2 行目以降が左に残るため、列番号はここで決める。
  */
+
+/** 格子に置く 1 枚 */
+export type GridCell = {
+  /** 2 は見開きのように 2 列ぶんを占める */
+  span: 1 | 2;
+  /** 割って保存した見開きの半分。0 の直後に 1 が並び、2 枚で 1 つの見開きとして扱う */
+  half?: 0 | 1;
+};
 
 /** 1 枚の置き場所。column は 1 始まりで左端の列、row も 1 始まり */
 export type PageSlot = {
@@ -17,82 +27,74 @@ export type PageSlot = {
 };
 
 /**
- * spans の各要素を、columns 列の格子へ置く。fromRight なら右端から詰める。
+ * 同じ行に並べる単位（カードの添字の並び）に分ける。
  *
- * 列だけを指定して行を自動に任せると、右から置くとき 1 枚ずつ次の行へ
- * 落ちる。行もここで決める。
+ * 見開きの後ろは直後から 2 枚ずつ組み、1 枚余るときは次の見開きの直前に残す。
+ * 最初の見開きより前は、見開きから遡って組む（余りは先頭の表紙側）。
+ * 見開きが無い本は組まない。
  */
-export function placePages(
-  spans: ReadonlyArray<1 | 2>,
-  columns: number,
-  fromRight: boolean,
-): PageSlot[] {
-  const width = Math.max(1, columns);
-  let row = 1;
-  let used = 0;
-  return spans.map((wanted) => {
-    const span: 1 | 2 = wanted === 2 && width >= 2 ? 2 : 1;
-    if (used + span > width) {
-      row += 1;
-      used = 0;
-    }
-    const column = fromRight ? width - used - span + 1 : used + 1;
-    used += span;
-    return { column, row, span };
-  });
-}
-
-/**
- * 見開き（幅 2）を基準に、単ページを 2 枚ずつ組む。
- *
- * 見開きの後ろは先頭から組む。1 枚余るときは次の見開きの直前に置く。
- * 最初の見開きより前は、見開きから遡って組む。見開きが無ければ組まない。
- */
-export function spreadPairs(spans: ReadonlyArray<1 | 2>): [number, number][] {
-  const pairs: [number, number][] = [];
+export function pageGroups(cells: ReadonlyArray<GridCell>): number[][] {
+  const groups: number[][] = [];
   let pages: number[] = [];
   let anchored = false;
   const flush = () => {
     const start = anchored ? 0 : pages.length % 2;
-    for (let at = start; at + 1 < pages.length; at += 2) {
-      pairs.push([pages[at], pages[at + 1]]);
+    pages.slice(0, start).forEach((page) => groups.push([page]));
+    for (let at = start; at < pages.length; at += 2) {
+      groups.push(pages.slice(at, at + 2));
     }
     pages = [];
   };
-  spans.forEach((span, index) => {
-    if (span === 2) {
+  const hasSpread = cells.some((cell) => cell.span === 2 || cell.half === 0);
+  cells.forEach((cell, index) => {
+    if (cell.half === 1) return;
+    if (cell.span === 2 || cell.half === 0) {
       flush();
       anchored = true;
-    } else {
+      groups.push(cell.half === 0 ? [index, index + 1] : [index]);
+    } else if (hasSpread) {
       pages.push(index);
+    } else {
+      groups.push([index]);
     }
   });
-  if (anchored) flush();
-  return pairs;
-}
-
-/** 組の 2 枚が別の行に分かれた数。行の左右は割れ方に影響しない */
-function splitCount(spans: ReadonlyArray<1 | 2>, columns: number): number {
-  const slots = placePages(spans, columns, false);
-  return spreadPairs(spans).filter(
-    ([left, right]) => slots[left].row !== slots[right].row,
-  ).length;
+  flush();
+  return groups;
 }
 
 /**
- * 組が行をまたがない列数のうち、maxColumns に一番近いもの。
+ * cells を最大 columns 列の格子へ置く。fromRight なら各行を右端から詰める。
  *
- * 入る列数から 1 つずつ減らして探す。割れない列数が無ければ入る列数のまま。
- * 見開きが無ければ組が無いので、入る列数のまま。
+ * 単位ごとに、今の行に入るなら続けて置き、入らなければ次の行へ回す。
+ * 1 列しか入らない幅では、見開きも組も 1 枚ずつ縦に並べる。
  */
-export function spreadAlignedColumns(
-  spans: ReadonlyArray<1 | 2>,
-  maxColumns: number,
-): number {
-  const limit = Math.max(1, maxColumns);
-  if (limit < 2 || !spans.includes(2)) return limit;
-  for (let columns = limit; columns >= 2; columns -= 1) {
-    if (splitCount(spans, columns) === 0) return columns;
+export function placePages(
+  cells: ReadonlyArray<GridCell>,
+  columns: number,
+  fromRight: boolean,
+): PageSlot[] {
+  const width = Math.max(1, columns);
+  const spanOf = (index: number): 1 | 2 =>
+    cells[index].span === 2 && width >= 2 ? 2 : 1;
+  const slots: PageSlot[] = [];
+  let row = 1;
+  let used = 0;
+  for (const group of pageGroups(cells)) {
+    const groupWidth = group.reduce((sum, index) => sum + spanOf(index), 0);
+    if (used > 0 && used + groupWidth > width) {
+      row += 1;
+      used = 0;
+    }
+    for (const index of group) {
+      const span = spanOf(index);
+      if (used + span > width) {
+        row += 1;
+        used = 0;
+      }
+      const column = fromRight ? width - used - span + 1 : used + 1;
+      slots[index] = { column, row, span };
+      used += span;
+    }
   }
-  return limit;
+  return slots;
 }
