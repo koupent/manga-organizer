@@ -74,15 +74,27 @@ def format_series_dir(author: str, title: str) -> str:
     return f"[{author}] {title}"
 
 
-def format_volume_name(author: str, title: str, volume: int | None) -> str:
+def format_volume_name(
+    author: str,
+    title: str,
+    volume: int | None,
+    *,
+    label: str | None = None,
+) -> str:
     """整理が作る、本 1 冊のファイル名（拡張子は付けない）。
 
     ``format_series_dir`` と同じ理由でモジュールの関数にしてある。名前を作る側
     （``FileOrganizer``）、予告する側（``toc_analyzer``）、整理済みかどうかを判定
     する側（``organized_detector``）が同じ 1 つの関数を呼ぶ形にしないと、名前の
     作り方を変えたときに整理済みの本が「名前が違う」と判定され、既定で作り直される。
+
+    巻スロットは巻数（``第001巻``）か、巻数ではない 1 語（``label``）。
+    どちらも無い本だけが ``Unknown`` になる。``label`` を渡したときは巻数より
+    そちらを使う。空文字は渡さなかったものとして扱う。
     """
     base_name = format_series_dir(author, title)
+    if label:
+        return f"{base_name} {label}"
     if volume is not None:
         return f"{base_name} 第{volume:03d}巻"
     return f"{base_name} Unknown"

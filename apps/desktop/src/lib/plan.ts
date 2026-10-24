@@ -16,6 +16,11 @@ export type PlannedBook = {
   output_name: string;
   volume: number | null;
   /**
+   * 巻スロットの、巻数ではない 1 語。第001巻 と Unknown は null。
+   * 古いサイドカーの応答には無いことがある
+   */
+  volume_label?: string | null;
+  /**
    * 巻数をどこから読んだか（#114）。pattern / last-number / position / none。
    * 古いサイドカーや台本の応答には無いことがある
    */
@@ -86,8 +91,10 @@ export type PlanRow = {
   source: string;
   /** 本の行の、アーカイブ内での位置。全体で 1 冊なら空 */
   entry: string;
-  /** 巻数。読めなかったものは null。利用者が直したらその値（``applyVolumes``） */
+  /** 巻数。読めなかったもの、ラベルの本は null。利用者が直したらその値 */
   volume: number | null;
+  /** 巻スロットの、巻数ではない 1 語。無ければ空文字 */
+  volumeLabel: string;
   /** 解析が決めた巻数。直しても変わらない。読んだ数字を塗るのに使う */
   autoVolume: number | null;
   /** 巻数をどこから読んだか。入れ物の行では空 */
@@ -201,6 +208,7 @@ function containerRow(
     source: "",
     entry: "",
     volume: null,
+    volumeLabel: "",
     autoVolume: null,
     volumeOrigin: "",
     volumeSourceName: "",
@@ -234,6 +242,7 @@ function bookRow(
     source: book.source,
     entry: book.entry,
     volume: book.volume,
+    volumeLabel: book.volume_label ?? "",
     autoVolume: book.volume,
     volumeOrigin: book.volume_origin ?? "",
     volumeSourceName: book.volume_source_name ?? "",
@@ -457,6 +466,7 @@ function outputRow(
     source: book.path,
     entry: "",
     volume: book.volume,
+    volumeLabel: "",
     autoVolume: book.volume,
     volumeOrigin: "",
     volumeSourceName: "",
@@ -1041,7 +1051,7 @@ export function needsSeriesName(
 export function selectedBooks(
   rows: PlanRow[],
   off: ReadonlySet<string>,
-  volumes: ReadonlyMap<string, number | null> = new Map(),
+  volumes: ReadonlyMap<string, number | string | null> = new Map(),
   names: ReadonlyMap<string, string> = new Map(),
   customNames: ReadonlyMap<string, string> = new Map(),
 ): {
@@ -1071,7 +1081,14 @@ export function selectedBooks(
     const suffix = nameSuffix(names.get(row.id));
     const named = suffix === null ? book : { ...book, suffix };
     if (!volumes.has(row.id)) return named;
-    return { ...named, volume: { number: volumes.get(row.id) ?? null } };
+    const slot = volumes.get(row.id);
+    // ラベルは巻数の訂正ではなく、出来上がりのファイル名そのもの。
+    // 数字の巻数へ戻すと、もう一度入れたときに Unknown になる
+    if (typeof slot === "string") {
+      const filename = names.get(row.id);
+      return filename ? { ...named, filename } : named;
+    }
+    return { ...named, volume: { number: slot ?? null } };
   });
 }
 
@@ -1090,8 +1107,11 @@ export function formatVolumeName(
   author: string,
   title: string,
   volume: number | null,
+  label = "",
 ): string {
   const base = `[${author}] ${title}`;
+  // ラベルは巻数より先。数字が語の中にあっても、第NNN巻 へは戻さない
+  if (label) return `${base} ${label}`;
   if (volume === null) return `${base} Unknown`;
   return `${base} 第${String(volume).padStart(3, "0")}巻`;
 }
@@ -1195,8 +1215,8 @@ export function sameVolumeCounts(
 /** 本の行の、``_1`` を足す前の名前 */
 function baseNameOf(row: PlanRow, author: string, title: string): string {
   return carriesOwnName(row)
-    ? formatVolumeName(row.author, row.title, row.volume)
-    : formatVolumeName(author, title, row.volume);
+    ? formatVolumeName(row.author, row.title, row.volume, row.volumeLabel)
+    : formatVolumeName(author, title, row.volume, row.volumeLabel);
 }
 
 /**
@@ -1217,7 +1237,8 @@ export function collidingBooks(
 ): ReadonlySet<string> {
   const holders = new Map<string, string[]>();
   for (const row of rows) {
-    if (row.kind !== "book" || row.volume === null) continue;
+    if (row.kind !== "book") continue;
+    if (row.volume === null && row.volumeLabel === "") continue;
     if (off.has(row.id) && !done.has(row.id)) continue;
     const base = baseNameOf(row, author, title);
     holders.set(base, [...(holders.get(base) ?? []), row.id]);

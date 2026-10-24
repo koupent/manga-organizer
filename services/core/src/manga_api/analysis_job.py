@@ -70,6 +70,14 @@ class PlannedBookView(BaseModel):
     entry: str
     output_name: str
     volume: int | None = None
+    volume_label: str | None = Field(
+        default=None,
+        description=(
+            "巻スロットに入った、巻数ではない 1 語。"
+            "第001巻 の本と Unknown は null。"
+            "画面が整理済みの名前を組み立て直すときに使う"
+        ),
+    )
     # 巻数の根拠。``PlannedBook`` の同名の欄をそのまま写す（値の意味と、
     # 走らせて確かめた落とし穴はそちらに書いてある）。
     #
@@ -284,6 +292,7 @@ def _book_view(book: PlannedBook) -> dict[str, Any]:
         entry=book.entry,
         output_name=book.output_name,
         volume=book.volume,
+        volume_label=book.volume_label,
         volume_origin=book.volume_origin,
         volume_source_name=book.volume_source_name,
         issues=list(book.issues),

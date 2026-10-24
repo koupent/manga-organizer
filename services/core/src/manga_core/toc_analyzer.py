@@ -125,6 +125,10 @@ class PlannedBook:
     entry: str
     output_name: str
     volume: int | None
+    # 巻スロットが巻数ではないときの 1 語。``第001巻`` と Unknown は None。
+    # 画面は著者・作品名・この語から名前を組み立て直す。巻数の欄へ数字を
+    # 入れると、``エイジ`` のような名前が ``Unknown`` や別の巻数に化ける
+    volume_label: str | None = None
     # 巻数をどこから読んだか（``ORIGIN_*``）と、読み取った名前。
     #
     # **「整理済みなら必ず pattern」は偽。** ``第000巻`` は
@@ -426,14 +430,18 @@ class _Planner:
             base_name, lambda candidate: candidate in self._taken
         )
         self._taken.add(output_name)
+        # ラベルの本は巻数を持たない。名前の中の数字（``外伝2`` の 2）を巻数に
+        # すると、画面が ``第002巻`` や「巻数が読めません」へ作り直してしまう
+        labeled = verdict.label is not None
         return PlannedBook(
             source=source,
             entry=entry,
             output_name=output_name,
-            volume=decision.number,
-            volume_origin=decision.origin,
-            volume_source_name=decision.source_name,
-            issues=_volume_issues(self.detector, decision),
+            volume=None if labeled else decision.number,
+            volume_label=verdict.label,
+            volume_origin=ORIGIN_NONE if labeled else decision.origin,
+            volume_source_name="" if labeled else decision.source_name,
+            issues=() if labeled else _volume_issues(self.detector, decision),
             organized=verdict.organized,
             author=verdict.author,
             title=verdict.title,

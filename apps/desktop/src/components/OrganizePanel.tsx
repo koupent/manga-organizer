@@ -872,7 +872,7 @@ export function OrganizePanel({
    * 巻数を直す。自動で読んだ値と同じにしたら、直していないことに戻す。
    * 戻す手を別に置かなくても、元の数字を打ち直せば戻る。
    */
-  const correctVolume = (row: PlanRow, volume: number | null) => {
+  const correctVolume = (row: PlanRow, volume: number | string | null) => {
     setVolumes((current) => {
       const next = new Map(current);
       if (volume === row.autoVolume) next.delete(row.id);

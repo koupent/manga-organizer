@@ -8,8 +8,46 @@
 
 import { VOLUME_UNCERTAIN, VOLUME_UNKNOWN, type PlanRow } from "./plan";
 
-/** 本の鍵 → 直した巻数。null は「巻数を付けない（Unknown）」 */
-export type VolumeCorrections = ReadonlyMap<string, number | null>;
+/**
+ * 本の鍵 → 直した巻スロット。
+ *
+ * 数字は巻数、文字列は巻数ではない 1 語のラベル、null は Unknown。
+ * コアの ``organized_detector`` が読み戻すスロットと揃える。
+ */
+export type VolumeCorrections = ReadonlyMap<string, number | string | null>;
+
+/** 巻数の別表記。コアの ``VolumeDetector.volume_patterns`` と同じ型 */
+const VOLUME_NOTATION = /第\d+巻|vol[.\s]*\d+|v\d+|第\d+話|\d+巻|\[\d+\]|#\d+/i;
+
+/**
+ * 巻スロットに置ける、巻数ではない 1 語か。
+ *
+ * ``Unknown`` は巻数が読めなかった印。数字だけは巻数なので ``第001巻`` にする。
+ * 末尾の ``_1`` は重なったときの番号。``vol.1`` のような別表記は、この道具が
+ * 書き出す形ではない。
+ */
+export function isVolumeLabel(slot: string): boolean {
+  if (!slot || /\s/u.test(slot) || slot === "Unknown") return false;
+  if (/^\d+$/.test(slot) || /_\d+$/.test(slot)) return false;
+  if (VOLUME_NOTATION.test(slot)) return false;
+  if (/[<>:"/\\|?*]/.test(slot) || /[. ]$/.test(slot)) return false;
+  return ![...slot].some((char) => char.charCodeAt(0) < 32);
+}
+
+/**
+ * 巻スロットの入力。
+ *
+ * 空は Unknown、数字は巻数、それ以外で規則に合う語はラベル。
+ * 規則に合わない文字は undefined（何も変えない）。
+ */
+export function parseVolumeSlot(
+  text: string,
+): number | string | null | undefined {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  return isVolumeLabel(trimmed) ? trimmed : undefined;
+}
 
 /**
  * 直した巻数を行へ当てる。名前・印・依頼は全部ここを通った行から作る。
@@ -26,9 +64,11 @@ export function applyVolumes(
   return rows.map((row) => {
     if (row.kind !== "book" || row.organized || !volumes.has(row.id))
       return row;
+    const slot = volumes.get(row.id);
     return {
       ...row,
-      volume: volumes.get(row.id) ?? null,
+      volume: typeof slot === "number" ? slot : null,
+      volumeLabel: typeof slot === "string" ? slot : "",
       issues: row.issues.filter(
         (issue) => issue !== VOLUME_UNKNOWN && issue !== VOLUME_UNCERTAIN,
       ),
