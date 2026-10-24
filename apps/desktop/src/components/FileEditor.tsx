@@ -16,9 +16,11 @@ import { useStoredNumber, useStoredString } from "../lib/setting";
 import {
   ChevronLeft,
   ChevronRight,
+  Info,
   Loader2,
   RotateCcw,
   Save,
+  TriangleAlert,
   Undo2,
 } from "lucide-react";
 import {
@@ -29,6 +31,7 @@ import {
   type MouseEvent,
 } from "react";
 import type { CoverRequest, SidecarClient } from "../api/client";
+import { Alert } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { Empty } from "./ui/empty";
@@ -86,6 +89,9 @@ const GRID_GAP = 12;
 
 /** 絵の箱の高さ／列の幅。縦長ページ（2:3）がちょうど収まる比 */
 const PICTURE_RATIO = 1.5;
+
+/** 保存するまで先へ進ませない注意。警告の色で出す */
+const SAVE_BEFORE_TRIM = "余白カットの前に、編集中の変更を反映してください。";
 
 type CoverDraft = {
   request: CoverRequest;
@@ -291,6 +297,20 @@ export function FileEditor({
           .filter(Boolean)
           .join(" · ") || "変更はありません"
       : report.message;
+  const failed = report.state === "error";
+  const notice =
+    busy && !failed
+      ? ""
+      : failed
+        ? report.message
+        : coverDraft
+          ? "調整後のサムネイルを表示しています。右上の「変更を反映」で保存します。"
+          : modeNotice || (report.state === "done" ? report.message : "");
+  const noticeTone = failed
+    ? "danger"
+    : !coverDraft && modeNotice === SAVE_BEFORE_TRIM
+      ? "warn"
+      : "info";
 
   // ステップごとの対象。送りボタンはこれを辿る。件数は本に書かれている状態で
   // 数えるので、選んでも減らない
@@ -394,7 +414,7 @@ export function FileEditor({
         !reordered &&
         !reverted.some(isPending);
       if (!automaticOnly) {
-        setModeNotice("余白カットの前に、編集中の変更を反映してください。");
+        setModeNotice(SAVE_BEFORE_TRIM);
         return;
       }
       // 開いたときの選択は、手で変えていなければ余白カットへ戻るときに捨てる
@@ -1201,6 +1221,23 @@ export function FileEditor({
           (splitBusy && report.state !== "error") || margin.busy || restoring
         }
       >
+        {/* 作業面に重ねない。重ねると、通知が出ている間その下のページを
+            掴めない。通知が無いときも 1 行ぶんを空けておく。出るたびに
+            格子が押し下がると、いま見ていたページが視界から外れる */}
+        <div className="mb-2 h-8 shrink-0">
+          {notice ? (
+            <Alert
+              tone={noticeTone}
+              role={noticeTone === "danger" ? "alert" : "status"}
+              data-testid={coverDraft ? "editor-draft-notice" : "editor-notice"}
+              className="h-full items-center py-0 [&_svg]:mt-0"
+              title={notice}
+            >
+              {noticeTone === "info" ? <Info /> : <TriangleAlert />}
+              <span className="min-w-0 truncate">{notice}</span>
+            </Alert>
+          ) : null}
+        </div>
         {/* スクロールするのはこの箱であって窓ではない */}
         <DndContext
           sensors={sensors}
@@ -1249,23 +1286,6 @@ export function FileEditor({
           />
         ) : chosen === "trim" ? (
           <MarginProgress job={margin} />
-        ) : null}
-        {(coverDraft ||
-          modeNotice ||
-          report.state === "done" ||
-          report.state === "error") &&
-        (!busy || report.state === "error") ? (
-          <div
-            role={report.state === "error" ? "alert" : "status"}
-            data-testid={coverDraft ? "editor-draft-notice" : "editor-notice"}
-            className="absolute bottom-3 left-1/2 z-10 w-max max-w-[90%] -translate-x-1/2 rounded-card border border-brand/50 bg-surface px-4 py-3 text-sm shadow-lg"
-          >
-            {report.state === "error"
-              ? report.message
-              : coverDraft
-                ? "調整後のサムネイルを表示しています。右上の「変更を反映」で保存します。"
-                : modeNotice || report.message}
-          </div>
         ) : null}
       </div>
 

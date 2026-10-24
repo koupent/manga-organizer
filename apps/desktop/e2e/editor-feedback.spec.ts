@@ -201,7 +201,14 @@ with zipfile.ZipFile(sys.argv[1],'w') as z:z.writestr('001.png',data.getvalue())
     .toEqual(expected);
   expect(readFileSync(archive)).toEqual(before);
   expect(expected).toEqual([255, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 255]);
-  await expect(page.getByTestId("editor-draft-notice")).toContainText("調整後");
+  const draftNotice = page.getByTestId("editor-draft-notice");
+  await expect(draftNotice).toContainText("調整後");
+  const noticeBox = await draftNotice.boundingBox();
+  const gridBox = await page.getByTestId("split-grid").boundingBox();
+  expect(
+    noticeBox!.y + noticeBox!.height,
+    "通知がページ一覧に重なり、下のページを掴めない",
+  ).toBeLessThanOrEqual(gridBox!.y);
   await page.screenshot({
     path: test.info().outputPath("thumbnail-preview.png"),
   });
