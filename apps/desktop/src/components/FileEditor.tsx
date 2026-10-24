@@ -44,7 +44,7 @@ import { MarginControls, MarginProgress, useMarginJob } from "./MarginControls";
 import { MarginCard, MarginFrame } from "./MarginCard";
 import { SplitDialog } from "./SplitDialog";
 import { useSplitJob } from "../lib/split-job";
-import { spreadAlignedColumns } from "../lib/page-grid";
+import { placePages } from "../lib/page-grid";
 import { fitInside, useBoxSize } from "../lib/stage";
 import {
   isAbsorbed,
@@ -630,18 +630,16 @@ export function FileEditor({
       unit.via === "rejoin");
 
   // カードの幅は表示サイズのスライダーだけが決める。窓の余りでは伸ばさない。
-  // 列数は、この幅で収まる枚数を上限に、見開きの組が行をまたがない数を選ぶ。
-  const maxColumns = Math.max(
+  // 列数も、この幅で入る数のままにする。見開きが入りきらないときは次の行へ回す。
+  const columns = Math.max(
     1,
     Math.floor((gridSize.width + GRID_GAP) / (cardWidth + GRID_GAP)),
   );
-  const columns = spreadAlignedColumns(
-    units.map((unit) => ({
-      span: isWideUnit(unit) ? 2 : 1,
-      pairable: !rows[unit.row].deleted,
-      half: unit.part,
-    })),
-    maxColumns,
+  const fromRight = direction === "rtl";
+  const slots = placePages(
+    units.map((unit) => (isWideUnit(unit) && columns >= 2 ? 2 : 1)),
+    columns,
+    fromRight,
   );
   const columnWidth = gridSize.width > 0 ? cardWidth : 0;
   const pictureHeight = columnWidth * PICTURE_RATIO;
@@ -664,7 +662,7 @@ export function FileEditor({
       ? rows[openedUnit.row + 1]
       : undefined;
 
-  const renderPage = (unit: PageUnit) => {
+  const renderPage = (unit: PageUnit, slotIndex: number) => {
     const index = unit.row;
     const row = rows[index];
     const merging = unit.via === "merge";
@@ -672,8 +670,9 @@ export function FileEditor({
       merging && (unit.kind === "candidate" || unit.kind === "joined")
         ? rows[index + 1]
         : null;
-    const wide = isWideUnit(unit);
-    const span = wide && columns >= 2;
+    const slot = slots[slotIndex];
+    const wide = slot.span === 2;
+    const span = wide;
     const boxWidth = span ? columnWidth * 2 + GRID_GAP : columnWidth;
     // 保存後の見開きも、描画する幅に合う解像度で取得する。
     const pagePicture =
@@ -696,6 +695,8 @@ export function FileEditor({
         id={row.names[unit.part ?? 0]}
         name={row.names[unit.part ?? 0]}
         span={span}
+        column={slot.column}
+        row={slot.row}
         cover={
           !row.deleted &&
           index ===
@@ -1276,14 +1277,16 @@ export function FileEditor({
               {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
               <div
                 ref={gridRef}
-                dir={direction === "rtl" ? "rtl" : "ltr"}
-                className="grid auto-rows-max content-start justify-start gap-3"
+                className="grid auto-rows-max content-start gap-3"
                 style={{
                   gridTemplateColumns: `repeat(${columns}, ${cardWidth}px)`,
+                  justifyContent: fromRight ? "end" : "start",
                 }}
                 onKeyDown={onCardKey}
               >
-                {columnWidth > 0 ? units.map(renderPage) : null}
+                {columnWidth > 0
+                  ? units.map((unit, index) => renderPage(unit, index))
+                  : null}
               </div>
             </div>
           </SortableContext>
