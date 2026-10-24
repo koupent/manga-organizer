@@ -469,8 +469,10 @@ test.describe("画面を切り替えても状態が残る", () => {
     // Assert - 戻れば再開する。止めたまま白いカードが並ぶのでは意味がない
     await switchMode(page, "edit");
     await expect(page.getByTestId("editable-page")).toHaveCount(MANY_PAGES);
+    // 幅はスライダーの値（上限 520px）そのもの。窓の余りでカードが伸びていた
+    // ころは、元画像の 600px まで取りに行っていた。
     await expect(
       page.getByTestId("editable-page").first().locator("img"),
-    ).toHaveJSProperty("naturalWidth", 600); // 元画像の幅まで取得する
+    ).toHaveJSProperty("naturalWidth", CARD_WIDTH_MAX);
   });
 });

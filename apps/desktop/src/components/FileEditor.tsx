@@ -73,9 +73,10 @@ import {
 } from "../lib/split";
 
 /**
- * 表示サイズ（カード 1 枚の最小幅・px）の可動域と既定。
+ * 表示サイズ（カード 1 枚の幅・px）の可動域と既定。
  *
- * 1280px の窓に単ページが 7 枚並ぶ密度を既定にする。
+ * 1280px の窓に単ページが 7 枚並ぶ幅を既定にする。幅はこの値そのもので、
+ * 窓に余白が残ってもカードは伸びない。
  */
 const CARD_WIDTH_MIN = 140;
 const CARD_WIDTH_MAX = 520;
@@ -177,7 +178,7 @@ export function FileEditor({
     CARD_WIDTH_KEY,
     CARD_WIDTH_DEFAULT,
   );
-  // 格子の幅を実測してから、列数と絵の箱の寸法を導く
+  // 格子の幅を実測して、この表示サイズで何列入るかを出す
   const [gridRef, gridSize] = useBoxSize<HTMLDivElement>();
   // ②の「結合…」で相手を選び始めたカード（PageUnit の key）（#154）
   const [picking, setPicking] = useState<string | null>(null);
@@ -628,7 +629,8 @@ export function FileEditor({
         (unit.kind === "candidate" || unit.kind === "joined")) ||
       unit.via === "rejoin");
 
-  // 表示サイズが許す列数を上限に、見開きの組が行をまたがない列数を選ぶ
+  // カードの幅は表示サイズのスライダーだけが決める。窓の余りでは伸ばさない。
+  // 列数は、この幅で収まる枚数を上限に、見開きの組が行をまたがない数を選ぶ。
   const maxColumns = Math.max(
     1,
     Math.floor((gridSize.width + GRID_GAP) / (cardWidth + GRID_GAP)),
@@ -641,10 +643,7 @@ export function FileEditor({
     })),
     maxColumns,
   );
-  const columnWidth =
-    gridSize.width > 0
-      ? (gridSize.width - (columns - 1) * GRID_GAP) / columns
-      : 0;
+  const columnWidth = gridSize.width > 0 ? cardWidth : 0;
   const pictureHeight = columnWidth * PICTURE_RATIO;
 
   const pickedUnit = units.find((unit) => unit.key === picking) ?? null;
@@ -1278,9 +1277,9 @@ export function FileEditor({
               <div
                 ref={gridRef}
                 dir={direction === "rtl" ? "rtl" : "ltr"}
-                className="grid auto-rows-max content-start gap-3"
+                className="grid auto-rows-max content-start justify-start gap-3"
                 style={{
-                  gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                  gridTemplateColumns: `repeat(${columns}, ${cardWidth}px)`,
                 }}
                 onKeyDown={onCardKey}
               >
