@@ -44,6 +44,7 @@ import { MarginControls, MarginProgress, useMarginJob } from "./MarginControls";
 import { MarginCard, MarginFrame } from "./MarginCard";
 import { SplitDialog } from "./SplitDialog";
 import { useSplitJob } from "../lib/split-job";
+import { spreadAlignedColumns } from "../lib/page-grid";
 import { fitInside, useBoxSize } from "../lib/stage";
 import {
   isAbsorbed,
@@ -176,7 +177,7 @@ export function FileEditor({
     CARD_WIDTH_KEY,
     CARD_WIDTH_DEFAULT,
   );
-  // 列の幅は auto-fill が決める。実測してから絵の箱の寸法を導く
+  // 格子の幅を実測してから、列数と絵の箱の寸法を導く
   const [gridRef, gridSize] = useBoxSize<HTMLDivElement>();
   // ②の「結合…」で相手を選び始めたカード（PageUnit の key）（#154）
   const [picking, setPicking] = useState<string | null>(null);
@@ -329,17 +330,6 @@ export function FileEditor({
   const targets = step === "split" ? splitTargets : mergeTargets;
   const canSplitAll = splitTargets.some((index) => !rows[index].stored.checked);
   const allMergeRows = pairAllPages(rows);
-
-  // 列の幅は auto-fill が決める。同じ規則で数えてから、絵の箱をそこへ合わせる
-  const columns = Math.max(
-    1,
-    Math.floor((gridSize.width + GRID_GAP) / (cardWidth + GRID_GAP)),
-  );
-  const columnWidth =
-    gridSize.width > 0
-      ? (gridSize.width - (columns - 1) * GRID_GAP) / columns
-      : 0;
-  const pictureHeight = columnWidth * PICTURE_RATIO;
 
   // 行を変えたら、選びかけの相手は捨てる。並びが変わり、もう選べないことがある
   const edit = (next: SplitRow[], allMerges = false) => {
@@ -630,6 +620,33 @@ export function FileEditor({
       ? [...row.names, ...rows[unit.row + 1].names]
       : row.names;
   });
+  /** 2 列ぶんの横長で描くカード。調整中のサムネイルは 2:3 なので除く */
+  const isWideUnit = (unit: PageUnit) =>
+    coverDraft?.request.name !== rows[unit.row].names[unit.part ?? 0] &&
+    (unit.kind === "spread" ||
+      (unit.via === "merge" &&
+        (unit.kind === "candidate" || unit.kind === "joined")) ||
+      unit.via === "rejoin");
+
+  // 表示サイズが許す列数を上限に、見開きの組が行をまたがない列数を選ぶ
+  const maxColumns = Math.max(
+    1,
+    Math.floor((gridSize.width + GRID_GAP) / (cardWidth + GRID_GAP)),
+  );
+  const columns = spreadAlignedColumns(
+    units.map((unit) => ({
+      span: isWideUnit(unit) ? 2 : 1,
+      pairable: !rows[unit.row].deleted,
+      half: unit.part,
+    })),
+    maxColumns,
+  );
+  const columnWidth =
+    gridSize.width > 0
+      ? (gridSize.width - (columns - 1) * GRID_GAP) / columns
+      : 0;
+  const pictureHeight = columnWidth * PICTURE_RATIO;
+
   const pickedUnit = units.find((unit) => unit.key === picking) ?? null;
   const pickable = pickedUnit ? partnersOf(rows, units, pickedUnit) : [];
   const roleOf = (unit: PageUnit): PickRole =>
@@ -656,9 +673,7 @@ export function FileEditor({
       merging && (unit.kind === "candidate" || unit.kind === "joined")
         ? rows[index + 1]
         : null;
-    const wide =
-      coverDraft?.request.name !== row.names[unit.part ?? 0] &&
-      (unit.kind === "spread" || partner !== null || unit.via === "rejoin");
+    const wide = isWideUnit(unit);
     const span = wide && columns >= 2;
     const boxWidth = span ? columnWidth * 2 + GRID_GAP : columnWidth;
     // 保存後の見開きも、描画する幅に合う解像度で取得する。
@@ -1265,7 +1280,7 @@ export function FileEditor({
                 dir={direction === "rtl" ? "rtl" : "ltr"}
                 className="grid auto-rows-max content-start gap-3"
                 style={{
-                  gridTemplateColumns: `repeat(auto-fill, minmax(${cardWidth}px, 1fr))`,
+                  gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
                 }}
                 onKeyDown={onCardKey}
               >
