@@ -3,13 +3,12 @@
 | ワークフロー | いつ | すること |
 |---|---|---|
 | `ci.yml`（CI） | 毎回の PR | `Merge Gate` ジョブで `scripts/run_merge_gate.sh` を回す（main への合流の必須チェック）。`Core (Windows)` でコアのテストを Windows でも回す |
-| `release.yml`（Windows インストーラ） | 配布物の作り方に関わる変更の PR | 署名付きのインストーラを作り、黙って入れて同梱のサイドカーが応答するか、保存が通るか（`scripts/smoke_saves.py`）、アプリを閉じるとサイドカーも止まるかまで確かめ、Artifacts に残す |
-| | `workflow_dispatch`（手動） | 同上（Release は作らない） |
-| | `v*` タグの push | 同上に加えて、このリポジトリに Release を作り、インストーラと `latest.json`（自動更新の案内）を載せる |
+| `release.yml`（Windows インストーラ） | `v*` タグの push | 署名付きのインストーラを作り、黙って入れて同梱のサイドカーが応答するか、保存が通るか（`scripts/smoke_saves.py`）、アプリを閉じるとサイドカーも止まるかまで確かめる。通ったらこのリポジトリに Release を作り、インストーラと `latest.json`（自動更新の案内）を載せる |
+| | `workflow_dispatch`（手動） | タグを打つ前に同じ確かめを行い、Artifacts に残す（Release は作らない） |
 
 タグは `tauri.conf.json`・`Cargo.toml`・`package.json`・`pyproject.toml` の版と一致している必要があります（`v4.0.0` なら全部 `4.0.0`）。
 
-Windows ランナーは分数が 2 倍に数えられるため、`release.yml` は PR では paths で絞っています。`ci.yml` は必須チェックが「待ち」のまま残らないよう絞りません。
+Windows ランナーは分数が 2 倍に数えられるため、インストーラはタグと手動実行だけで作る。`ci.yml` は必須チェックが「待ち」のまま残らないよう絞りません。
 
 ## リリース手順
 

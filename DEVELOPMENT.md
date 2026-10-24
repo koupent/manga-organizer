@@ -68,7 +68,7 @@ npx tauri dev
 
 ### 配る物そのものを試す
 
-配布物の作り方に関わるファイルを変えた PR では、`.github/workflows/release.yml` が自動で走り、インストーラを Artifacts に残します。それ以外の変更を試したいときは手動で走らせます（Release は作りません）。
+インストーラをタグの前に試すときは、`.github/workflows/release.yml` を手動で走らせます（Artifacts に残すだけで、Release は作りません）。
 
 ```bash
 gh workflow run release.yml --ref <ブランチ名>   # または Actions の画面の「Run workflow」
@@ -80,11 +80,10 @@ gh workflow run release.yml --ref <ブランチ名>   # または Actions の画
 
 インストーラは GitHub Actions の Windows ランナーで作ります（`.github/workflows/release.yml`）。作ったインストーラを黙って入れ、同梱のサイドカーが応答すること、並べ替え・分割・サムネイルの保存が通ること（`scripts/smoke_saves.py`）、アプリを閉じるとサイドカーも止まることまで確かめます。
 
-- PR: 配布物の作り方に関わるファイル（`src-tauri/`・依存の宣言・`manga_api.spec`・`build_sidecar.sh` など）を変えたときだけ走り、インストーラを Artifacts に残す
-- `v*` タグの push: 作って確かめたうえで、このリポジトリに Release を作り、インストーラと `latest.json` を載せる
+- `v*` タグの push: 作って確かめたうえで、このリポジトリに Release を作り、インストーラと `latest.json` を載せる。確かめに失敗すると Release は作られない
 - 手動（`workflow_dispatch`）: 作って確かめ、インストーラを Artifacts に残すだけ
 
-Windows ランナーは分数が 2 倍に数えられるため、画面だけの変更では走らせません（そちらは Merge Gate で足ります）。
+Windows ランナーは分数が 2 倍に数えられるため、プルリクエストでは作りません。画面の確認は Merge Gate で足ります。
 
 ### 自動更新
 
