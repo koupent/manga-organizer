@@ -677,5 +677,119 @@ class OrganizedFidelityTest(OrganizedTestBase):
         )
 
 
+# 報告の蔵書。巻スロットが巻数ではなく「エイジ」の本を、もう一度入れている
+LABEL_AUTHOR = "金城宗幸"
+LABEL_TITLE = "ブルーロック"
+LABEL = "エイジ"
+LABEL_NAME = f"[{LABEL_AUTHOR}] {LABEL_TITLE} {LABEL}.zip"
+VOLUME_NAME = f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第001巻.zip"
+
+
+class OrganizedVolumeLabelTest(OrganizedTestBase):
+    """巻スロットが巻数ではない名前も、同じ規則の出来上がりとして扱う。
+
+    ``[著者] 作品 第001巻.zip`` は整理済みになる。同じ形でスロットだけが
+    ``エイジ`` のような語の本は、巻数が読めずに ``Unknown`` へ作り直されていた。
+    規則を増やすのではなく、巻スロットの中身を巻数か 1 語かに広げる。
+    ``Unknown`` や ``vol.1``、巻数の後ろに語を足しただけの名前は通さない。
+    """
+
+    def place(self, name: str) -> Path:
+        """連番のページを入れた ZIP を、蔵書の直下に置く"""
+        return zip_with(
+            self.work_dir / "蔵書" / name,
+            pages(count=PAGE_COUNT),
+        )
+
+    def test_a_non_volume_label_is_organized_under_its_own_name(self):
+        # Arrange - 報告の 1 冊。スロットは巻数ではなく「エイジ」
+        archive = self.place(LABEL_NAME)
+
+        # Act - 依頼の著者・作品名は中身と違える。名前は本から読む
+        book = self.only_book(self.analyze(archive.parent), archive)
+
+        # Assert - 本当の名前のまま整理済み。Unknown にも巻数の警告にもしない
+        self.assert_organized(book)
+        self.assertEqual(LABEL_NAME, book.output_name)
+        self.assertEqual(LABEL_AUTHOR, book.author)
+        self.assertEqual(LABEL_TITLE, book.title)
+        self.assertEqual(LABEL, book.volume_label)
+        self.assertIsNone(book.volume)
+        self.assertEqual((), tuple(book.issues))
+
+    def test_a_label_that_contains_a_digit_is_not_read_as_a_volume(self):
+        # Arrange - 語の中の数字を巻数に拾うと、第002巻 へ作り直される
+        name = f"[{LABEL_AUTHOR}] {LABEL_TITLE} 外伝2.zip"
+        archive = self.place(name)
+
+        # Act
+        book = self.only_book(self.analyze(archive.parent), archive)
+
+        # Assert
+        self.assert_organized(book)
+        self.assertEqual(name, book.output_name)
+        self.assertEqual("外伝2", book.volume_label)
+        self.assertIsNone(book.volume)
+        self.assertEqual((), tuple(book.issues))
+
+    def test_a_canonical_volume_stays_organized(self):
+        # Arrange - いままでの巻数。ゼロ詰めの第001巻だけが出来上がり
+        archive = self.place(VOLUME_NAME)
+
+        # Act
+        book = self.only_book(self.analyze(archive.parent), archive)
+
+        # Assert - 巻数は 1。ラベルは空。名前はそのまま
+        self.assert_organized(book)
+        self.assertEqual(VOLUME_NAME, book.output_name)
+        self.assertEqual(1, book.volume)
+        self.assertIsNone(book.volume_label)
+        self.assertEqual((), tuple(book.issues))
+
+    def test_unknown_and_other_notations_stay_unorganized(self):
+        # Arrange - どれも「[著者] 作品 何か」に見えるが、この道具のスロットではない
+        library = self.work_dir / "蔵書"
+        names = {
+            "unknown": f"[{LABEL_AUTHOR}] {LABEL_TITLE} Unknown.zip",
+            "loose": f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第1巻.zip",
+            "vol": f"[{LABEL_AUTHOR}] {LABEL_TITLE} vol.1.zip",
+            "tail": f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第001巻 修正.zip",
+            "plain": "ブルーロック.zip",
+        }
+        placed = {key: self.place(name) for key, name in names.items()}
+
+        # Act
+        books = self.analyze(library)
+
+        # Assert - 1 冊ずつ名指しで、整理済みにならない
+        for key, archive in placed.items():
+            with self.subTest(key=key):
+                self.assert_not_organized(self.only_book(books, archive), NAME_MISMATCH)
+
+    def test_a_label_written_by_the_organizer_is_organized(self):
+        # Arrange - まだ規則どおりでない本に、巻スロットへラベルを書いて出す
+        source = zip_with(
+            self.work_dir / "素材" / "loose.zip",
+            pages(count=PAGE_COUNT),
+        )
+        output = self.work_dir / "出力"
+        organizer = FileOrganizer(output_directory=output, keep_originals=True)
+        organizer.set_manga_info(author=LABEL_AUTHOR, title=LABEL_TITLE)
+
+        # Act - 画面が巻スロットへラベルを入れたときに渡す、出来上がりの名前
+        results = organizer.process_single_archive(source, filenames={"": LABEL_NAME})
+        built = results[0].output_path
+        self.assertIsNotNone(built)
+        book = self.only_book(self.analyze(built.parent), built)
+
+        # Assert - 作り直した名前が、もう一度入れると整理済みになる
+        self.assertEqual(LABEL_NAME, built.name)
+        self.assert_organized(book)
+        self.assertEqual(LABEL, book.volume_label)
+        self.assertIsNone(book.volume)
+        self.assertEqual((), tuple(book.issues))
+        self.assertEqual(LABEL_NAME, book.output_name)
+
+
 if __name__ == "__main__":
     unittest.main()

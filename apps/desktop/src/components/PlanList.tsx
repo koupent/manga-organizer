@@ -30,7 +30,7 @@ import {
   type PlanRow,
 } from "../lib/plan";
 import { cn } from "../lib/utils";
-import { readDigits } from "../lib/volumes";
+import { parseVolumeSlot, readDigits } from "../lib/volumes";
 import { parentDirectory } from "../path";
 import {
   EditShortcuts,
@@ -76,7 +76,7 @@ const REASON_TIPS: Record<string, string> = {
     "整理済みではありません: 1 つのアーカイブから複数の本が出ます",
   "not-zip": "整理済みではありません: ZIP 以外の形式です",
   "name-mismatch":
-    "整理済みではありません: ファイル名が「[著者] 作品名 第001巻.zip」の形と違います",
+    "整理済みではありません: ファイル名が「[著者] 作品名 第001巻.zip」の形と違います（巻の位置は、巻数以外の1語でもよい）",
   "pages-mismatch":
     "整理済みではありません: ページ名が 001, 002, … の連番と違います",
   "extra-entries": "整理済みではありません: ページ以外のファイルが入っています",
@@ -161,8 +161,8 @@ type PlanListProps = {
   renamed: ReadonlySet<string>;
   /** 作る本どうしで名前が重なった本の鍵 */
   collided: ReadonlySet<string>;
-  /** 巻数を直す。null は Unknown */
-  onCorrect: (row: PlanRow, volume: number | null) => void;
+  /** 巻スロットを直す。数字は巻数、文字列はラベル、null は Unknown */
+  onCorrect: (row: PlanRow, volume: number | string | null) => void;
   /** 直したうえで、同じ入れ物の下の本に続き番号を振る */
   onFill: (row: PlanRow, volume: number) => void;
   onRename: (row: PlanRow, name: string | null) => void;
@@ -443,7 +443,7 @@ type RowHandlers = {
   openArchive: (path: string, mode: HandoffMode) => void;
   trash: (target: TrashTarget) => void;
   reset: (path: string) => void;
-  correct: (row: PlanRow, volume: number | null) => void;
+  correct: (row: PlanRow, volume: number | string | null) => void;
   fill: (row: PlanRow, volume: number) => void;
   rename: (row: PlanRow, name: string | null) => void;
 };
@@ -919,13 +919,15 @@ function ResultName({
   row: PlanRow;
   corrected: boolean;
   locked: boolean;
-  onCorrect: (row: PlanRow, volume: number | null) => void;
+  onCorrect: (row: PlanRow, volume: number | string | null) => void;
   onFill: (row: PlanRow, volume: number) => void;
 }) {
   const label =
-    row.volume === null
-      ? "Unknown"
-      : `第${String(row.volume).padStart(3, "0")}巻`;
+    row.volumeLabel !== ""
+      ? row.volumeLabel
+      : row.volume === null
+        ? "Unknown"
+        : `第${String(row.volume).padStart(3, "0")}巻`;
   const at = name.lastIndexOf(label);
   const prefix = at >= 0 ? name.slice(0, at) : "";
   const suffix = at >= 0 ? name.slice(at + label.length) : name;
@@ -935,6 +937,7 @@ function ResultName({
       <VolumeChip
         label={label}
         value={row.volume}
+        volumeLabel={row.volumeLabel}
         corrected={corrected}
         locked={locked}
         onCommit={(volume) => onCorrect(row, volume)}
@@ -947,23 +950,18 @@ function ResultName({
   );
 }
 
-/** 打った文字を巻数として読む。空は Unknown、数字以外は読めない（undefined） */
-function parseVolume(text: string): number | null | undefined {
-  const trimmed = text.trim();
-  if (trimmed === "") return null;
-  return /^\d+$/.test(trimmed) ? Number(trimmed) : undefined;
-}
-
 /**
- * 巻数の札。押すとその場で「第 [ ] 巻」の入力に変わる。
+ * 巻数の札。押すとその場で入力に変わる。
  *
+ * 数字だけなら「第 [ ] 巻」、それ以外の 1 語ならラベルそのもの。
  * Enter で決める / Esc でやめる / ↑↓ で決めて隣の本の札へ /
- * Ctrl+Enter で決めて同じ入れ物の下の本に続き番号。数字以外を打って
- * 離れたら、何も変えない。
+ * Ctrl+Enter で決めて同じ入れ物の下の本に続き番号（数字のときだけ）。
+ * 規則に合わない文字を打って離れたら、何も変えない。
  */
 function VolumeChip({
   label,
   value,
+  volumeLabel,
   corrected,
   locked,
   onCommit,
@@ -971,9 +969,10 @@ function VolumeChip({
 }: {
   label: string;
   value: number | null;
+  volumeLabel: string;
   corrected: boolean;
   locked: boolean;
-  onCommit: (volume: number | null) => void;
+  onCommit: (volume: number | string | null) => void;
   onFill: (volume: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -983,7 +982,9 @@ function VolumeChip({
 
   const open = () => {
     settled.current = false;
-    setText(value === null ? "" : String(value));
+    setText(
+      volumeLabel !== "" ? volumeLabel : value === null ? "" : String(value),
+    );
     setEditing(true);
   };
 
@@ -991,7 +992,7 @@ function VolumeChip({
     if (settled.current) return undefined;
     settled.current = true;
     setEditing(false);
-    const parsed = parseVolume(text);
+    const parsed = parseVolumeSlot(text);
     if (commit && parsed !== undefined) onCommit(parsed);
     return parsed;
   };
@@ -1018,24 +1019,28 @@ function VolumeChip({
   };
 
   if (editing) {
+    // 空か数字のあいだは巻数。文字が入った瞬間から、スロットはラベルになる
+    const numeric = /^\d*$/.test(text);
     return (
       <span className="inline-flex shrink-0 items-center gap-0.5 rounded-control border border-brand bg-canvas px-1 text-brand">
-        第
+        {numeric ? "第" : null}
         <input
           data-testid="volume-input"
           // 押した直後に打てるようにする。札から入力へ替わったことが分かる
           // eslint-disable-next-line jsx-a11y/no-autofocus
           autoFocus
-          inputMode="numeric"
-          aria-label="巻数"
+          aria-label="巻数またはラベル"
           value={text}
-          className="w-10 bg-transparent text-center text-ink outline-none"
+          className={cn(
+            "bg-transparent text-center text-ink outline-none",
+            numeric ? "w-10" : "w-28",
+          )}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={handleKey}
           onBlur={() => finish(true)}
           onFocus={(event) => event.currentTarget.select()}
         />
-        巻
+        {numeric ? "巻" : null}
       </span>
     );
   }
@@ -1045,7 +1050,7 @@ function VolumeChip({
       data-testid="volume-chip"
       data-corrected={String(corrected)}
       disabled={locked}
-      title="押すと巻数を直せます（Enter 決める / Esc やめる / ↑↓ 隣の本 / Ctrl+Enter 下の本に続き番号 / 空にすると Unknown）"
+      title="押すと巻やラベルを直せます（Enter 決める / Esc やめる / ↑↓ 隣の本 / Ctrl+Enter 下の本に続き番号 / 空にすると Unknown / 数字以外の1語はラベル）"
       className={cn(
         "shrink-0 rounded-control border px-1 font-medium",
         corrected

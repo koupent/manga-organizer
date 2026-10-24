@@ -48,7 +48,7 @@ from manga_core.edit_reset import BACKUP_ENTRY
 from manga_core.merge_store import MERGES_ENTRY
 from manga_core.original_store import MANIFEST_ENTRY, ORIGINALS_PREFIX
 from manga_core.viewer_contract import deleted_position, is_page_source, sequential_name
-from manga_core.volume_detector import format_volume_name
+from manga_core.volume_detector import VolumeDetector, format_volume_name
 
 # 整理済みでない理由。画面がそのまま読む文字列なので、値そのものが公開契約
 MULTIPLE_BOOKS = "multiple-books"
@@ -61,12 +61,19 @@ EXTRA_ENTRIES = "extra-entries"
 # ``.cbz`` や ``.rar`` は中身がどれだけ整っていても出来上がりではない
 ARCHIVE_SUFFIX = ".zip"
 
-# ``format_volume_name`` の出力を読み戻す形。巻数まで required にしてあるのは、
-# ``[著者] 作品 Unknown.zip`` が ``format_volume_name(a, t, None)`` の出力そのもの
-# だから。往復だけを見ると等しくなってしまうが、巻数の分からない本は出来上がりでは
-# ない（整理し直せば巻数が付くかもしれない）。ここで外すのが、最悪の偽陽性――巻数を
-# 読めなかった本をそのまま凍結すること――を止める唯一の場所
-_ORGANIZED_STEM = re.compile(r"^\[(?P<author>.+)\] (?P<title>.+) 第(?P<volume>\d+)巻$")
+# ``format_volume_name`` の出力を読み戻す形。巻スロットは末尾の 1 語で、
+# ``第001巻`` か、巻数ではないラベル（``エイジ`` など）。
+#
+# ``[著者] 作品 Unknown.zip`` は ``format_volume_name(a, t, None)`` の出力そのもの
+# なので、往復だけを見ると等しくなってしまう。巻数の分からない本は出来上がりでは
+# ない（整理し直せば巻数が付くかもしれない）。``Unknown`` をラベルにしないのが、
+# 最悪の偽陽性――巻数を読めなかった本をそのまま凍結すること――を止める場所。
+#
+# ``vol.1`` や ``第3巻`` も通さない。この道具が作る巻スロットはゼロ詰めの
+# ``第001巻`` だけで、別の書き方まで整理済みにすると、まだ整えていない本を
+# 飛ばしてしまう。
+_ORGANIZED_STEM = re.compile(r"^\[(?P<author>.+)\] (?P<title>.+) (?P<slot>\S+)$")
+_CANONICAL_VOLUME = re.compile(r"^第(?P<volume>\d+)巻$")
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,8 @@ class OrganizedVerdict:
     # 「連番が違う」と言われても、どのページが何と違うのか探しようがない。
     # 画面はそのまま見せるだけで、判断には ``reason`` を使う
     detail: str | None = None
+    # 巻スロットが巻数ではないときの、その 1 語。``第001巻`` と Unknown は空
+    label: str | None = None
 
 
 def pages_are_sequential(names: Iterable[str]) -> bool:
@@ -141,7 +150,7 @@ def judge_organized(
     parsed = _parse_name(source.name)
     if parsed is None:
         return OrganizedVerdict(False, NAME_MISMATCH)
-    author, title = parsed
+    author, title, label = parsed
 
     pages, extras = _split_entries(toc_names)
     mismatch = page_mismatch(pages)
@@ -152,15 +161,18 @@ def judge_organized(
     if strangers:
         return OrganizedVerdict(False, EXTRA_ENTRIES, detail=_strangers(strangers))
 
-    return OrganizedVerdict(True, None, author, title)
+    return OrganizedVerdict(True, None, author, title, label=label)
 
 
-def _parse_name(file_name: str) -> tuple[str, str] | None:
-    """本の名前から著者と作品名を読む。整理が作る名前でなければ None。
+def _parse_name(file_name: str) -> tuple[str, str, str | None] | None:
+    """本の名前から著者・作品名と、巻数でないラベルを読む。
+
+    整理が作る名前でなければ None。3 つ目はラベルで、巻数のスロットなら None。
 
     読んだ値で名前を**作り直して**突き合わせる。読めただけでは足りない。
     ``第3巻`` は巻数として読めるが、整理が作る名前は ``第003巻`` なので、
-    見た目が整っていることと出来上がりであることは別。
+    見た目が整っていることと出来上がりであることは別。ラベルも同じで、
+    末尾の 1 語をスロットとして作り直した名前が元と一致するときだけ通す。
     """
     matched = _ORGANIZED_STEM.match(PurePosixPath(file_name).stem)
     if matched is None:
@@ -168,11 +180,49 @@ def _parse_name(file_name: str) -> tuple[str, str] | None:
 
     author = matched["author"]
     title = matched["title"]
-    volume = int(matched["volume"])
-    rebuilt = format_volume_name(author, title, volume) + ARCHIVE_SUFFIX
+    slot = matched["slot"]
+    volume_match = _CANONICAL_VOLUME.match(slot)
+    if volume_match is not None:
+        volume = int(volume_match["volume"])
+        rebuilt = format_volume_name(author, title, volume) + ARCHIVE_SUFFIX
+        if rebuilt != file_name:
+            return None
+        return author, title, None
+
+    # 作品名の側に巻スロットが残っている名前（``第001巻 修正``）は、末尾の語を
+    # ラベルにして通すと、巻数の付いた名前に語を足しただけのファイルが整理済みに
+    # なる。スロットは末尾の 1 語だけで、その前は作品名のままである必要がある
+    if not _is_plain_label(slot) or _title_has_volume_token(title):
+        return None
+    rebuilt = format_volume_name(author, title, None, label=slot) + ARCHIVE_SUFFIX
     if rebuilt != file_name:
         return None
-    return author, title
+    return author, title, slot
+
+
+def _is_plain_label(slot: str) -> bool:
+    """巻スロットに置ける、巻数ではない 1 語か。
+
+    ``Unknown`` は巻数が読めなかった印で、ラベルではない。数字だけの語は
+    巻数なので ``第001巻`` の形でしか作らない。末尾の ``_1`` は名前がぶつかった
+    ときに足す番号で、出来上がりのスロットではない。``vol.1`` のような別表記も、
+    この道具が書き出す形ではない。
+    """
+    if not slot or slot == "Unknown" or slot.isdigit():
+        return False
+    if re.search(r"_\d+$", slot):
+        return False
+    return VolumeDetector().detect_volume_from_patterns(slot) is None
+
+
+def _title_has_volume_token(title: str) -> bool:
+    """作品名の語の中に、巻スロットとして読む語があるか"""
+    for token in title.split(" "):
+        if _CANONICAL_VOLUME.match(token):
+            return True
+        if token and VolumeDetector().detect_volume_from_patterns(token) is not None:
+            return True
+    return False
 
 
 def _strangers(names: Sequence[str]) -> str:
