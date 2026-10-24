@@ -5,23 +5,11 @@ name: Windows インストーラ
 # Release に、インストーラと自動更新の案内（latest.json）を載せる。
 # lint・テストは ci.yml が受け持つ。
 #
-# PR では配布物の作り方に関わる変更のときだけ走らせる。Windows ランナーは
-# 分数が 2 倍に数えられ、画面だけの変更は Merge Gate で足りるため。
+# Windows ランナーは分数が 2 倍に数えられる。画面の確認は Merge Gate で
+# 足り、インストーラが要るのは配るときなので、PR では走らせない。
 # 手動実行はタグを打つ前にインストーラを試すためのもので、Artifacts に
 # 残すだけで Release は作らない。
 on:
-  pull_request:
-    paths:
-      - apps/desktop/src-tauri/**
-      - apps/desktop/package.json
-      - apps/desktop/package-lock.json
-      - services/core/src/manga_api/__main__.py
-      - services/core/manga_api.spec
-      - services/core/pyproject.toml
-      - services/core/uv.lock
-      - scripts/build_sidecar.sh
-      - scripts/smoke_saves.py
-      - .github/workflows/release.yml
   push:
     tags: ["v*"]
   workflow_dispatch:
@@ -31,7 +19,6 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
