@@ -663,6 +663,28 @@ test.describe("ページ並べ替えの表示サイズ", () => {
     ).toBeLessThanOrEqual(MAX_CARDS_PER_ROW);
   });
 
+  test("表示サイズは窓の幅では変わらず、スライダーの値のまま", async ({
+    page,
+  }) => {
+    // Arrange - スライダーには触れない
+    await openDenseArchive(page, denseArchive);
+    const chosen = Number(
+      await page.getByTestId("split-card-width").inputValue(),
+    );
+
+    // Act - 同じ表示サイズのまま、窓だけを広げる
+    const narrow = await gridLayout(page);
+    await page.setViewportSize({ width: 1600, height: 860 });
+    await expect
+      .poll(async () => (await gridLayout(page)).inFirstRow)
+      .toBeGreaterThan(narrow.inFirstRow);
+    const wide = await gridLayout(page);
+
+    // Assert - ページの大きさはスライダーの値のまま。余白で伸びない
+    expect(narrow.cardWidth).toBe(chosen);
+    expect(wide.cardWidth).toBe(chosen);
+  });
+
   test("表示サイズを大きくすると 1 行の枚数が減る", async ({ page }) => {
     // Arrange
     await openDenseArchive(page, denseArchive);
