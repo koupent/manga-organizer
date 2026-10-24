@@ -85,6 +85,34 @@ test("2つの入口と1つのページ一覧で、変更なしでも確認済み
   ).toContain("review");
 });
 
+test("右から左でも 2 行目は 1 行目と同じ右端から始まる", async ({ page }) => {
+  const archive = writeArchive(
+    sidecar.workDir,
+    "rtl-rows.zip",
+    Array.from({ length: 8 }, (_, index) => ({
+      name: `${String(index + 1).padStart(3, "0")}.png`,
+      color: index % 2 === 0 ? "#ff0000" : "#00ff00",
+    })),
+  );
+  await page.setViewportSize({ width: 900, height: 800 });
+  await open(page, archive);
+  await page.getByTestId("page-direction").check();
+  const boxes = await page.getByTestId("editable-page").evaluateAll((cards) =>
+    cards.map((card) => {
+      const box = card.getBoundingClientRect();
+      return { x: box.x, y: box.y, right: box.x + box.width };
+    }),
+  );
+  const firstRow = boxes.filter((box) => Math.abs(box.y - boxes[0].y) < 2);
+  const secondRow = boxes.filter(
+    (box) => Math.abs(box.y - boxes[firstRow.length].y) < 2,
+  );
+  expect(firstRow.length).toBeGreaterThan(1);
+  expect(secondRow.length).toBeGreaterThan(0);
+  expect(boxes[1].x).toBeLessThan(boxes[0].x);
+  expect(Math.abs(secondRow[0].right - firstRow[0].right)).toBeLessThan(2);
+});
+
 test("左右の表示方向を替えても保存順は変わらず、再表示しても設定が残る", async ({
   page,
 }) => {

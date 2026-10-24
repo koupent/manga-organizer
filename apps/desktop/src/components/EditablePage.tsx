@@ -15,6 +15,8 @@ export function EditablePage({
   id,
   name,
   span,
+  column,
+  row,
   cover,
   disabled,
   selected,
@@ -36,6 +38,10 @@ export function EditablePage({
   id: string;
   name: string;
   span: boolean;
+  /** 1 始まり。左端の列。右から左の並びも、行ごとにここへ置く */
+  column: number;
+  /** 1 始まり。行は自動に任せると、右から置くカードが 1 枚ずつ落ちる */
+  row: number;
   cover: boolean;
   disabled: boolean;
   selected: boolean;
@@ -95,7 +101,8 @@ export function EditablePage({
         isDragging && "z-20 opacity-70",
       )}
       style={{
-        gridColumn: span ? "span 2" : undefined,
+        gridColumn: `${column} / span ${span ? 2 : 1}`,
+        gridRow: row,
         transform: CSS.Transform.toString(transform),
         transition,
       }}
