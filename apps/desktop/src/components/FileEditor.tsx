@@ -44,7 +44,7 @@ import { MarginControls, MarginProgress, useMarginJob } from "./MarginControls";
 import { MarginCard, MarginFrame } from "./MarginCard";
 import { SplitDialog } from "./SplitDialog";
 import { useSplitJob } from "../lib/split-job";
-import { placePages, spreadAlignedColumns } from "../lib/page-grid";
+import { placePages, type GridCell } from "../lib/page-grid";
 import { fitInside, useBoxSize } from "../lib/stage";
 import {
   isAbsorbed,
@@ -630,17 +630,20 @@ export function FileEditor({
       unit.via === "rejoin");
 
   // カードの幅は表示サイズのスライダーだけが決める。窓の余りでは伸ばさない。
-  // 列数は、見開きの組が行をまたがないよう、この幅で入る数に一番近いものを選ぶ。
-  const maxColumns = Math.max(
+  // 列数はこの幅で入る数。見開きの組が行をまたがないよう、行ごとに詰める。
+  const columns = Math.max(
     1,
     Math.floor((gridSize.width + GRID_GAP) / (cardWidth + GRID_GAP)),
   );
-  const spans = units.map((unit): 1 | 2 =>
-    isWideUnit(unit) && maxColumns >= 2 ? 2 : 1,
-  );
-  const columns = spreadAlignedColumns(spans, maxColumns);
   const fromRight = direction === "rtl";
-  const slots = placePages(spans, columns, fromRight);
+  const slots = placePages(
+    units.map((unit): GridCell => ({
+      span: isWideUnit(unit) ? 2 : 1,
+      half: unit.part,
+    })),
+    columns,
+    fromRight,
+  );
   const columnWidth = gridSize.width > 0 ? cardWidth : 0;
   const pictureHeight = columnWidth * PICTURE_RATIO;
 
@@ -1277,6 +1280,7 @@ export function FileEditor({
               {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
               <div
                 ref={gridRef}
+                data-testid="page-grid"
                 className="grid auto-rows-max content-start gap-3"
                 style={{
                   gridTemplateColumns: `repeat(${columns}, ${cardWidth}px)`,
