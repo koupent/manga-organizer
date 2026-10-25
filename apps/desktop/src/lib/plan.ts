@@ -21,6 +21,12 @@ export type PlannedBook = {
    */
   volume_label?: string | null;
   /**
+   * 巻数に付いた種類番号（``第002巻_3`` の 3）。
+   * 名前がぶつかったときの ``_1`` で、巻数ではないラベルではない。
+   * 古いサイドカーの応答には無いことがある
+   */
+  volume_suffix?: number | null;
+  /**
    * 巻数をどこから読んだか（#114）。pattern / last-number / position / none。
    * 古いサイドカーや台本の応答には無いことがある
    */
@@ -95,6 +101,11 @@ export type PlanRow = {
   volume: number | null;
   /** 巻スロットの、巻数ではない 1 語。無ければ空文字 */
   volumeLabel: string;
+  /**
+   * 巻数に付いた種類番号（``第002巻_3`` の 3）。無ければ null。
+   * 巻数の名前のうしろへ足す。落とすと ``_1`` と ``_3`` が同じ名前になる
+   */
+  volumeSuffix: number | null;
   /** 解析が決めた巻数。直しても変わらない。読んだ数字を塗るのに使う */
   autoVolume: number | null;
   /** 巻数をどこから読んだか。入れ物の行では空 */
@@ -209,6 +220,7 @@ function containerRow(
     entry: "",
     volume: null,
     volumeLabel: "",
+    volumeSuffix: null,
     autoVolume: null,
     volumeOrigin: "",
     volumeSourceName: "",
@@ -243,6 +255,7 @@ function bookRow(
     entry: book.entry,
     volume: book.volume,
     volumeLabel: book.volume_label ?? "",
+    volumeSuffix: book.volume_suffix ?? null,
     autoVolume: book.volume,
     volumeOrigin: book.volume_origin ?? "",
     volumeSourceName: book.volume_source_name ?? "",
@@ -467,6 +480,7 @@ function outputRow(
     entry: "",
     volume: book.volume,
     volumeLabel: "",
+    volumeSuffix: null,
     autoVolume: book.volume,
     volumeOrigin: "",
     volumeSourceName: "",
@@ -1214,9 +1228,12 @@ export function sameVolumeCounts(
 
 /** 本の行の、``_1`` を足す前の名前 */
 function baseNameOf(row: PlanRow, author: string, title: string): string {
-  return carriesOwnName(row)
+  const base = carriesOwnName(row)
     ? formatVolumeName(row.author, row.title, row.volume, row.volumeLabel)
     : formatVolumeName(author, title, row.volume, row.volumeLabel);
+  // 種類番号は巻数のうしろに付いたままにする。``第002巻_1`` と
+  // ``第002巻_3`` を、どちらも ``第002巻`` へ潰さない
+  return row.volumeSuffix ? `${base}_${row.volumeSuffix}` : base;
 }
 
 /**

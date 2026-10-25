@@ -19,7 +19,7 @@
 |---|---|---|
 | 0 | 入れ物から出る本が 1 冊で ``entry`` が空 | ``toc_analyzer.locate_books`` |
 | 1 | 拡張子が ``.zip`` | ``ArchiveHandler.create_archive`` は ZIP しか書かない |
-| 2 | 名前 == ``format_volume_name(a, t, v) + ".zip"`` | ``volume_detector`` |
+| 2 | 名前 == 巻の名前 + 重なりの ``_N`` + ``.zip`` | ``volume_detector`` |
 | 3 | 名前順のページ名 == ``sequential_name(i, N, 拡張子)`` | ``viewer_contract`` |
 | 4 | 目次にそのページ以外が無い（同梱物だけ許す） | ``original_store`` |
 
@@ -62,7 +62,12 @@ EXTRA_ENTRIES = "extra-entries"
 ARCHIVE_SUFFIX = ".zip"
 
 # ``format_volume_name`` の出力を読み戻す形。巻スロットは末尾の 1 語で、
-# ``第001巻`` か、巻数ではないラベル（``エイジ`` など）。
+# ``第001巻``、同じ巻が重なったときの ``第001巻_1``、または巻数ではない
+# ラベル（``エイジ`` など）。
+#
+# ``_1`` は ``unique_file_name`` が名前の衝突で足す種類番号で、巻数の一部。
+# ラベル（``エイジ``）とは別のスロット。``第002巻_3`` から 3 だけ落とすと
+# ``第002巻`` や ``第002巻_`` になり、``_1`` と ``_3`` が同じ名前に潰れる。
 #
 # ``[著者] 作品 Unknown.zip`` は ``format_volume_name(a, t, None)`` の出力そのもの
 # なので、往復だけを見ると等しくなってしまう。巻数の分からない本は出来上がりでは
@@ -71,9 +76,10 @@ ARCHIVE_SUFFIX = ".zip"
 #
 # ``vol.1`` や ``第3巻`` も通さない。この道具が作る巻スロットはゼロ詰めの
 # ``第001巻`` だけで、別の書き方まで整理済みにすると、まだ整えていない本を
-# 飛ばしてしまう。
+# 飛ばしてしまう。種類番号も ``unique_file_name`` の書き方（``_1`` から、
+# ゼロ埋めなし）だけを読み戻す。``第001巻_`` や ``第001巻_03`` は通さない。
 _ORGANIZED_STEM = re.compile(r"^\[(?P<author>.+)\] (?P<title>.+) (?P<slot>\S+)$")
-_CANONICAL_VOLUME = re.compile(r"^第(?P<volume>\d+)巻$")
+_CANONICAL_VOLUME = re.compile(r"^第(?P<volume>\d+)巻(?:_(?P<suffix>[1-9]\d*))?$")
 
 
 @dataclass(frozen=True)
@@ -95,6 +101,9 @@ class OrganizedVerdict:
     detail: str | None = None
     # 巻スロットが巻数ではないときの、その 1 語。``第001巻`` と Unknown は空
     label: str | None = None
+    # 巻数に付いた種類番号（``第002巻_3`` の 3）。``unique_file_name`` が
+    # 足す ``_1`` で、ラベルではない。付いていなければ None
+    suffix: int | None = None
 
 
 def pages_are_sequential(names: Iterable[str]) -> bool:
@@ -150,29 +159,41 @@ def judge_organized(
     parsed = _parse_name(source.name)
     if parsed is None:
         return OrganizedVerdict(False, NAME_MISMATCH)
-    author, title, label = parsed
+    author, title, label, suffix = parsed
 
     pages, extras = _split_entries(toc_names)
     mismatch = page_mismatch(pages)
     if mismatch is not None:
-        return OrganizedVerdict(False, PAGES_MISMATCH, detail=mismatch)
+        # 種類番号は名前が読めている限り残す。ページが違っても ``_3`` を
+        # 落とすと、作り直す予告が ``第002巻`` や ``第002巻_`` に潰れる
+        return OrganizedVerdict(False, PAGES_MISMATCH, detail=mismatch, suffix=suffix)
 
     strangers = [name for name in extras if not _is_bundled(name)]
     if strangers:
-        return OrganizedVerdict(False, EXTRA_ENTRIES, detail=_strangers(strangers))
+        return OrganizedVerdict(
+            False, EXTRA_ENTRIES, detail=_strangers(strangers), suffix=suffix
+        )
 
-    return OrganizedVerdict(True, None, author, title, label=label)
+    return OrganizedVerdict(True, None, author, title, label=label, suffix=suffix)
 
 
-def _parse_name(file_name: str) -> tuple[str, str, str | None] | None:
-    """本の名前から著者・作品名と、巻数でないラベルを読む。
+def _parse_name(
+    file_name: str,
+) -> tuple[str, str, str | None, int | None] | None:
+    """本の名前から著者・作品名と、ラベルまたは種類番号を読む。
 
     整理が作る名前でなければ None。3 つ目はラベルで、巻数のスロットなら None。
+    4 つ目は巻数に付いた種類番号（``第002巻_3`` の 3）。ラベルと種類番号は
+    同時には付かない。
 
     読んだ値で名前を**作り直して**突き合わせる。読めただけでは足りない。
     ``第3巻`` は巻数として読めるが、整理が作る名前は ``第003巻`` なので、
     見た目が整っていることと出来上がりであることは別。ラベルも同じで、
     末尾の 1 語をスロットとして作り直した名前が元と一致するときだけ通す。
+
+    ``第002巻_3`` は巻 2 に、``unique_file_name`` が足す種類番号 3 が付いた形。
+    巻数ではない 1 語（``エイジ``）ではない。作り直した名前が元と一致する
+    ときだけ通し、``第001巻_`` や ``第001巻_03`` はここで落ちる。
     """
     matched = _ORGANIZED_STEM.match(PurePosixPath(file_name).stem)
     if matched is None:
@@ -184,10 +205,14 @@ def _parse_name(file_name: str) -> tuple[str, str, str | None] | None:
     volume_match = _CANONICAL_VOLUME.match(slot)
     if volume_match is not None:
         volume = int(volume_match["volume"])
-        rebuilt = format_volume_name(author, title, volume) + ARCHIVE_SUFFIX
-        if rebuilt != file_name:
+        suffix_text = volume_match["suffix"]
+        suffix = int(suffix_text) if suffix_text is not None else None
+        rebuilt = format_volume_name(author, title, volume)
+        if suffix is not None:
+            rebuilt = f"{rebuilt}_{suffix}"
+        if rebuilt + ARCHIVE_SUFFIX != file_name:
             return None
-        return author, title, None
+        return author, title, None, suffix
 
     # 作品名の側に巻スロットが残っている名前（``第001巻 修正``）は、末尾の語を
     # ラベルにして通すと、巻数の付いた名前に語を足しただけのファイルが整理済みに
@@ -197,16 +222,16 @@ def _parse_name(file_name: str) -> tuple[str, str, str | None] | None:
     rebuilt = format_volume_name(author, title, None, label=slot) + ARCHIVE_SUFFIX
     if rebuilt != file_name:
         return None
-    return author, title, slot
+    return author, title, slot, None
 
 
 def _is_plain_label(slot: str) -> bool:
     """巻スロットに置ける、巻数ではない 1 語か。
 
     ``Unknown`` は巻数が読めなかった印で、ラベルではない。数字だけの語は
-    巻数なので ``第001巻`` の形でしか作らない。末尾の ``_1`` は名前がぶつかった
-    ときに足す番号で、出来上がりのスロットではない。``vol.1`` のような別表記も、
-    この道具が書き出す形ではない。
+    巻数なので ``第001巻`` の形でしか作らない。末尾の ``_1`` は巻数に付く
+    種類番号（``第002巻_1``）で、ラベルの 1 語ではない。``vol.1`` のような
+    別表記も、この道具が書き出す形ではない。
     """
     if not slot or slot == "Unknown" or slot.isdigit():
         return False
