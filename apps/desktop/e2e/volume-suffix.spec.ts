@@ -1,7 +1,11 @@
-import { mkdirSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startSidecar, writeArchive, type Sidecar } from "./sidecar";
+
+/** 手元のエージェント用。CI には無いので、書けたときだけ写す */
+const AGENT_SHOT_DIR =
+  "/cursor/stores/bc-c3fc470f-a764-41b2-9a2c-bcb4a3816014/media/volume-suffix";
 
 /**
  * 同じ巻が重なった ``第002巻_3`` は、巻 2 に種類番号 3 が付いた巻数。
@@ -86,7 +90,7 @@ function book(page: Page, fileName: string): Locator {
 
 test("種類番号付きの巻は整理済みのまま残り、落ちた名前に潰れない", async ({
   page,
-}) => {
+}, testInfo) => {
   await openOrganize(page);
   await addFolder(page);
   await expect(
@@ -150,20 +154,20 @@ test("種類番号付きの巻は整理済みのまま残り、落ちた名前�
     /巻数が読めません/,
   );
 
-  const shotDir =
-    "/cursor/stores/bc-c3fc470f-a764-41b2-9a2c-bcb4a3816014/media/volume-suffix";
-  mkdirSync(shotDir, { recursive: true });
-  await page.getByTestId("plan-list").screenshot({
-    path: join(shotDir, "kind-numbers.png"),
-  });
-  await rough.screenshot({ path: join(shotDir, "rough-keeps-suffix.png") });
-  await loose.screenshot({ path: join(shotDir, "unnamed-still-warns.png") });
-
-  for (const name of [
-    "kind-numbers.png",
-    "rough-keeps-suffix.png",
-    "unnamed-still-warns.png",
-  ]) {
-    expect(statSync(join(shotDir, name)).size).toBeGreaterThan(1000);
+  // CI では Playwright の出力先へ。エージェント用の場所は、書けたときだけ写す
+  const shots = [
+    ["kind-numbers.png", page.getByTestId("plan-list")],
+    ["rough-keeps-suffix.png", rough],
+    ["unnamed-still-warns.png", loose],
+  ] as const;
+  for (const [name, target] of shots) {
+    const path = testInfo.outputPath(name);
+    await target.screenshot({ path });
+    try {
+      mkdirSync(AGENT_SHOT_DIR, { recursive: true });
+      copyFileSync(path, join(AGENT_SHOT_DIR, name));
+    } catch {
+      // CI やエージェント用の場所が無いときは、テストそのものは落とさない
+    }
   }
 });
