@@ -145,6 +145,11 @@ class PlannedBook:
     # 画面は著者・作品名・この語から名前を組み立て直す。巻数の欄へ数字を
     # 入れると、``エイジ`` のような名前が ``Unknown`` や別の巻数に化ける
     volume_label: str | None = None
+    # 巻数に付いた種類番号（``第002巻_3`` の 3）。``unique_file_name`` が
+    # 足す ``_1`` で、``volume_label``（``エイジ``）とは別。無ければ None。
+    # 画面は巻数の名前のうしろへこの番号を足し直す。落とすと ``第002巻`` や
+    # ``第002巻_`` になり、``_1`` と ``_3`` が同じ名前に潰れる
+    volume_suffix: int | None = None
     # 巻数をどこから読んだか（``ORIGIN_*``）と、読み取った名前。
     #
     # **「整理済みなら必ず pattern」は偽。** ``第000巻`` は
@@ -574,6 +579,10 @@ class _Planner:
         # 画面には「作り直したら別人名義になる」という嘘の予告が並ぶ。帳簿へ入れる
         # 名前も 1 冊につき 1 つだけにする。作り直した名前と自分の名前を両方
         # 数えると、自分自身とぶつかったことになって ``_1`` が付く
+        labeled = verdict.label is not None
+        # 種類番号は巻数のうしろに付いた ``_3``。ラベルの本には付けない。
+        # 整理済みの本は自分の名前（種類番号込み）をそのまま使う
+        suffix = None if labeled else verdict.suffix
         base_name = (
             source.stem
             if verdict.organized
@@ -581,19 +590,21 @@ class _Planner:
                 self.author, self.title, decision.number
             )
         )
+        if not verdict.organized and suffix:
+            base_name = f"{base_name}_{suffix}"
         output_name = unique_file_name(
             base_name, lambda candidate: candidate in self._taken
         )
         self._taken.add(output_name)
         # ラベルの本は巻数を持たない。名前の中の数字（``外伝2`` の 2）を巻数に
         # すると、画面が ``第002巻`` や「巻数が読めません」へ作り直してしまう
-        labeled = verdict.label is not None
         return PlannedBook(
             source=source,
             entry=entry,
             output_name=output_name,
             volume=None if labeled else decision.number,
             volume_label=verdict.label,
+            volume_suffix=suffix,
             volume_origin=ORIGIN_NONE if labeled else decision.origin,
             volume_source_name="" if labeled else decision.source_name,
             issues=() if labeled else _volume_issues(self.detector, decision),

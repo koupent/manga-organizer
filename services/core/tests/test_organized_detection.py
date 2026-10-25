@@ -715,6 +715,7 @@ class OrganizedVolumeLabelTest(OrganizedTestBase):
         self.assertEqual(LABEL_TITLE, book.title)
         self.assertEqual(LABEL, book.volume_label)
         self.assertIsNone(book.volume)
+        self.assertIsNone(book.volume_suffix)
         self.assertEqual((), tuple(book.issues))
 
     def test_a_label_that_contains_a_digit_is_not_read_as_a_volume(self):
@@ -744,6 +745,7 @@ class OrganizedVolumeLabelTest(OrganizedTestBase):
         self.assertEqual(VOLUME_NAME, book.output_name)
         self.assertEqual(1, book.volume)
         self.assertIsNone(book.volume_label)
+        self.assertIsNone(book.volume_suffix)
         self.assertEqual((), tuple(book.issues))
 
     def test_unknown_and_other_notations_stay_unorganized(self):
@@ -789,6 +791,174 @@ class OrganizedVolumeLabelTest(OrganizedTestBase):
         self.assertIsNone(book.volume)
         self.assertEqual((), tuple(book.issues))
         self.assertEqual(LABEL_NAME, book.output_name)
+
+
+class OrganizedVolumeSuffixTest(OrganizedTestBase):
+    """同じ巻が重なった ``第002巻_3`` は、巻 2 に種類番号 3 が付いた巻数。
+
+    ``unique_file_name`` が足す ``_1`` で、``エイジ`` のような 1 語のラベルではない。
+    種類番号を落とすと ``第002巻`` や ``第002巻_`` になり、``_1`` と ``_3`` が
+    同じ名前に潰れる。``第001巻`` とラベルは今までどおり。
+    """
+
+    def place(self, name: str, entries: dict[str, bytes] | None = None) -> Path:
+        """連番のページを入れた ZIP を、蔵書の直下に置く"""
+        return zip_with(
+            self.work_dir / "蔵書" / name,
+            pages(count=PAGE_COUNT) if entries is None else entries,
+        )
+
+    def test_a_disambiguated_volume_stays_organized_under_its_own_name(self):
+        # Arrange - 報告の形。巻 2 に種類番号 3。依頼の著者は中身と違える
+        name = f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第002巻_3.zip"
+        archive = self.place(name)
+
+        # Act
+        book = self.only_book(self.analyze(archive.parent), archive)
+
+        # Assert - 本当の名前のまま整理済み。巻は 2、種類番号は 3。ラベルではない
+        self.assert_organized(book)
+        self.assertEqual(name, book.output_name)
+        self.assertEqual(2, book.volume)
+        self.assertEqual(3, book.volume_suffix)
+        self.assertIsNone(book.volume_label)
+        self.assertEqual(LABEL_AUTHOR, book.author)
+        self.assertEqual(LABEL_TITLE, book.title)
+        self.assertEqual((), tuple(book.issues))
+
+    def test_different_kind_numbers_stay_distinct(self):
+        # Arrange - 同じ巻の _1 と _3。どちらも種類番号を残す
+        library = self.work_dir / "蔵書"
+        names = {
+            1: f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第002巻_1.zip",
+            3: f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第002巻_3.zip",
+        }
+        placed = {suffix: self.place(name) for suffix, name in names.items()}
+
+        # Act
+        books = self.analyze(library)
+
+        # Assert - 同じ ``第002巻`` にも ``第002巻_`` にも潰れない
+        outputs = set()
+        for suffix, archive in placed.items():
+            with self.subTest(suffix=suffix):
+                book = self.only_book(books, archive)
+                self.assert_organized(book)
+                self.assertEqual(names[suffix], book.output_name)
+                self.assertEqual(2, book.volume)
+                self.assertEqual(suffix, book.volume_suffix)
+                self.assertIsNone(book.volume_label)
+                outputs.add(book.output_name)
+        self.assertEqual(set(names.values()), outputs)
+
+    def test_a_plain_volume_and_a_label_are_unchanged(self):
+        # Arrange - 種類番号の無い巻と、1 語のラベル
+        library = self.work_dir / "蔵書"
+        volume = self.place(VOLUME_NAME)
+        labeled = self.place(LABEL_NAME)
+
+        # Act
+        books = self.analyze(library)
+
+        # Assert
+        volume_book = self.only_book(books, volume)
+        self.assert_organized(volume_book)
+        self.assertEqual(VOLUME_NAME, volume_book.output_name)
+        self.assertEqual(1, volume_book.volume)
+        self.assertIsNone(volume_book.volume_suffix)
+        self.assertIsNone(volume_book.volume_label)
+
+        label_book = self.only_book(books, labeled)
+        self.assert_organized(label_book)
+        self.assertEqual(LABEL_NAME, label_book.output_name)
+        self.assertEqual(LABEL, label_book.volume_label)
+        self.assertIsNone(label_book.volume)
+        self.assertIsNone(label_book.volume_suffix)
+
+    def test_a_broken_suffix_is_not_a_volume_or_a_label(self):
+        # Arrange - 種類番号の形に見えるが、この道具が書く形ではない
+        library = self.work_dir / "蔵書"
+        names = {
+            "dangling": f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第001巻_.zip",
+            "padded": f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第001巻_03.zip",
+            "zero": f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第001巻_0.zip",
+            "unknown": f"[{LABEL_AUTHOR}] {LABEL_TITLE} Unknown_1.zip",
+            "label": f"[{LABEL_AUTHOR}] {LABEL_TITLE} エイジ_1.zip",
+            "loose": f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第3巻_1.zip",
+        }
+        placed = {key: self.place(name) for key, name in names.items()}
+
+        # Act
+        books = self.analyze(library)
+
+        # Assert - 整理済みにしない。種類番号だけ落ちた名前にもしない
+        for key, archive in placed.items():
+            with self.subTest(key=key):
+                book = self.only_book(books, archive)
+                self.assert_not_organized(book, NAME_MISMATCH)
+                self.assertIsNone(book.volume_suffix)
+                self.assertIsNone(book.volume_label)
+                self.assertFalse(book.output_name.endswith("_.zip"), book.output_name)
+
+    def test_pages_can_differ_without_dropping_the_kind_number(self):
+        # Arrange - 名前は種類番号付きだが、ページが連番ではない
+        library = self.work_dir / "蔵書"
+        rough = {"cover.jpg": page(), "note.jpg": page()}
+        first = self.place(f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第002巻_1.zip", rough)
+        third = self.place(f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第002巻_3.zip", dict(rough))
+
+        # Act - 依頼の著者は本の名前と揃える。ページが違うので整理済みではない
+        books = self.analyze(library, author=LABEL_AUTHOR, title=LABEL_TITLE)
+
+        # Assert - 巻 2 のまま、種類番号は 1 と 3 で別の名前
+        first_book = self.only_book(books, first)
+        third_book = self.only_book(books, third)
+        self.assert_not_organized(first_book, PAGES_MISMATCH)
+        self.assert_not_organized(third_book, PAGES_MISMATCH)
+        self.assertEqual(2, first_book.volume)
+        self.assertEqual(2, third_book.volume)
+        self.assertEqual(1, first_book.volume_suffix)
+        self.assertEqual(3, third_book.volume_suffix)
+        self.assertIsNone(first_book.volume_label)
+        self.assertEqual(
+            f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第002巻_1.zip",
+            first_book.output_name,
+        )
+        self.assertEqual(
+            f"[{LABEL_AUTHOR}] {LABEL_TITLE} 第002巻_3.zip",
+            third_book.output_name,
+        )
+
+    def test_a_suffix_written_by_the_organizer_is_organized(self):
+        # Arrange - 同じ巻を 2 冊出すと、2 冊目に _1 が付く
+        source = self.work_dir / "素材"
+        zip_with(source / "a_第02巻.zip", pages(count=PAGE_COUNT))
+        zip_with(source / "b_第02巻.zip", pages(count=PAGE_COUNT))
+        output = self.work_dir / "出力"
+        results = self.organize(source, output)
+        built = sorted(result.output_path.name for result in results)
+        self.assertEqual(
+            [
+                f"[{AUTHOR}] {TITLE} 第002巻.zip",
+                f"[{AUTHOR}] {TITLE} 第002巻_1.zip",
+            ],
+            built,
+        )
+
+        # Act - 出来た 2 冊を、依頼の著者を違えて入れ直す
+        books = self.analyze(output / SERIES_DIR)
+
+        # Assert - どちらも整理済みで、種類番号の有無が残る
+        by_name = {book.output_name: book for book in books}
+        plain = by_name[f"[{AUTHOR}] {TITLE} 第002巻.zip"]
+        numbered = by_name[f"[{AUTHOR}] {TITLE} 第002巻_1.zip"]
+        self.assert_organized(plain)
+        self.assertEqual(2, plain.volume)
+        self.assertIsNone(plain.volume_suffix)
+        self.assert_organized(numbered)
+        self.assertEqual(2, numbered.volume)
+        self.assertEqual(1, numbered.volume_suffix)
+        self.assertIsNone(numbered.volume_label)
 
 
 if __name__ == "__main__":
