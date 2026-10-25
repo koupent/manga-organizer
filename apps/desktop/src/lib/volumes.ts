@@ -69,6 +69,8 @@ export function applyVolumes(
       ...row,
       volume: typeof slot === "number" ? slot : null,
       volumeLabel: typeof slot === "string" ? slot : "",
+      // スロットを書き換えたら、元の名前に付いていた種類番号は残さない
+      volumeSuffix: null,
       issues: row.issues.filter(
         (issue) => issue !== VOLUME_UNKNOWN && issue !== VOLUME_UNCERTAIN,
       ),

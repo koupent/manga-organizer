@@ -78,6 +78,14 @@ class PlannedBookView(BaseModel):
             "画面が整理済みの名前を組み立て直すときに使う"
         ),
     )
+    volume_suffix: int | None = Field(
+        default=None,
+        description=(
+            "巻数に付いた種類番号（第002巻_3 の 3）。"
+            "名前がぶつかったときに足す _1 で、巻数ではないラベルではない。"
+            "付いていなければ null"
+        ),
+    )
     # 巻数の根拠。``PlannedBook`` の同名の欄をそのまま写す（値の意味と、
     # 走らせて確かめた落とし穴はそちらに書いてある）。
     #
@@ -293,6 +301,7 @@ def _book_view(book: PlannedBook) -> dict[str, Any]:
         output_name=book.output_name,
         volume=book.volume,
         volume_label=book.volume_label,
+        volume_suffix=book.volume_suffix,
         volume_origin=book.volume_origin,
         volume_source_name=book.volume_source_name,
         issues=list(book.issues),
