@@ -43,6 +43,12 @@ export type FinishedBook = {
  * 表示がずれないようにするため。別々に持つと、本が出そろっているのに主操作が
  * 押せない（あるいはその逆）という食い違いが起こる。
  */
+/** 目次を読めず、ディスク上で ZIP に置き換わったパス */
+export type Replacement = {
+  before: string;
+  after: string;
+};
+
 export type Analysis = {
   running: boolean;
   /**
@@ -59,6 +65,8 @@ export type Analysis = {
   books: PlannedBook[];
   /** 目次を読めなかった入れ物 */
   unreadable: string[];
+  /** 投入したパスのうち、ZIP へ置き換わったもの */
+  replacements: Replacement[];
   /**
    * いま読んでいる入れ物の進み（0〜1）（#157）。大きな RAR 1 つを読む間、
    * 件数の進捗は 0 から動かないので、これを足して進み具合を見せる
@@ -80,7 +88,59 @@ export function withoutPaths(analysis: Analysis, removed: string[]): Analysis {
     containers: analysis.containers.filter((path) => !gone(path)),
     books: analysis.books.filter((book) => !gone(book.source)),
     unreadable: analysis.unreadable.filter((path) => !gone(path)),
+    replacements: analysis.replacements.filter(
+      (item) => !gone(item.before) && !gone(item.after),
+    ),
   };
+}
+
+/**
+ * 投入したパスを、ZIP へ置き換わった後のパスにする。
+ *
+ * 置き換えが無ければ同じ配列を返す。画面はこれを見て、RAR の行を残さず
+ * 変換後のパスで出来上がる本を組み直す。
+ */
+export function adoptReplacedSources(
+  sources: string[],
+  replacements: readonly Replacement[],
+): string[] {
+  if (replacements.length === 0) return sources;
+  const replaced = new Map(
+    replacements.map((item) => [item.before, item.after]),
+  );
+  const next = sources.map((path) => {
+    let current = path;
+    const seen = new Set<string>();
+    while (replaced.has(current) && !seen.has(current)) {
+      seen.add(current);
+      current = replaced.get(current)!;
+    }
+    return current;
+  });
+  return next.every((path, index) => path === sources[index]) ? sources : next;
+}
+
+/**
+ * 投入の変化が、解析の途中で分かった ZIP への置き換えだけか。
+ *
+ * それなら目次の読み直しは要らない。変換した側が、置き換えたパスを
+ * 既に読み直して本を返している。ここで解析をやり直すと、その結果を
+ * 捨てて、また RAR から読み始める。
+ */
+export function isSourceAdoption(
+  before: readonly string[],
+  after: readonly string[],
+  replaced: ReadonlyMap<string, string>,
+): boolean {
+  if (before.length === 0 || before.length !== after.length) return false;
+  const adopted = adoptReplacedSources(
+    [...before],
+    [...replaced.entries()].map(([from, to]) => ({ before: from, after: to })),
+  );
+  return (
+    adopted.some((path, index) => path !== before[index]) &&
+    adopted.every((path, index) => path === after[index])
+  );
 }
 
 export const IDLE_ANALYSIS: Analysis = {
@@ -89,6 +149,7 @@ export const IDLE_ANALYSIS: Analysis = {
   containers: [],
   books: [],
   unreadable: [],
+  replacements: [],
   reading: 0,
 };
 
@@ -105,12 +166,17 @@ export function analysisResult(
     containers?: string[];
     books?: PlannedBook[];
     unreadable?: { source: string; reason: string }[];
+    replacements?: Replacement[];
     reading?: number;
   } | null;
   return {
     containers: value?.containers ?? [],
     books: value?.books ?? [],
     unreadable: (value?.unreadable ?? []).map((item) => item.source),
+    replacements: (value?.replacements ?? []).filter(
+      (item): item is Replacement =>
+        typeof item?.before === "string" && typeof item?.after === "string",
+    ),
     reading: typeof value?.reading === "number" ? value.reading : 0,
   };
 }
