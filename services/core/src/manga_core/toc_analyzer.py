@@ -31,6 +31,19 @@
 子プロセスを起こしたりすると、7-Zip の入った開発機では通り、道具の無い利用者の
 機械と CI で落ちる。
 
+**読めなかったときだけ、その 1 つに限って外部ツールへ頼る。** コメント付き
+RAR のように、目次を読むにも展開にも同じ道具が要る書庫がある（``_open_rar``
+の docstring）。そのまま諦めると「目次を読めません」「解析中」としか出せず、
+出来上がる本を一つも予告できない。``_rescue_unreadable`` は読めなかった
+その書庫だけを ``archive_handler``（実処理と同じ展開）で展開し、リネームは
+せず同じ中身を ZIP へ詰め直して置き換える。詰め直した ZIP は以後ずっと
+ZIP として扱われるので、ここまでの「外部ツールは要らない」という前提は
+読めるものには今までどおり効いたまま、読めなかったものだけが例外になる。
+置き換えは入れ子にも及ぶ――展開して出てきたアーカイブもそれぞれ目次を
+確かめ、読めなければ同じ規則で先に ZIP へ直してから詰める。道具の無い
+機械では展開自体も失敗するので、その機械では「目次を読めません」のまま
+変わらない（鍵の無い施錠を開けないのと同じで、嘘の予告は出さない）。
+
 入口は 2 つある。``analyze_stream`` は「走査 → 1 つずつ目次を読む」を 1 件ずつ
 返し、``analyze_inputs`` はそれを最後まで畳む。畳んだ結果が 1 件でも変わると、
 予告した名前と実際に出来る名前が食い違うため、後者は前者の消費者にしてある。
@@ -43,6 +56,8 @@
 """
 
 import logging
+import shutil
+import tempfile
 import zipfile
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
@@ -54,6 +69,7 @@ import py7zr
 import rarfile
 from py7zr.io import BytesIOFactory
 
+from manga_core.archive_handler import ArchiveHandler
 from manga_core.cancellation import OperationCancelled
 from manga_core.input_expander import expand_inputs, is_archive_name
 from manga_core.naming import natural_sort_key
@@ -177,6 +193,11 @@ class AnalysisStep:
     container: Path
     books: tuple[PlannedBook, ...]
     error: str | None = None
+    # 目次を読めず ZIP へ変換したときの、変換前の場所（``_rescue_unreadable``）。
+    # 変換していなければ None。``container`` は常に最終的な（変換後の）場所を
+    # 指すので、呼び出し側はここを見れば走査で announce した場所をどう
+    # 入れ替えればよいか分かる
+    replaced: Path | None = None
 
 
 def analyze_stream(
@@ -243,13 +264,147 @@ def _read_container(
         # より必ず先に置く
         raise
     except Exception as error:  # noqa: BLE001 - 1 つの失敗で残りを諦めない
+        return _rescue_and_retry(planner, container, checkpoint, progress, error)
+    return AnalysisStep(container=container, books=books, error=None)
+
+
+def _rescue_and_retry(
+    planner: "_Planner",
+    container: Path,
+    checkpoint: Callable[[], None],
+    progress: ReadProgress | None,
+    error: Exception,
+) -> AnalysisStep:
+    """目次を読めなかった入れ物を、ZIP へ変換してもう一度だけ読んでみる。
+
+    変換を試みるのは、読めなかった理由が**その形式のせい**（壊れている・
+    暗号化されている・入れ子を辿る側の制約など、``_NESTED_READ_ERRORS``）の
+    ときだけにする。``MemoryError`` のように形式とは関係ない失敗まで広げると、
+    「読めなかったことをそのまま見せる」という今までの約束を黙って変えてしまう
+    （``test_analysis_stream.UnreadableContainerTest`` が守る契約）。
+
+    変換できなかった（道具が無い機械など）、または変換してもまだ読めなければ、
+    変換していなかったときと同じ「目次を読めません」をそのまま返す。嘘の予告は
+    しない。フォルダは変換の対象にしない（アーカイブではないため）。
+    """
+    rescued = (
+        _rescue_unreadable(container, checkpoint)
+        if not container.is_dir() and isinstance(error, _NESTED_READ_ERRORS)
+        else None
+    )
+    if rescued is None:
         logger.warning("目次を読めませんでした: %s (%s)", container, error)
         return AnalysisStep(
             container=container,
             books=(),
             error=str(error) or type(error).__name__,
         )
-    return AnalysisStep(container=container, books=books, error=None)
+    try:
+        books = tuple(planner.plan_archive(rescued, checkpoint, progress))
+    except OperationCancelled:
+        raise
+    except Exception as retry_error:  # noqa: BLE001 - 変換しても駄目なら諦める
+        logger.warning(
+            "ZIP へ変換しても目次を読めませんでした: %s (%s)", rescued, retry_error
+        )
+        return AnalysisStep(
+            container=rescued,
+            books=(),
+            error=str(retry_error) or type(retry_error).__name__,
+            replaced=container,
+        )
+    return AnalysisStep(container=rescued, books=books, error=None, replaced=container)
+
+
+def _rescue_unreadable(
+    archive_path: Path, checkpoint: Callable[[], None], depth: int = 0
+) -> Path | None:
+    """目次を読めないアーカイブを展開し、同じ中身の ZIP へ機械的に置き換える。
+
+    **リネームはしない。** ファイル名とフォルダ構成はそのまま、拡張子だけ
+    ``.zip`` に変わる。巻数・名前を決める規則は 1 つも増やさない――詰め直した
+    ZIP は、以後 ``_open_zip`` がそのまま読む、ただの ZIP になるだけ。
+
+    展開は ``archive_handler.ArchiveHandler``、実処理が使うのと同じもの（外部
+    ツールも使う）。目次を読むのには使わない原則（モジュールの docstring）を
+    破っているが、ここへ来るのは目次を読む方法が尽きた後だけなので、破る先が
+    増えるわけではない。道具が無い機械では展開自体も失敗し、``None`` を返す
+    （呼び出し側は変換前の「目次を読めません」をそのまま出す）。
+
+    中から出てきたアーカイブも、読めなければ同じ規則で先に変換してから詰める
+    （再帰）。深さの上限は実処理（``safe_extract.DEFAULT_LIMITS``）と揃え、
+    多段の入れ子で止まらなくなるのを防ぐ。
+    """
+    if depth >= DEFAULT_LIMITS.max_depth:
+        return None
+    checkpoint()
+    handler = ArchiveHandler()
+    extract_dir = Path(tempfile.mkdtemp(prefix="manga_rescue_"))
+    try:
+        if not handler.extract_archive(archive_path, extract_dir):
+            return None
+        if not any(path.is_file() for path in extract_dir.rglob("*")):
+            # 目次ごと暗号化された RAR がここに来る。``rarfile`` は例外を上げず
+            # 空の目次のまま開けるので、``extract_archive`` は「展開できた」まま
+            # 1 件も書き出さずに返る。空の ZIP に詰め直すと「読めたうえで本が
+            # 0 冊」に化け、#70 で無くしたかった silent skip が別の形で戻る
+            return None
+        members = sorted(
+            (
+                path
+                for path in extract_dir.rglob("*")
+                if path.is_file() and is_archive_name(path.name)
+            ),
+            key=lambda path: natural_sort_key(str(path)),
+        )
+        for member in members:
+            checkpoint()
+            if not _toc_is_readable(member):
+                # 戻り値は見ない。変換できれば置き換わった状態で extract_dir に
+                # 残り、変換できなければ元のまま残る――どちらも次の詰め直しが
+                # そのまま拾う
+                _rescue_unreadable(member, checkpoint, depth + 1)
+        zip_name = unique_file_name(
+            archive_path.stem, lambda name: (archive_path.parent / name).exists()
+        )
+        zip_path = archive_path.parent / zip_name
+        _write_zip(extract_dir, zip_path)
+        archive_path.unlink()
+        return zip_path
+    except OperationCancelled:
+        raise
+    except Exception as error:  # noqa: BLE001 - 変換に失敗しても解析は続ける
+        logger.warning(
+            "読めないアーカイブを変換できませんでした: %s (%s)", archive_path, error
+        )
+        return None
+    finally:
+        handler.cleanup()
+        shutil.rmtree(extract_dir, ignore_errors=True)
+
+
+def _toc_is_readable(path: Path) -> bool:
+    """このアーカイブ自身の目次が読めるか（入れ子までは辿らない）"""
+    opener = _reader_for(path.name)
+    if opener is None:
+        return True
+    try:
+        with opener(path, None):
+            return True
+    except OperationCancelled:
+        raise
+    except Exception:
+        return False
+
+
+def _write_zip(source_dir: Path, zip_path: Path) -> None:
+    """展開したフォルダを、名前も構成もそのまま ZIP へ詰める（リネームなし）"""
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for file_path in sorted(
+            (path for path in source_dir.rglob("*") if path.is_file()),
+            key=lambda path: natural_sort_key(str(path)),
+        ):
+            archive.write(file_path, file_path.relative_to(source_dir).as_posix())
 
 
 def analyze_inputs(

@@ -219,6 +219,15 @@ def analysis_work(
             read += 1
             # 次の入れ物は頭から読む
             reading = 0.0
+            if event.replaced is not None:
+                # 目次を読めなかったので ZIP へ変換した（#toc_analyzer._rescue_
+                # unreadable）。走査（``AnalysisScan``）で announce した場所も
+                # ここで入れ替える。入れ替えないと、画面は変換前の場所をずっと
+                # 「解析中」のまま待ち、変換で生えた本は誰の入れ物にも紐付かない
+                # まま浮いてしまう
+                old = str(event.replaced)
+                new = str(event.container)
+                containers = [new if path == old else path for path in containers]
             books.extend(_book_view(book) for book in event.books)
             if event.error:
                 unreadable.append(
