@@ -104,6 +104,11 @@ type FileEditorProps = {
   client: SidecarClient;
   archive: string;
   active: boolean;
+  /**
+   * アーカイブを書き込んでいる最中かを伝える。別の本へ移るとこの画面が
+   * 消え、保存の失敗を伝える先が無くなるので、終わるまで切り替えさせない
+   */
+  onSavingChange?: (saving: boolean) => void;
   /** アーカイブを書き換えたことを伝える。他の画面が持つページは古くなる */
   onArchiveChanged?: () => void;
 };
@@ -125,6 +130,7 @@ export function FileEditor({
   client,
   archive,
   active,
+  onSavingChange,
   onArchiveChanged,
 }: FileEditorProps) {
   const {
@@ -418,14 +424,22 @@ export function FileEditor({
     setFocus(null);
     setPicking(null);
   };
+  // 押したのと同じ描画で切り替えを止める。効果を挟むと、その間に押された
+  // タブが通ってしまう。読み直しは待たない。書き込みが通った後なら移っても
+  // 失うものは無い
   const save = async () => {
     setModeNotice("");
-    if (trimming) {
-      await margin.save();
-      return;
-    }
-    if (await confirm(coverDraft?.request)) {
-      setReviewed(true);
+    onSavingChange?.(true);
+    try {
+      if (trimming) {
+        await margin.save();
+        return;
+      }
+      if (await confirm(coverDraft?.request)) {
+        setReviewed(true);
+      }
+    } finally {
+      onSavingChange?.(false);
     }
   };
 
