@@ -8,8 +8,10 @@ import {
 } from "../api/client";
 import { useAuthorLookup, type Entry } from "../hooks/useAuthorLookup";
 import {
+  adoptReplacedSources,
   analysisResult,
   IDLE_ANALYSIS,
+  isSourceAdoption,
   organizeResult,
   refusedPaths,
   snapshotMark,
@@ -18,6 +20,7 @@ import {
   type FinishedBook,
 } from "../lib/analysis";
 import { resolveDroppedPaths } from "../lib/dropped";
+import { parentDirectory } from "../path";
 import {
   ORGANIZED_STATUS_TIP,
   organizeSummary,
@@ -114,6 +117,10 @@ type OrganizePanelProps = {
   flashing?: ReadonlySet<string>;
 };
 
+/** 出力先のフォルダを読み直す間隔。エクスプローラーで消した・足した本を、
+ * 再読み込みを待たずに一覧へ反映する */
+const OUTPUT_WATCH_MS = 1000;
+
 /** 赤い行を見分ける鍵。同じ名前が何度落とされても別の行にする */
 let problemSeq = 0;
 const problemKey = () => `problem-${++problemSeq}`;
@@ -138,6 +145,20 @@ function sameAnalysis(
 
 function baseName(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
+}
+
+/** 出力先の本が前と同じ並びか。同じなら一覧を描き直さない */
+function sameOutputBooks(current: OutputBook[], found: OutputBook[]): boolean {
+  return (
+    current.length === found.length &&
+    current.every(
+      (book, index) =>
+        book.path === found[index]?.path &&
+        book.size === found[index]?.size &&
+        book.volume === found[index]?.volume &&
+        book.image_count === found[index]?.image_count,
+    )
+  );
 }
 
 /**
@@ -233,6 +254,18 @@ export function OrganizePanel({
   const [analysis, setAnalysis] = useState<Analysis>(IDLE_ANALYSIS);
   // 最後に解析へ回した投入。外しただけの変化を見分ける（#164）
   const analyzedSources = useRef<string[]>([]);
+  // いまの投入。解析の応答は effect の中から届くので、描画のたびに作り直す
+  // 関数ではなく ref から読む
+  const sourcesRef = useRef(sources);
+  sourcesRef.current = sources;
+  // 応答で分かった「RAR → ZIP」。投入の変化がこれだけなら、解析はやり直さない
+  const replacedPaths = useRef(new Map<string, string>());
+  // 置き換えで投入を差し替える直前に立てる。effect の片付けが、走っている
+  // 解析まで止めないようにする
+  const adoptingSources = useRef(false);
+  // 走っている解析の止め方。置き換えで effect が入れ替わったあとも、画面を
+  // 離れたときには止める
+  const analysisStop = useRef<(() => void) | null>(null);
   // 解析をやり直させる合図。投入が同じでも、整理が本をその場で作り直したら
   // 一覧の判定は古くなる（#127）
   const [analysisRound, setAnalysisRound] = useState(0);
@@ -327,6 +360,23 @@ export function OrganizePanel({
   };
 
   /**
+   * 解析が「この RAR は ZIP に置き換えた」と返したら、投入のパスもそちらへ
+   * 移す。移さないと、ディスクは ZIP なのに画面は消えた RAR を待ち続ける。
+   */
+  const rememberReplacements = (found: {
+    replacements: Analysis["replacements"];
+  }) => {
+    for (const item of found.replacements) {
+      replacedPaths.current.set(item.before, item.after);
+    }
+    const current = sourcesRef.current;
+    const next = adoptReplacedSources(current, found.replacements);
+    if (next === current) return;
+    adoptingSources.current = true;
+    onSourcesChange(next);
+  };
+
+  /**
    * 投入したものを解析し直す。
    *
    * 切っ掛けは投入の中身だけにする。作品名と著者は名前の組み立てにしか
@@ -335,7 +385,21 @@ export function OrganizePanel({
    */
   useEffect(() => {
     const before = analyzedSources.current;
+    const adoption = isSourceAdoption(before, sources, replacedPaths.current);
     analyzedSources.current = sources;
+    if (adoption) {
+      // 置き換えたパスは、走っている解析が既に読み直している。ここでは
+      // 止めない。この effect が次に捨てられるとき（離脱・別の投入）に止める
+      return () => {
+        if (adoptingSources.current) {
+          adoptingSources.current = false;
+          return;
+        }
+        analysisStop.current?.();
+        analysisStop.current = null;
+      };
+    }
+    replacedPaths.current = new Map();
     if (sources.length === 0) {
       if (before.length > 0) changeTitle("");
       setCustomNames(new Map());
@@ -394,6 +458,7 @@ export function OrganizePanel({
             // 経過（log）はここで読まない。整理の実行に取っておく。
             // 解析の行を混ぜると、整理で何が起きたのかがその中に埋もれる
             const found = analysisResult(snapshot.result);
+            rememberReplacements(found);
             setAnalysis((current) => ({
               running:
                 snapshot.state === "queued" || snapshot.state === "running",
@@ -407,6 +472,7 @@ export function OrganizePanel({
                     containers: current.containers,
                     books: current.books,
                     unreadable: current.unreadable,
+                    replacements: current.replacements,
                   }
                 : found),
               reading: found.reading,
@@ -417,6 +483,7 @@ export function OrganizePanel({
         );
         if (!controller.signal.aborted) {
           const found = analysisResult(job.result);
+          rememberReplacements(found);
           // 最後の途中経過で本が出そろっていれば、並びを前のまま使う（#168）。
           // 終わった瞬間に全部の行を描き直さず、主操作がすぐ押せるようにする
           setAnalysis((current) => ({
@@ -427,6 +494,7 @@ export function OrganizePanel({
                   containers: current.containers,
                   books: current.books,
                   unreadable: current.unreadable,
+                  replacements: current.replacements,
                 }
               : found),
             reading: found.reading,
@@ -458,10 +526,19 @@ export function OrganizePanel({
         setAnalysis(IDLE_ANALYSIS);
       });
 
-    return () => {
+    const stop = () => {
       abandoned = true;
       controller.abort();
       stopAnalysis();
+    };
+    analysisStop.current = stop;
+    return () => {
+      if (adoptingSources.current) {
+        adoptingSources.current = false;
+        return;
+      }
+      stop();
+      analysisStop.current = null;
     };
     // title と author は依存に入れない（上の理由）。この 2 つは組み立てに
     // 使うだけの材料で、読み直す切っ掛けではない。依存に入れると 1 文字
@@ -520,7 +597,28 @@ export function OrganizePanel({
   }, [active]);
 
   // 出力先にある本を読み直す（#178）。作品名と著者は打つたびに変わるので、
-  // 打ち終わるのを少し待ってから聞きに行く
+  // 打ち終わるのを少し待ってから聞きに行く。届いた一覧が前と同じなら
+  // 描き直さない。エクスプローラー側の変化は、下の間隔でも同じ口から読む
+  const storeOutputBooks = useCallback((found: OutputBook[]) => {
+    if (changingOutput.current) return;
+    setOutputBooks((current) =>
+      sameOutputBooks(current, found) ? current : found,
+    );
+    // 残っている本のフォルダから、消された本を外す。1 冊も残っていないときは
+    // フォルダが空なのか、作品名が違うだけなのかが分からないので触らない
+    const first = found[0];
+    if (!first) return;
+    const folder = parentDirectory(first.path);
+    const present = new Set(found.map((book) => book.path));
+    setFinished((current) => {
+      const next = current.filter(
+        (book) =>
+          parentDirectory(book.path) !== folder || present.has(book.path),
+      );
+      return next.length === current.length ? current : next;
+    });
+  }, []);
+
   useEffect(() => {
     if (!outputDirectory.trim() || !title.trim() || !author.trim()) {
       setOutputBooks([]);
@@ -531,7 +629,7 @@ export function OrganizePanel({
       client
         .outputBooks(outputDirectory, title, author)
         .then((found) => {
-          if (alive && !changingOutput.current) setOutputBooks(found);
+          if (alive) storeOutputBooks(found);
         })
         // 出力先を選び直す前などは断られる。一覧に出ないだけで、整理はできる
         .catch(() => {
@@ -542,7 +640,27 @@ export function OrganizePanel({
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [client, outputDirectory, title, author, outputRound]);
+  }, [client, outputDirectory, title, author, outputRound, storeOutputBooks]);
+
+  // 出力先を間隔で読み直す。エクスプローラーで消した本・足した本を、
+  // 再読み込みの操作を待たずに一覧へ出す
+  useEffect(() => {
+    if (!active) return;
+    if (!outputDirectory.trim() || !title.trim() || !author.trim()) return;
+    let alive = true;
+    const timer = window.setInterval(() => {
+      client
+        .outputBooks(outputDirectory, title, author)
+        .then((found) => {
+          if (alive) storeOutputBooks(found);
+        })
+        .catch(() => undefined);
+    }, OUTPUT_WATCH_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [active, client, outputDirectory, title, author, storeOutputBooks]);
 
   // 解析の間だけ時計を進める
   useEffect(() => {

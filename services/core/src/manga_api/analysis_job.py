@@ -172,6 +172,9 @@ def analysis_work(
         containers: list[str] = []
         books: list[dict[str, Any]] = []
         unreadable: list[dict[str, str]] = []
+        # 目次を読めず ZIP へ置き換えた入れ物。画面は投入したパスをこれで
+        # 読み直す。置かないと、ディスクは ZIP なのに画面は RAR のまま待つ
+        replacements: list[dict[str, str]] = []
         # いま読んでいる入れ物の進み（0〜1）（#157）。大きな RAR 1 つを読む
         # 数分のあいだ、件数の進捗は 0 から動かない。画面はこれを足して進捗を出す
         reading = 0.0
@@ -179,17 +182,19 @@ def analysis_work(
         def snapshot() -> dict[str, Any]:
             """いまの時点までに分かったこと。
 
-            4 つの鍵は常に揃える。``scanned`` を別に持つのは、``containers``
+            鍵は常に揃える。``scanned`` を別に持つのは、``containers``
             が空のときに「走査がまだ終わっていない」と「1 件も見つからな
             かった」を画面から区別するため。``unreadable`` も鍵ごと省かない。
             省くと「読めなかったものが無い」のか「数えていない」のかが
-            分からない。
+            分からない。``replacements`` も同じく、置き換えが無かったのか
+            まだ見ていないのかを空の配列で区別する。
             """
             return {
                 "scanned": True,
                 "containers": list(containers),
                 "books": list(books),
                 "unreadable": list(unreadable),
+                "replacements": list(replacements),
                 "reading": reading,
             }
 
@@ -236,6 +241,7 @@ def analysis_work(
                 old = str(event.replaced)
                 new = str(event.container)
                 containers = [new if path == old else path for path in containers]
+                replacements.append({"before": old, "after": new})
             books.extend(_book_view(book) for book in event.books)
             if event.error:
                 unreadable.append(

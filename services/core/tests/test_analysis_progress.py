@@ -24,7 +24,8 @@
           "scanned":    走査が終わったか,
           "containers": [入れ物の絶対パス, ...]  # 処理する順,
           "books":      [{source, entry, output_name, volume, issues}, ...],
-          "unreadable": [{"source": 絶対パス, "reason": 理由}, ...]
+          "unreadable": [{"source": 絶対パス, "reason": 理由}, ...],
+          "replacements": [{"before": 変換前, "after": 変換後}, ...]
         }
 
 ``scanned`` を別に持つのは、``containers`` が空のときに「走査がまだ終わって

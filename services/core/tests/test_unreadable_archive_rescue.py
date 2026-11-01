@@ -171,6 +171,11 @@ class RescueUnreadableArchiveTest(unittest.TestCase):
             ["[著者] 作品 第004巻.zip"],
             [book["output_name"] for book in result["books"]],
         )
+        # Assert - 画面が投入パスを読み直せるよう、変換前と変換後を返す
+        self.assertEqual(
+            [{"before": str(outer), "after": str(root / "raw_04.zip")}],
+            result["replacements"],
+        )
 
     def test_a_normal_zip_is_not_touched(self):
         """読める ZIP には変換を試みない。ファイルも書き換えない"""
@@ -187,11 +192,15 @@ class RescueUnreadableArchiveTest(unittest.TestCase):
             side_effect=AssertionError("読める ZIP まで変換しようとした"),
         ):
             books = self.analyze(root)
+            result = analysis_work([root], AUTHOR, TITLE, lambda _path: True)(
+                lambda **kwargs: None
+            )
 
         # Assert
         self.assertEqual(
             ["[著者] 作品 第004巻.zip"], [book.output_name for book in books]
         )
+        self.assertEqual([], result["replacements"], "読める ZIP を置き換え扱いした")
         self.assertEqual(before_bytes, healthy.read_bytes(), "ZIP の中身が変わった")
         self.assertEqual(
             before_mtime_ns, healthy.stat().st_mtime_ns, "ZIP が書き直された"
@@ -217,6 +226,7 @@ class RescueUnreadableArchiveTest(unittest.TestCase):
 
         # Assert - 変換を試みても展開できないので、読めないままで残る
         self.assertEqual([str(locked)], result["containers"])
+        self.assertEqual([], result["replacements"], "変換できない書庫を置き換えた")
         self.assertEqual(
             [str(locked)],
             [item["source"] for item in result["unreadable"]],
