@@ -28,6 +28,7 @@ const MODES: { id: Mode; label: string; testId: string }[] = [
   { id: "edit", label: "ファイル編集", testId: "mode-edit" },
 ];
 const isArchiveMode = (mode: Mode) => mode === "edit";
+const SAVING_LOCK = "保存が終わるまで、画面と本は切り替えられません";
 
 /**
  * 起動時のクエリ文字列。
@@ -80,6 +81,10 @@ export function App() {
   const [editsVersion, setEditsVersion] = useState(0);
   const [editedArchive, setEditedArchive] = useState("");
   const [guideDismissed, setGuideDismissed] = useState(false);
+  // 編集中の本を書き込んでいる最中。終わるまで画面も本も切り替えない
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  savingRef.current = saving;
   const [hideEditorGuide, storeHideEditorGuide] =
     useStoredString("editor.hideGuide");
 
@@ -181,6 +186,7 @@ export function App() {
 
   /** 画面を移る。移った先は初回だけ作り、以後は隠すだけで捨てない */
   const changeMode = (next: Mode) => {
+    if (savingRef.current) return;
     setMode(next);
     setOpened((current) =>
       current.includes(next) ? current : [...current, next],
@@ -189,6 +195,7 @@ export function App() {
 
   /** 別の本は key の変更で編集状態を作り直す。同じ本へ戻るときは保留を残す。 */
   const changeArchive = (path: string) => {
+    if (savingRef.current) return;
     setArchive(path);
     setError("");
   };
@@ -313,8 +320,17 @@ export function App() {
           </h1>
         </div>
 
-        <nav className="flex items-center gap-2" aria-label="機能">
-          <Segmented items={MODES} value={mode} onChange={changeMode} />
+        <nav
+          className="flex items-center gap-2"
+          aria-label="機能"
+          title={saving ? SAVING_LOCK : undefined}
+        >
+          <Segmented
+            items={MODES}
+            value={mode}
+            onChange={changeMode}
+            disabled={saving}
+          />
         </nav>
 
         <div className="flex-1" />
@@ -378,6 +394,8 @@ export function App() {
               variant="ghost"
               className="shrink-0"
               data-testid="change-archive"
+              disabled={saving}
+              title={saving ? SAVING_LOCK : undefined}
               onClick={() => changeArchive("")}
             >
               <FolderOpen />
@@ -421,6 +439,7 @@ export function App() {
               client={client}
               archive={archive}
               active={mode === "edit"}
+              onSavingChange={setSaving}
               onArchiveChanged={() => archiveChanged(archive)}
             />
           </Panel>
