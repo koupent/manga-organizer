@@ -111,13 +111,13 @@ Windows ランナーは分数が 2 倍に数えられるため、プルリクエ
    - `services/core/pyproject.toml`（`uv.lock` は `uv lock`）
 
 2. PR 経由で main へ squash merge（Merge Gate 必須）
-3. main の先頭にタグを打って push する。**タグは利用者が手元の Git から打ちます。** クラウドのセッションからは作業ブランチ以外へ push できず、タグは HTTP 403 で弾かれます
+3. 必須 CI が成功し、版を更新した変更が main にマージされたことを確認して、main の先頭にタグを打って push する。**利用者がリリースを依頼した場合は、エージェントがタグ作成・push を含めて代行します。タグ操作の再承認は不要です。** 過去のクラウド環境の制限を理由に利用者へ操作を差し戻さず、現在の接続で実行します。既存タグの付け替えは行いません。実際に権限・接続エラーで進められない場合に限り、その内容と残作業を伝えます
 
    ```bash
    git fetch origin && git tag v4.0.0 origin/main && git push origin v4.0.0
    ```
 
-4. Actions の「Windows インストーラ」が緑になると、Releases に `MangaOrganizer-v4.0.0-setup.exe` と `latest.json` が載り、入れてあるアプリが次の起動で知らせる
+4. Actions の「Windows インストーラ」が成功し、Releases に `MangaOrganizer-v4.0.0-setup.exe` と `latest.json` が公開されたことを確認する。エージェントが代行する場合も、この確認まで行う。入れてあるアプリは次の起動で新しい版を知らせる
 
 ## プロジェクト構造
 

@@ -33,11 +33,13 @@ cd apps/desktop && npx tauri dev
 インストーラは GitHub Actions の Windows ランナーで、`v*` タグのときに作ります（`.github/workflows/release.yml`）。確かめたうえで、このリポジトリの Release にインストーラと自動更新の案内（`latest.json`）を載せます（アプリはログインせずに落とすので、リポジトリは public）。手動実行は Artifacts に残すだけです。プルリクエストでは作りません。署名鍵は Secrets にあります（`DEVELOPMENT.md` の「自動更新」）。署名鍵とパスワードの控えは、利用者の Google Drive（マイドライブ > GitHub > manga-orgaizer）にあります。
 
 ```bash
-# 4 か所の version（tauri.conf.json / Cargo.toml / package.json / pyproject.toml）を揃えて main へマージした後、利用者が手元で
+# 4 か所の version（tauri.conf.json / Cargo.toml / package.json / pyproject.toml）を揃え、必須 CI を通して main へマージした後に実行
 git fetch origin && git tag v4.0.0 origin/main && git push origin v4.0.0   # Release が作られ MangaOrganizer-v4.0.0-setup.exe が添付される
 ```
 
-クラウドのセッションからはタグを push できません（作業ブランチ以外への push は 403）。タグは打とうとせず、上の 1 行を利用者に頼んでください。
+利用者から「リリースしてください」と依頼された場合、その依頼にはエージェントによるリリースタグの作成・push と公開までの代行を含みます。タグ操作のために再度承認を求めたり、利用者に操作を差し戻したりせず、必須 CI の成功、main へのマージ、タグと版の一致を確認して実行してください。タグの push 後はリリースワークフローの成功と配布物（インストーラ・latest.json）の公開まで確認します。
+
+以前のクラウド環境のタグ push 制限を、現在もある前提で扱わないでください。実際に権限や接続の問題で失敗した場合は、使える正規の接続手段を確認し、それでも進められないときだけ具体的なエラーと残作業を利用者に伝えてください。既存タグの付け替えや必須チェックの回避は行いません。
 
 ## 主な場所
 
