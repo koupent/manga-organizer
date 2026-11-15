@@ -519,9 +519,10 @@ export function CropFrame({
 
   return (
     <div ref={rootRef} className="pointer-events-none absolute inset-0">
+      {/* 明るい範囲が切り抜き結果。線や色を重ねず、範囲外だけを暗くする。 */}
       <div
         data-testid="crop-frame"
-        className="pointer-events-auto absolute touch-none cursor-move border-2 border-brand bg-brand/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+        className="pointer-events-auto absolute touch-none cursor-move shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
         style={{
           left: percent(crop.x, image.width),
           top: percent(crop.y, image.height),
@@ -589,8 +590,8 @@ export function CropFrame({
                   y={(crop.y / image.height) * focus.height}
                   width={(crop.width / image.width) * focus.width}
                   height={(crop.height / image.height) * focus.height}
-                  className="fill-none stroke-brand"
-                  strokeWidth="1"
+                  className="fill-none stroke-white/80"
+                  strokeWidth="0.25"
                 />
                 <path
                   d={`M ${focus.x - 4} ${focus.y} h 8 M ${focus.x} ${focus.y - 4} v 8`}
