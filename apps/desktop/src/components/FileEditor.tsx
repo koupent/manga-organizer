@@ -24,7 +24,9 @@ import {
   Undo2,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -188,6 +190,35 @@ export function FileEditor({
   const [gridRef, gridSize] = useBoxSize<HTMLDivElement>();
   // ②の「結合…」で相手を選び始めたカード（PageUnit の key）（#154）
   const [picking, setPicking] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pickAnchor = useRef<{ name: string; top: number } | null>(null);
+  const changePicking = useCallback((key: string | null, name?: string) => {
+    const cards = scrollRef.current?.querySelectorAll<HTMLElement>(
+      '[data-testid="editable-page"]',
+    );
+    const card = Array.from(cards ?? []).find((element) =>
+      name !== undefined
+        ? element.dataset.name === name
+        : element.querySelector('[data-pick="self"]') !== null,
+    );
+    pickAnchor.current = card
+      ? { name: card.dataset.name!, top: card.getBoundingClientRect().top }
+      : null;
+    setPicking(key);
+  }, []);
+
+  // 候補の対を単ページに展開すると、それより上の行数も変わる。
+  // scrollTop ではなく選択元の画面上の位置を、描画前に復元する。
+  useLayoutEffect(() => {
+    const anchor = pickAnchor.current;
+    pickAnchor.current = null;
+    const scroll = scrollRef.current;
+    if (!anchor || !scroll) return;
+    const card = Array.from(
+      scroll.querySelectorAll<HTMLElement>('[data-testid="editable-page"]'),
+    ).find((element) => element.dataset.name === anchor.name);
+    if (card) scroll.scrollTop += card.getBoundingClientRect().top - anchor.top;
+  }, [picking]);
 
   // 読み直すと行が減ることがある。開いたままの重ね枠が、もう無い行を
   // 指したままにならないよう閉じる
@@ -227,11 +258,11 @@ export function FileEditor({
   useEffect(() => {
     if (picking === null) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setPicking(null);
+      if (event.key === "Escape") changePicking(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [picking]);
+  }, [picking, changePicking]);
 
   const undo = () => {
     if (chosen === "trim") {
@@ -883,7 +914,7 @@ export function FileEditor({
               }
               onPick={
                 partnersOf(rows, manualUnits, unit).length > 0
-                  ? () => setPicking(unit.key)
+                  ? () => changePicking(unit.key, row.names[unit.part ?? 0])
                   : undefined
               }
               onChoose={
@@ -891,7 +922,7 @@ export function FileEditor({
                   ? () => edit(joinedRows(rows, pickedUnit, unit))
                   : undefined
               }
-              onCancelPick={() => setPicking(null)}
+              onCancelPick={() => changePicking(null)}
             />
           )}
         </div>
@@ -1285,8 +1316,9 @@ export function FileEditor({
             strategy={rectSortingStrategy}
           >
             <div
+              ref={scrollRef}
               data-testid="split-grid"
-              className="min-h-0 flex-1 overflow-y-auto"
+              className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
             >
               {/* 行の高さは中身に合わせる（auto-rows-max）。auto のままだと、
             高さの決まった格子を行数で割った高さへ押し込められる */}

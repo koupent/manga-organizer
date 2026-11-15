@@ -622,3 +622,44 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     );
   });
 });
+
+for (const rtl of [false, true]) {
+  test(`後半ページの結合相手選択・取消で表示位置を保つ（rtl=${rtl}）`, async ({
+    page,
+  }) => {
+    const archive = writeSeamBook(`scroll-anchor-${rtl}.zip`);
+    runPython(
+      `import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+ pages = [z.read(name) for name in ('001.png', '002.png', '003.png')]
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+ for i in range(90):
+  z.writestr(f'{i+1:03d}.png', pages[i % 3])`,
+      archive,
+    );
+    await open(page, archive, 60);
+    await page.setViewportSize({ width: 760, height: 860 });
+    await page.getByTestId("page-direction").setChecked(rtl);
+    const source = card(page, 74);
+    await source.scrollIntoViewIfNeeded();
+    await source.hover();
+    const top = (await source.boundingBox())!.y;
+    await source.getByTestId("merge-pick").click();
+    await expect(source).toHaveAttribute("data-pick", "self");
+    await expect
+      .poll(async () => (await source.boundingBox())!.y)
+      .toBeCloseTo(top, 0);
+    await expect(source).toBeInViewport();
+    await expect(card(page, 73).getByTestId("merge-partner")).toBeInViewport();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("merge-card")).toHaveCount(60);
+    await expect
+      .poll(async () => (await source.boundingBox())!.y)
+      .toBeCloseTo(top, 0);
+    await source.getByTestId("merge-pick").click();
+    await source.getByTestId("merge-pick-cancel").click();
+    await expect
+      .poll(async () => (await source.boundingBox())!.y)
+      .toBeCloseTo(top, 0);
+  });
+}
